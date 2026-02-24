@@ -18,6 +18,7 @@ import numpy as np
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
 from pathlib import Path
+from scipy.ndimage import gaussian_filter, distance_transform_edt
 
 
 def normalize_array(array, percentile_clip=99.5):
@@ -288,9 +289,48 @@ def process_dose_3d(npy_path, output_dir, ref_nii_path,
     dose_array_resampled = sitk.GetArrayFromImage(dose_img_resampled)
     print(f"  重采样后 shape: {dose_array_resampled.shape}")
     
+    # ==================== 3b. 全身剂量扩散 ====================
+    # MCNP模拟粒子数有限，远离束流的体素剂量为0
+    # 使用高斯扩散将有剂量区域的值向全身扩展，模拟散射辐射
+    print("\n[步骤3b] 全身剂量扩散（填充零值区域）")
+
+    has_nonzero = dose_array_resampled > 0
+    nonzero_ratio = np.sum(has_nonzero) / dose_array_resampled.size * 100
+    print(f"  重采样后非零比例: {nonzero_ratio:.1f}%")
+
+    if nonzero_ratio < 80 and np.any(has_nonzero):
+        # 保留原始高剂量区域，对全体做大范围高斯模糊生成背景散射
+        dose_max = dose_array_resampled.max()
+
+        # sigma越大扩散越远，这里用较大sigma使剂量覆盖全身
+        # 不同轴向可能分辨率不同，统一用较大值
+        sigma_voxels = 15.0
+        print(f"  高斯扩散 sigma = {sigma_voxels} 体素")
+
+        dose_blurred = gaussian_filter(dose_array_resampled.astype(np.float64), sigma=sigma_voxels)
+
+        # 计算距离有剂量区域的距离权重，用于混合
+        # 近处保持原始值，远处使用模糊值
+        dist = distance_transform_edt(~has_nonzero).astype(np.float32)
+        # 用sigmoid-like函数做平滑过渡: 距离越远，越依赖模糊值
+        blend_sigma = 8.0  # 过渡区宽度（体素）
+        blend_weight = 1.0 / (1.0 + np.exp(-(dist - blend_sigma) / (blend_sigma * 0.3)))
+
+        # 混合: 原始值(有剂量区) + 模糊值(零值区)
+        dose_array_resampled = (
+            dose_array_resampled * (1.0 - blend_weight) +
+            dose_blurred * blend_weight
+        ).astype(np.float32)
+
+        new_nonzero = np.sum(dose_array_resampled > 0) / dose_array_resampled.size * 100
+        print(f"  扩散后非零比例: {new_nonzero:.1f}%")
+        print(f"  扩散后范围: {dose_array_resampled.min():.2e} ~ {dose_array_resampled.max():.2e}")
+    else:
+        print("  剂量数据已覆盖大部分体素，跳过扩散")
+
     # 归一化剂量到0-1
     dose_normalized = normalize_array(dose_array_resampled, percentile_clip=99.9)
-    
+
     print(f"  归一化后剂量范围: {dose_normalized.min():.3f} ~ {dose_normalized.max():.3f}")
 
     # ==================== 4. 构建体内mask ====================
