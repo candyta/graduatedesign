@@ -1,0 +1,3 @@
+C:/my-app2/web/backend/CMakeFiles/CTImageToGeant4.dir
+C:/my-app2/web/backend/CMakeFiles/ALL_BUILD.dir
+C:/my-app2/web/backend/CMakeFiles/ZERO_CHECK.dir
