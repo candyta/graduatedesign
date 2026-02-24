@@ -170,8 +170,8 @@ def save_overlay_slices(dose_data, ct_data, output_dir, view_name,
     return saved_count
 
 
-def process_dose_3d(npy_path, output_dir, ref_nii_path, 
-                   slice_interval=1, dose_threshold=0.05):
+def process_dose_3d(npy_path, output_dir, ref_nii_path,
+                   slice_interval=1, dose_threshold=0.001):
     """
     处理3D剂量分布并生成三视图切片
     
@@ -413,7 +413,7 @@ def main():
         print("  output_dir      - 输出目录")
         print("  ref_ct.nii      - 参考CT的NIfTI文件")
         print("  slice_interval  - 切片间隔，默认2（可选）")
-        print("  dose_threshold  - 剂量显示阈值(0-1)，默认0.05（可选）")
+        print("  dose_threshold  - 剂量显示阈值(0-1)，默认0.001（可选）")
         print("\n示例:")
         print("  python dose_to_png_improved.py dose_1.npy ./output CT.nii 2 0.05")
         sys.exit(1)
@@ -422,7 +422,7 @@ def main():
     output_dir = sys.argv[2]
     ref_nii_path = sys.argv[3]
     slice_interval = int(sys.argv[4]) if len(sys.argv) > 4 else 1
-    dose_threshold = float(sys.argv[5]) if len(sys.argv) > 5 else 0.05
+    dose_threshold = float(sys.argv[5]) if len(sys.argv) > 5 else 0.001
     
     try:
         result = process_dose_3d(
