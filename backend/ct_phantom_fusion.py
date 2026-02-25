@@ -202,7 +202,177 @@ def smart_registration(ct_data, phantom_data, phantom_voxel_size, force_region=N
 
 
 # =====================================================================
-# 3. 融合 (带过渡带平滑)
+# 3. 横截面轮廓测量与自适应缩放
+# =====================================================================
+
+def _measure_body_extent(slice_2d, threshold=0):
+    """
+    测量单个2D切片(X,Y)中身体区域的X/Y范围。
+
+    Parameters
+    ----------
+    slice_2d : np.ndarray  shape=(nx, ny)
+        器官ID切片 (>0表示体内)
+    threshold : int
+        体内阈值
+
+    Returns
+    -------
+    dict  {'x_min','x_max','x_width','y_min','y_max','y_width','cx','cy'}
+          如果无身体区域则返回 None
+    """
+    body = slice_2d > threshold
+    if not np.any(body):
+        return None
+    xs, ys = np.where(body)
+    return {
+        'x_min': int(xs.min()), 'x_max': int(xs.max()),
+        'x_width': int(xs.max() - xs.min() + 1),
+        'y_min': int(ys.min()), 'y_max': int(ys.max()),
+        'y_width': int(ys.max() - ys.min() + 1),
+        'cx': float(xs.mean()), 'cy': float(ys.mean()),
+    }
+
+
+def _adaptive_xy_scale_ct(ct_materials, phantom_region, blend_slices=8):
+    """
+    计算CT在每个Z切片上相对体模的自适应XY缩放因子,
+    然后对CT材料数组逐层应用缩放,使边界处轮廓对齐。
+
+    策略:
+    - 在CT的上/下边界各取若干层,测量CT身体宽度与体模身体宽度之比
+    - 用线性插值得到中间各层的缩放因子
+    - 对每层做 ndimage.zoom + 居中裁剪/填充
+
+    Parameters
+    ----------
+    ct_materials : np.ndarray  (nx_ct, ny_ct, nz_ct)  int16
+    phantom_region : np.ndarray  同shape  int16
+    blend_slices : int
+        边界处用来测量平均宽度的层数
+
+    Returns
+    -------
+    np.ndarray  缩放后的ct_materials (同shape)
+    """
+    nz = ct_materials.shape[2]
+    if nz < 4:
+        return ct_materials
+
+    # -- 逐层测量CT和体模的X/Y宽度 --
+    ct_xw = np.zeros(nz)
+    ct_yw = np.zeros(nz)
+    ph_xw = np.zeros(nz)
+    ph_yw = np.zeros(nz)
+
+    for k in range(nz):
+        ct_ext = _measure_body_extent(ct_materials[:, :, k])
+        ph_ext = _measure_body_extent(phantom_region[:, :, k])
+        if ct_ext:
+            ct_xw[k] = ct_ext['x_width']
+            ct_yw[k] = ct_ext['y_width']
+        if ph_ext:
+            ph_xw[k] = ph_ext['x_width']
+            ph_yw[k] = ph_ext['y_width']
+
+    # -- 计算边界处的平均缩放比 --
+    bs = min(blend_slices, nz // 4, 3)
+    bs = max(bs, 1)
+
+    def _avg_ratio(ct_w, ph_w, slices_idx):
+        """安全地计算平均缩放比"""
+        ratios = []
+        for i in slices_idx:
+            if ct_w[i] > 5 and ph_w[i] > 5:
+                ratios.append(ph_w[i] / ct_w[i])
+        return np.mean(ratios) if ratios else 1.0
+
+    # 底部边界 (Z小端)
+    bottom_idx = list(range(0, bs))
+    sx_bottom = _avg_ratio(ct_xw, ph_xw, bottom_idx)
+    sy_bottom = _avg_ratio(ct_yw, ph_yw, bottom_idx)
+
+    # 顶部边界 (Z大端)
+    top_idx = list(range(nz - bs, nz))
+    sx_top = _avg_ratio(ct_xw, ph_xw, top_idx)
+    sy_top = _avg_ratio(ct_yw, ph_yw, top_idx)
+
+    # 如果缩放比接近1, 无需处理
+    if (abs(sx_bottom - 1.0) < 0.05 and abs(sx_top - 1.0) < 0.05 and
+            abs(sy_bottom - 1.0) < 0.05 and abs(sy_top - 1.0) < 0.05):
+        print(f"  [轮廓匹配] 边界处CT与体模宽度差异<5%, 无需自适应缩放")
+        return ct_materials
+
+    print(f"  [轮廓匹配] 底部缩放比 X={sx_bottom:.3f} Y={sy_bottom:.3f}")
+    print(f"  [轮廓匹配] 顶部缩放比 X={sx_top:.3f} Y={sy_top:.3f}")
+
+    # -- 逐层线性插值缩放因子 + 缩放 --
+    result = ct_materials.copy()
+    nx, ny, _ = ct_materials.shape
+
+    # 定义过渡区域: 边界处应用完整缩放, 中心区域逐渐过渡到1.0
+    # 使用cosine衰减: 边界→缩放, 中心→不缩放(保留CT原始精度)
+    mid = nz / 2.0
+    for k in range(nz):
+        # t: 0在底部, 1在顶部
+        t = k / max(nz - 1, 1)
+        # 边界权重: 靠近边界时为1, 靠近中心时为0
+        dist_to_edge = min(k, nz - 1 - k)
+        fade_zone = nz * 0.3  # 30%深度处完全过渡到1.0
+        if fade_zone < 1:
+            fade_zone = 1
+        edge_weight = max(0.0, 1.0 - dist_to_edge / fade_zone)
+
+        # 插值得到当前层的缩放比
+        sx_boundary = sx_bottom * (1.0 - t) + sx_top * t
+        sy_boundary = sy_bottom * (1.0 - t) + sy_top * t
+
+        # 用edge_weight混合: 边界处用boundary缩放, 中心处用1.0
+        sx = 1.0 + edge_weight * (sx_boundary - 1.0)
+        sy = 1.0 + edge_weight * (sy_boundary - 1.0)
+
+        # 如果缩放比足够接近1,跳过
+        if abs(sx - 1.0) < 0.02 and abs(sy - 1.0) < 0.02:
+            continue
+
+        # 对该层进行缩放
+        layer = ct_materials[:, :, k].astype(np.float32)
+        scaled_layer = ndimage.zoom(layer, (sx, sy), order=0)
+
+        # 居中放回原尺寸
+        snx, sny = scaled_layer.shape
+        out_layer = np.zeros((nx, ny), dtype=np.int16)
+
+        # 源裁剪范围
+        src_x0 = max(0, (snx - nx) // 2)
+        src_y0 = max(0, (sny - ny) // 2)
+        src_x1 = src_x0 + min(snx, nx)
+        src_y1 = src_y0 + min(sny, ny)
+        if src_x1 > snx:
+            src_x1 = snx
+        if src_y1 > sny:
+            src_y1 = sny
+
+        # 目标放置范围
+        dst_x0 = max(0, (nx - snx) // 2)
+        dst_y0 = max(0, (ny - sny) // 2)
+
+        copy_w = min(src_x1 - src_x0, nx - dst_x0)
+        copy_h = min(src_y1 - src_y0, ny - dst_y0)
+
+        out_layer[dst_x0:dst_x0 + copy_w,
+                  dst_y0:dst_y0 + copy_h] = scaled_layer[
+            src_x0:src_x0 + copy_w,
+            src_y0:src_y0 + copy_h].astype(np.int16)
+
+        result[:, :, k] = out_layer
+
+    print(f"  [轮廓匹配] 自适应缩放完成")
+    return result
+
+
+# =====================================================================
+# 4. 融合 (带轮廓匹配 + 过渡带平滑)
 # =====================================================================
 
 def simple_fusion(ct_data, phantom_data, registration,
@@ -210,7 +380,8 @@ def simple_fusion(ct_data, phantom_data, registration,
                   ct_spacing=(1.0, 1.0, 1.0),
                   phantom_spacing=(2.137, 2.137, 8.0)):
     """
-    将CT数据重采样到体模体素网格后插入体模，**含过渡带平滑**。
+    将CT数据重采样到体模体素网格后插入体模。
+    含横截面轮廓自适应匹配 + 过渡带平滑。
     """
     print("\n[执行融合]")
     fusion_result = phantom_data.copy()
@@ -221,7 +392,7 @@ def simple_fusion(ct_data, phantom_data, registration,
         ct_spacing[1] / phantom_spacing[1],
         ct_spacing[2] / phantom_spacing[2],
     ])
-    print(f"  缩放因子: {scale_factors}")
+    print(f"  体素间距缩放因子: {scale_factors}")
 
     ct_resampled = ndimage.zoom(ct_data, scale_factors, order=1)
     print(f"  CT重采样后shape: {ct_resampled.shape}")
@@ -266,13 +437,18 @@ def simple_fusion(ct_data, phantom_data, registration,
     ct_materials[ct_region >= 100] = 46                       # 骨骼 (cortical bone id)
     # exterior_air 保持 0
 
-    # -- 4. 过渡带平滑 --
-    ct_body_mask = (ct_materials > 0)
+    # -- 4. ★ 横截面轮廓自适应匹配 ★ --
     phantom_region_orig = fusion_result[
         start_pos[0]:end_pos[0],
         start_pos[1]:end_pos[1],
         start_pos[2]:end_pos[2]
     ].copy()
+
+    print("  [轮廓匹配] 对CT进行自适应XY缩放以匹配体模轮廓...")
+    ct_materials = _adaptive_xy_scale_ct(ct_materials, phantom_region_orig)
+
+    # -- 5. 过渡带平滑 --
+    ct_body_mask = (ct_materials > 0)
 
     if transition_width > 0 and np.any(ct_body_mask):
         # 计算CT体内区域到边界的距离
@@ -286,7 +462,6 @@ def simple_fusion(ct_data, phantom_data, registration,
         weights[trans_mask] = 1.0 - dist_outside[trans_mask] / transition_width
 
         # 在过渡带内，用权重在CT材料和体模之间混合
-        # 对于离散材料ID，用概率阈值决定取哪边
         transition_zone = trans_mask & (phantom_region_orig > 0)
         # 高权重(靠近CT) → 用CT, 低权重 → 用体模
         use_ct = transition_zone & (weights > 0.5) & (ct_materials > 0)
@@ -294,7 +469,7 @@ def simple_fusion(ct_data, phantom_data, registration,
 
         print(f"  过渡带体素: {np.sum(transition_zone):,}")
 
-    # -- 5. 核心区域直接替换 --
+    # -- 6. 核心区域直接替换 --
     replace_mask = ct_body_mask
     phantom_region_orig[replace_mask] = ct_materials[replace_mask]
 
@@ -501,7 +676,9 @@ def generate_mcnp_input_enhanced(phantom_data: np.ndarray,
 
 def main_workflow_enhanced(ct_path: str, output_dir: str,
                           force_region: str = None,
-                          gender: str = 'male'):
+                          gender: str = 'male',
+                          patient_height: float = None,
+                          patient_weight: float = None):
     """
     增强版主工作流程
 
@@ -515,6 +692,10 @@ def main_workflow_enhanced(ct_path: str, output_dir: str,
         强制指定解剖区域
     gender : str
         'male' → AM体模, 'female' → AF体模
+    patient_height : float, optional
+        患者身高(cm), 提供则启用体模整体缩放
+    patient_weight : float, optional
+        患者体重(kg), 提供则启用体模整体缩放
     """
     print("=" * 60)
     print("全身体模构建工作流程（多材料体素版）")
@@ -560,6 +741,29 @@ def main_workflow_enhanced(ct_path: str, output_dir: str,
         phantom_data = _build_fallback_phantom()
     print(f"  体模尺寸: {phantom_data.shape}")
 
+    # 2.5. 根据患者身高体重缩放体模 (如提供)
+    if patient_height and patient_weight:
+        print("\n[步骤2.5] 根据患者身高体重缩放体模")
+        try:
+            from phantom_scaling import PhantomScaler
+            scaler = PhantomScaler(phantom_type)
+            scaling_factors = scaler.calculate_scaling_factors(
+                patient_height, patient_weight)
+            phantom_data, scale_params = scaler.scale_voxel_phantom(
+                phantom_data, scaling_factors)
+            # 更新体素尺寸以反映缩放
+            voxel_size = (
+                voxel_size[0] * scaling_factors['x'],
+                voxel_size[1] * scaling_factors['y'],
+                voxel_size[2] * scaling_factors['z'],
+            )
+            print(f"  缩放后体模尺寸: {phantom_data.shape}")
+            print(f"  缩放后体素间距: {voxel_size} mm")
+        except Exception as e:
+            print(f"  [警告] 体模缩放失败: {e}, 使用原始体模")
+    else:
+        print("  [提示] 未提供患者身高体重, 使用标准ICRP参考体模")
+
     # 3. 配准
     print("\n[步骤3] 配准")
     registration = smart_registration(
@@ -568,8 +772,8 @@ def main_workflow_enhanced(ct_path: str, output_dir: str,
         force_region=force_region,
     )
 
-    # 4. 融合(含过渡带)
-    print("\n[步骤4] 融合")
+    # 4. 融合(含轮廓匹配+过渡带)
+    print("\n[步骤4] 融合（含横截面轮廓匹配）")
     fusion_result = simple_fusion(
         ct_data, phantom_data, registration,
         transition_width=5,
@@ -600,7 +804,10 @@ def main_workflow_enhanced(ct_path: str, output_dir: str,
         'registration': registration,
         'gender': gender,
         'phantom_type': phantom_type,
-        'version': '3.0_voxel_lattice',
+        'patient_height': patient_height,
+        'patient_weight': patient_weight,
+        'voxel_size_mm': list(voxel_size),
+        'version': '4.0_contour_matched',
     }
     metadata_path = output_dir / 'fusion_metadata.json'
     with open(metadata_path, 'w', encoding='utf-8') as f:
@@ -621,8 +828,14 @@ if __name__ == "__main__":
     parser.add_argument('output_dir', help='输出目录')
     parser.add_argument('--region', default=None, help='强制指定解剖区域')
     parser.add_argument('--gender', default='male', help='性别 male/female')
+    parser.add_argument('--height', type=float, default=None,
+                        help='患者身高(cm), 提供后启用体模缩放')
+    parser.add_argument('--weight', type=float, default=None,
+                        help='患者体重(kg), 提供后启用体模缩放')
     args = parser.parse_args()
 
     main_workflow_enhanced(args.ct_path, args.output_dir,
                           force_region=args.region,
-                          gender=args.gender)
+                          gender=args.gender,
+                          patient_height=args.height,
+                          patient_weight=args.weight)

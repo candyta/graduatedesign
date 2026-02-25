@@ -241,7 +241,7 @@ class CTPhantomFusion:
         
         # 将CT的HU值转换为体模的器官ID
         ct_as_organ_ids = self._convert_hu_to_organ_ids(ct_region)
-        
+
         # 如果有肿瘤掩膜，特殊处理肿瘤区域
         if self.tumor_mask is not None:
             tumor_region = self.tumor_mask[
@@ -249,53 +249,155 @@ class CTPhantomFusion:
                 ct_offset[1]:ct_region_end[1],
                 ct_offset[2]:ct_region_end[2]
             ]
-            
+
             # 肿瘤用特殊的器官ID（例如999）
             ct_as_organ_ids[tumor_region] = 999
-            
+
             print(f"  肿瘤体素数: {np.sum(tumor_region)}")
-        
+
+        # ★ 横截面轮廓自适应匹配 ★
+        # 在Z边界处测量CT和体模的体宽，对CT做自适应XY缩放
+        phantom_overlap = fusion_result[
+            ct_start_clipped[0]:ct_end_clipped[0],
+            ct_start_clipped[1]:ct_end_clipped[1],
+            ct_start_clipped[2]:ct_end_clipped[2]
+        ]
+        ct_as_organ_ids = self._adaptive_xy_scale(
+            ct_as_organ_ids, phantom_overlap)
+
         # 创建过渡区域掩膜
         transition_mask = self._create_transition_mask(
             ct_region.shape,
             transition_width
         )
-        
+
         # 融合：
         # - 中心区域：完全使用CT
         # - 过渡区域：混合
         # - 外部区域：保持体模
-        
+
         # 中心区域（非过渡区）
         core_mask = transition_mask == 0
-        
+
         # 直接替换中心区域
         fusion_result[
             ct_start_clipped[0]:ct_end_clipped[0],
             ct_start_clipped[1]:ct_end_clipped[1],
             ct_start_clipped[2]:ct_end_clipped[2]
         ][core_mask] = ct_as_organ_ids[core_mask]
-        
+
         # 过渡区域：平滑混合
         for i in range(1, transition_width + 1):
             layer_mask = transition_mask == i
-            
+
             # 简化：在过渡区域优先使用CT
             fusion_result[
                 ct_start_clipped[0]:ct_end_clipped[0],
                 ct_start_clipped[1]:ct_end_clipped[1],
                 ct_start_clipped[2]:ct_end_clipped[2]
             ][layer_mask] = ct_as_organ_ids[layer_mask]
-        
+
         self.fusion_result = fusion_result
-        
+
         replacement_volume = np.sum(core_mask) + np.sum(transition_mask > 0)
-        print(f"✓ 融合完成")
+        print(f"  融合完成")
         print(f"  替换体素数: {replacement_volume:,}")
         print(f"  替换比例: {replacement_volume / fusion_result.size * 100:.2f}%")
-        
+
         return fusion_result
     
+    def _adaptive_xy_scale(self, ct_organ_ids: np.ndarray,
+                           phantom_region: np.ndarray,
+                           blend_slices: int = 3) -> np.ndarray:
+        """
+        在Z边界处测量CT与体模的XY体宽, 对CT做逐层自适应缩放
+        使融合边界处的轮廓连续。
+
+        中心区域保持CT原始精度，边界处逐渐缩放以匹配体模轮廓。
+        """
+        nz = ct_organ_ids.shape[2]
+        if nz < 4:
+            return ct_organ_ids
+
+        nx, ny, _ = ct_organ_ids.shape
+
+        # 逐层测量身体XY宽度
+        ct_xw = np.zeros(nz)
+        ct_yw = np.zeros(nz)
+        ph_xw = np.zeros(nz)
+        ph_yw = np.zeros(nz)
+
+        for k in range(nz):
+            ct_body = ct_organ_ids[:, :, k] > 0
+            ph_body = phantom_region[:, :, k] > 0
+            if np.any(ct_body):
+                xs = np.where(ct_body)[0]
+                ys = np.where(ct_body)[1]
+                ct_xw[k] = xs.max() - xs.min() + 1
+                ct_yw[k] = ys.max() - ys.min() + 1
+            if np.any(ph_body):
+                xs = np.where(ph_body)[0]
+                ys = np.where(ph_body)[1]
+                ph_xw[k] = xs.max() - xs.min() + 1
+                ph_yw[k] = ys.max() - ys.min() + 1
+
+        bs = min(blend_slices, nz // 4, 3)
+        bs = max(bs, 1)
+
+        def _avg_ratio(ct_w, ph_w, idx_list):
+            ratios = []
+            for i in idx_list:
+                if ct_w[i] > 5 and ph_w[i] > 5:
+                    ratios.append(ph_w[i] / ct_w[i])
+            return np.mean(ratios) if ratios else 1.0
+
+        sx_bot = _avg_ratio(ct_xw, ph_xw, list(range(0, bs)))
+        sy_bot = _avg_ratio(ct_yw, ph_yw, list(range(0, bs)))
+        sx_top = _avg_ratio(ct_xw, ph_xw, list(range(nz - bs, nz)))
+        sy_top = _avg_ratio(ct_yw, ph_yw, list(range(nz - bs, nz)))
+
+        if (abs(sx_bot - 1) < 0.05 and abs(sx_top - 1) < 0.05 and
+                abs(sy_bot - 1) < 0.05 and abs(sy_top - 1) < 0.05):
+            print(f"  [轮廓匹配] CT与体模宽度差异<5%, 无需缩放")
+            return ct_organ_ids
+
+        print(f"  [轮廓匹配] 底部缩放 X={sx_bot:.3f} Y={sy_bot:.3f}")
+        print(f"  [轮廓匹配] 顶部缩放 X={sx_top:.3f} Y={sy_top:.3f}")
+
+        result = ct_organ_ids.copy()
+        for k in range(nz):
+            t = k / max(nz - 1, 1)
+            dist_to_edge = min(k, nz - 1 - k)
+            fade_zone = max(nz * 0.3, 1)
+            w = max(0.0, 1.0 - dist_to_edge / fade_zone)
+
+            sx = 1.0 + w * ((sx_bot * (1 - t) + sx_top * t) - 1.0)
+            sy = 1.0 + w * ((sy_bot * (1 - t) + sy_top * t) - 1.0)
+
+            if abs(sx - 1) < 0.02 and abs(sy - 1) < 0.02:
+                continue
+
+            layer = ct_organ_ids[:, :, k].astype(np.float32)
+            scaled = ndimage.zoom(layer, (sx, sy), order=0)
+            snx, sny = scaled.shape
+            out = np.zeros((nx, ny), dtype=np.int16)
+
+            src_x0 = max(0, (snx - nx) // 2)
+            src_y0 = max(0, (sny - ny) // 2)
+            dst_x0 = max(0, (nx - snx) // 2)
+            dst_y0 = max(0, (ny - sny) // 2)
+            cw = min(snx - src_x0, nx - dst_x0)
+            ch = min(sny - src_y0, ny - dst_y0)
+
+            out[dst_x0:dst_x0 + cw,
+                dst_y0:dst_y0 + ch] = scaled[
+                src_x0:src_x0 + cw,
+                src_y0:src_y0 + ch].astype(np.int16)
+            result[:, :, k] = out
+
+        print(f"  [轮廓匹配] 自适应缩放完成")
+        return result
+
     def _convert_hu_to_organ_ids(self, ct_data: np.ndarray) -> np.ndarray:
         """
         将CT的HU值转换为器官ID
