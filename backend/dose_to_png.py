@@ -19,7 +19,7 @@ import numpy as np
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
 from pathlib import Path
-from scipy.ndimage import distance_transform_edt, gaussian_filter
+from scipy.ndimage import gaussian_filter
 
 
 def normalize_array(array, percentile_clip=99.5):
@@ -45,17 +45,20 @@ def normalize_array(array, percentile_clip=99.5):
     return normalized
 
 
-def fill_zero_dose_by_distance(dose_array, body_mask, decay_length=40.0,
-                                spread_sigma=20.0, transition_voxels=50):
+def fill_zero_dose_by_distance(dose_array, body_mask, n_iterations=15,
+                                sigma=6.0):
     """
-    参考 Kollitz et al. (PMB 2022) 的过渡区方法，用高斯扩散 + cosine taper
-    实现局部CT剂量区与全身之间的无缝过渡。
+    使用迭代高斯扩散填充体内零剂量区域。
 
-    核心思路：
-    1. 高斯扩散将真实剂量自然向外蔓延，得到局部平均剂量场 (spread_dose)
-    2. 剂量区域内侧用 ~10cm 宽的 cosine taper 从真实值渐变到 spread_dose
-    3. 剂量区域外侧用 spread_dose × 指数衰减
-    4. 边界处内外值严格连续（均 ≈ spread_dose），消除矩形硬边界
+    等效于在 Dirichlet 边界条件下求解稳态热传导方程:
+      每次迭代: 高斯模糊全场 -> 恢复已知剂量值 -> 体外置零
+    经过足够迭代后，剂量从已知区域自然蔓延到全身，
+    边界处无硬跳变，过渡天然平滑。
+
+    相比旧版 (normalized Gaussian + cosine taper) 的优势:
+    - 无归一化除零问题 (旧版 smoothed_mask -> 0 导致 spread_dose 不稳定)
+    - 无二值阈值跳变 (旧版 weights > 0.5 导致硬切换)
+    - 参数更少更鲁棒
 
     Parameters:
     -----------
@@ -63,12 +66,10 @@ def fill_zero_dose_by_distance(dose_array, body_mask, decay_length=40.0,
         剂量数组（可能有大量零值）
     body_mask : np.ndarray (bool)
         体内mask
-    decay_length : float
-        远场指数衰减常数（体素单位）
-    spread_sigma : float
-        高斯扩散核标准差（体素单位）
-    transition_voxels : int
-        内侧过渡带宽度（体素单位），~50体素≈10cm（参考文献值）
+    n_iterations : int
+        迭代次数，默认15 (sigma=6时有效扩散半径 ~15*18=270体素，足够覆盖全身)
+    sigma : float
+        高斯核标准差（体素单位），默认6.0
 
     Returns:
     --------
@@ -82,39 +83,24 @@ def fill_zero_dose_by_distance(dose_array, body_mask, decay_length=40.0,
     if not np.any(body_no_dose):
         return original
 
-    # ---- Step 1: 高斯扩散 → 生成局部平均剂量场 ----
-    smoothed_dose = gaussian_filter(original, sigma=spread_sigma)
-    mask_float = has_dose.astype(np.float64)
-    smoothed_mask = gaussian_filter(mask_float, sigma=spread_sigma)
-    smoothed_mask = np.maximum(smoothed_mask, 1e-10)
-    # 归一化：消除边缘稀释效应，得到真正的局部加权平均
-    spread_dose = smoothed_dose / smoothed_mask
-    spread_dose = np.clip(spread_dose, 0, original.max() * 2)
+    known_dose = original.copy()
+    result = original.copy()
 
-    # ---- Step 2: 计算距离场 ----
-    dist_outside = distance_transform_edt(~has_dose).astype(np.float64)
-    dist_inside = distance_transform_edt(has_dose).astype(np.float64)
+    body_has = int(np.sum(has_dose & body_mask))
+    body_total = int(np.sum(body_mask))
+    print(f"  [迭代扩散] 体内有剂量: {body_has}/{body_total} "
+          f"({body_has / max(body_total, 1) * 100:.1f}%)")
+    print(f"  [迭代扩散] 参数: {n_iterations}次迭代, sigma={sigma}")
 
-    # ---- Step 3: 构建最终剂量场 ----
-    result = np.zeros_like(original)
+    for _ in range(n_iterations):
+        result = gaussian_filter(result, sigma=sigma)
+        result[has_dose] = known_dose[has_dose]   # Dirichlet: 恢复已知值
+        result[~body_mask] = 0.0                   # 体外置零
 
-    # (a) 剂量区域内侧：cosine taper 从原始值 → spread_dose
-    #     边界处(dist=0): weight=0 → 全用spread_dose
-    #     深处(dist>=transition): weight=1 → 全用原始值
-    inner_t = np.clip(dist_inside / transition_voxels, 0, 1)
-    inner_weight = 0.5 * (1.0 - np.cos(np.pi * inner_t))
-    inside_vals = inner_weight * original + (1.0 - inner_weight) * spread_dose
-
-    # (b) 剂量区域外侧：spread_dose × 指数衰减
-    decay = np.exp(-dist_outside / decay_length)
-    outside_vals = spread_dose * decay
-
-    # 组合：has_dose区域用内侧混合值，其余用外侧衰减值
-    result = np.where(has_dose, inside_vals, outside_vals)
-
-    # 体外置零
-    result[~body_mask] = 0.0
     result = np.maximum(result, 0.0)
+
+    filled_count = int(np.sum(body_mask & (result > 0))) - body_has
+    print(f"  [迭代扩散] 新填充体素: {filled_count:,}")
 
     return result
 

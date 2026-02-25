@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-CT-体模融合算法（改造版）
+CT-体模融合算法
 
-核心改动:
-1. simple_fusion() 添加 distance_transform 过渡带平滑
-2. generate_mcnp_input_enhanced() 完全重写为多材料体素lattice几何
-3. 降采样策略: 2×2×2合并 → ~90万体素 (平衡精度与MCNP可行性)
+核心方法:
+1. simple_fusion(): sigmoid 过渡带融合 (Kollitz et al., PMB 2022)
+   - Z方向: 10 cm sigmoid 消除 CT in-field 上下端硬边界
+   - XY方向: 2 cm sigmoid 消除体表轮廓不匹配环状伪影
+2. generate_mcnp_input_enhanced(): 多材料体素 lattice 几何
+3. 降采样策略: 2x2x2 合并 -> ~90万体素
 
 Author: BNCT Team
 Date: 2026-02
@@ -202,188 +204,37 @@ def smart_registration(ct_data, phantom_data, phantom_voxel_size, force_region=N
 
 
 # =====================================================================
-# 3. 横截面轮廓测量与自适应缩放
+# 3. Sigmoid 过渡带融合 (Kollitz et al., PMB 2022)
 # =====================================================================
 
-def _measure_body_extent(slice_2d, threshold=0):
-    """
-    测量单个2D切片(X,Y)中身体区域的X/Y范围。
+def _sigmoid(x):
+    """数值稳定的 sigmoid 函数"""
+    return np.where(x >= 0,
+                    1.0 / (1.0 + np.exp(-x)),
+                    np.exp(x) / (1.0 + np.exp(x)))
 
-    Parameters
-    ----------
-    slice_2d : np.ndarray  shape=(nx, ny)
-        器官ID切片 (>0表示体内)
-    threshold : int
-        体内阈值
-
-    Returns
-    -------
-    dict  {'x_min','x_max','x_width','y_min','y_max','y_width','cx','cy'}
-          如果无身体区域则返回 None
-    """
-    body = slice_2d > threshold
-    if not np.any(body):
-        return None
-    xs, ys = np.where(body)
-    return {
-        'x_min': int(xs.min()), 'x_max': int(xs.max()),
-        'x_width': int(xs.max() - xs.min() + 1),
-        'y_min': int(ys.min()), 'y_max': int(ys.max()),
-        'y_width': int(ys.max() - ys.min() + 1),
-        'cx': float(xs.mean()), 'cy': float(ys.mean()),
-    }
-
-
-def _adaptive_xy_scale_ct(ct_materials, phantom_region, blend_slices=8):
-    """
-    计算CT在每个Z切片上相对体模的自适应XY缩放因子,
-    然后对CT材料数组逐层应用缩放,使边界处轮廓对齐。
-
-    策略:
-    - 在CT的上/下边界各取若干层,测量CT身体宽度与体模身体宽度之比
-    - 用线性插值得到中间各层的缩放因子
-    - 对每层做 ndimage.zoom + 居中裁剪/填充
-
-    Parameters
-    ----------
-    ct_materials : np.ndarray  (nx_ct, ny_ct, nz_ct)  int16
-    phantom_region : np.ndarray  同shape  int16
-    blend_slices : int
-        边界处用来测量平均宽度的层数
-
-    Returns
-    -------
-    np.ndarray  缩放后的ct_materials (同shape)
-    """
-    nz = ct_materials.shape[2]
-    if nz < 4:
-        return ct_materials
-
-    # -- 逐层测量CT和体模的X/Y宽度 --
-    ct_xw = np.zeros(nz)
-    ct_yw = np.zeros(nz)
-    ph_xw = np.zeros(nz)
-    ph_yw = np.zeros(nz)
-
-    for k in range(nz):
-        ct_ext = _measure_body_extent(ct_materials[:, :, k])
-        ph_ext = _measure_body_extent(phantom_region[:, :, k])
-        if ct_ext:
-            ct_xw[k] = ct_ext['x_width']
-            ct_yw[k] = ct_ext['y_width']
-        if ph_ext:
-            ph_xw[k] = ph_ext['x_width']
-            ph_yw[k] = ph_ext['y_width']
-
-    # -- 计算边界处的平均缩放比 --
-    bs = min(blend_slices, nz // 4, 3)
-    bs = max(bs, 1)
-
-    def _avg_ratio(ct_w, ph_w, slices_idx):
-        """安全地计算平均缩放比"""
-        ratios = []
-        for i in slices_idx:
-            if ct_w[i] > 5 and ph_w[i] > 5:
-                ratios.append(ph_w[i] / ct_w[i])
-        return np.mean(ratios) if ratios else 1.0
-
-    # 底部边界 (Z小端)
-    bottom_idx = list(range(0, bs))
-    sx_bottom = _avg_ratio(ct_xw, ph_xw, bottom_idx)
-    sy_bottom = _avg_ratio(ct_yw, ph_yw, bottom_idx)
-
-    # 顶部边界 (Z大端)
-    top_idx = list(range(nz - bs, nz))
-    sx_top = _avg_ratio(ct_xw, ph_xw, top_idx)
-    sy_top = _avg_ratio(ct_yw, ph_yw, top_idx)
-
-    # 如果缩放比接近1, 无需处理
-    if (abs(sx_bottom - 1.0) < 0.05 and abs(sx_top - 1.0) < 0.05 and
-            abs(sy_bottom - 1.0) < 0.05 and abs(sy_top - 1.0) < 0.05):
-        print(f"  [轮廓匹配] 边界处CT与体模宽度差异<5%, 无需自适应缩放")
-        return ct_materials
-
-    print(f"  [轮廓匹配] 底部缩放比 X={sx_bottom:.3f} Y={sy_bottom:.3f}")
-    print(f"  [轮廓匹配] 顶部缩放比 X={sx_top:.3f} Y={sy_top:.3f}")
-
-    # -- 逐层线性插值缩放因子 + 缩放 --
-    result = ct_materials.copy()
-    nx, ny, _ = ct_materials.shape
-
-    # 定义过渡区域: 边界处应用完整缩放, 中心区域逐渐过渡到1.0
-    # 使用cosine衰减: 边界→缩放, 中心→不缩放(保留CT原始精度)
-    mid = nz / 2.0
-    for k in range(nz):
-        # t: 0在底部, 1在顶部
-        t = k / max(nz - 1, 1)
-        # 边界权重: 靠近边界时为1, 靠近中心时为0
-        dist_to_edge = min(k, nz - 1 - k)
-        fade_zone = nz * 0.3  # 30%深度处完全过渡到1.0
-        if fade_zone < 1:
-            fade_zone = 1
-        edge_weight = max(0.0, 1.0 - dist_to_edge / fade_zone)
-
-        # 插值得到当前层的缩放比
-        sx_boundary = sx_bottom * (1.0 - t) + sx_top * t
-        sy_boundary = sy_bottom * (1.0 - t) + sy_top * t
-
-        # 用edge_weight混合: 边界处用boundary缩放, 中心处用1.0
-        sx = 1.0 + edge_weight * (sx_boundary - 1.0)
-        sy = 1.0 + edge_weight * (sy_boundary - 1.0)
-
-        # 如果缩放比足够接近1,跳过
-        if abs(sx - 1.0) < 0.02 and abs(sy - 1.0) < 0.02:
-            continue
-
-        # 对该层进行缩放
-        layer = ct_materials[:, :, k].astype(np.float32)
-        scaled_layer = ndimage.zoom(layer, (sx, sy), order=0)
-
-        # 居中放回原尺寸
-        snx, sny = scaled_layer.shape
-        out_layer = np.zeros((nx, ny), dtype=np.int16)
-
-        # 源裁剪范围
-        src_x0 = max(0, (snx - nx) // 2)
-        src_y0 = max(0, (sny - ny) // 2)
-        src_x1 = src_x0 + min(snx, nx)
-        src_y1 = src_y0 + min(sny, ny)
-        if src_x1 > snx:
-            src_x1 = snx
-        if src_y1 > sny:
-            src_y1 = sny
-
-        # 目标放置范围
-        dst_x0 = max(0, (nx - snx) // 2)
-        dst_y0 = max(0, (ny - sny) // 2)
-
-        copy_w = min(src_x1 - src_x0, nx - dst_x0)
-        copy_h = min(src_y1 - src_y0, ny - dst_y0)
-
-        out_layer[dst_x0:dst_x0 + copy_w,
-                  dst_y0:dst_y0 + copy_h] = scaled_layer[
-            src_x0:src_x0 + copy_w,
-            src_y0:src_y0 + copy_h].astype(np.int16)
-
-        result[:, :, k] = out_layer
-
-    print(f"  [轮廓匹配] 自适应缩放完成")
-    return result
-
-
-# =====================================================================
-# 4. 融合 (带轮廓匹配 + 过渡带平滑)
-# =====================================================================
 
 def simple_fusion(ct_data, phantom_data, registration,
-                  transition_width=5,
+                  transition_cm=10.0,
                   ct_spacing=(1.0, 1.0, 1.0),
                   phantom_spacing=(2.137, 2.137, 8.0)):
     """
     将CT数据重采样到体模体素网格后插入体模。
-    含横截面轮廓自适应匹配 + 过渡带平滑。
+
+    参考 Kollitz et al. (PMB 2022, Sec 2.1.3):
+    在CT in-field 的 Z方向末端使用 sigmoid 函数，
+    以预设距离 (默认10 cm) 平滑衰减替换权重至零，
+    消除 CT/phantom 材料边界处的硬跳变。
+
+    XY 方向同样使用 sigmoid 从体表边缘向内过渡，
+    避免轮廓不匹配导致的环状伪影。
+
+    Parameters
+    ----------
+    transition_cm : float
+        Sigmoid 过渡带物理宽度 (cm)。默认10 cm (Kollitz et al.)
     """
-    print("\n[执行融合]")
+    print("\n[执行融合 — Sigmoid 过渡带, Kollitz et al.]")
     fusion_result = phantom_data.copy()
 
     # -- 1. 重采样CT到体模分辨率 --
@@ -411,7 +262,7 @@ def simple_fusion(ct_data, phantom_data, registration,
 
     print(f"  插入位置: {start_pos} -> {end_pos}")
 
-    # -- 3. HU → 材料 (体内/体外分离) --
+    # -- 3. HU -> 材料 (体内/体外分离) --
     ct_region = ct_resampled[ct_start[0]:ct_end[0],
                              ct_start[1]:ct_end[1],
                              ct_start[2]:ct_end[2]]
@@ -432,55 +283,74 @@ def simple_fusion(ct_data, phantom_data, registration,
     interior_air = is_air & (~exterior_air)
 
     ct_materials = np.zeros_like(ct_region, dtype=np.int16)
-    ct_materials[interior_air] = 81                          # 肺/体内空气 → ICRP lung id
+    ct_materials[interior_air] = 81                              # 肺/体内空气
     ct_materials[(ct_region >= -500) & (ct_region < 100)] = 107  # 软组织
-    ct_materials[ct_region >= 100] = 46                       # 骨骼 (cortical bone id)
+    ct_materials[ct_region >= 100] = 46                          # 骨骼
     # exterior_air 保持 0
 
-    # -- 4. ★ 横截面轮廓自适应匹配 ★ --
-    phantom_region_orig = fusion_result[
+    ct_body_mask = (ct_materials > 0)
+    nx, ny, nz = ct_materials.shape
+
+    # -- 4. 构建 sigmoid 权重场 (Kollitz Sec 2.1.3) --
+    #
+    #   sigmoid(d) 从 ~0 过渡到 ~1:
+    #     d=0 (边缘)   -> ~0.05
+    #     d=half       -> 0.50
+    #     d=full width -> ~0.95
+    #
+    #   Z 方向: 10 cm 过渡距离
+    #   XY方向: 2 cm 过渡距离 (体表内缩方向)
+
+    # ---- Z 方向 sigmoid ----
+    trans_vox_z = transition_cm * 10.0 / phantom_spacing[2]   # cm->mm->voxels
+    half_z = trans_vox_z / 2.0
+    k_z = 6.0 / max(trans_vox_z, 1.0)   # 6/width 让 sigmoid 在 [0,width] 内跨越 ~5%--95%
+
+    z_weight = np.ones(nz, dtype=np.float32)
+    for k in range(nz):
+        dist_to_z_edge = float(min(k, nz - 1 - k))
+        z_weight[k] = _sigmoid((dist_to_z_edge - half_z) * k_z)
+
+    # ---- XY 方向 sigmoid (逐层 2D 距离变换) ----
+    xy_trans_cm = 2.0                                           # 2 cm XY 过渡
+    xy_trans_vox = xy_trans_cm * 10.0 / phantom_spacing[0]
+    half_xy = xy_trans_vox / 2.0
+    k_xy = 6.0 / max(xy_trans_vox, 1.0)
+
+    weight_3d = np.zeros((nx, ny, nz), dtype=np.float32)
+    for k in range(nz):
+        slice_mask = ct_body_mask[:, :, k]
+        if not np.any(slice_mask):
+            continue
+        dist_2d = ndimage.distance_transform_edt(slice_mask).astype(np.float32)
+        xy_w = _sigmoid((dist_2d - half_xy) * k_xy)
+        weight_3d[:, :, k] = z_weight[k] * xy_w
+
+    print(f"  [Sigmoid] Z过渡: {trans_vox_z:.1f} 层 ({transition_cm} cm), "
+          f"XY过渡: {xy_trans_vox:.1f} 体素 ({xy_trans_cm} cm)")
+
+    # -- 5. 用 sigmoid 权重决定替换区域 --
+    #   weight > 0.5 的等值面即为 sigmoid 的中点,
+    #   其形状是圆润的曲面 (不再是矩形硬边界)
+    phantom_region = fusion_result[
         start_pos[0]:end_pos[0],
         start_pos[1]:end_pos[1],
         start_pos[2]:end_pos[2]
     ].copy()
 
-    print("  [轮廓匹配] 对CT进行自适应XY缩放以匹配体模轮廓...")
-    ct_materials = _adaptive_xy_scale_ct(ct_materials, phantom_region_orig)
-
-    # -- 5. 过渡带平滑 --
-    ct_body_mask = (ct_materials > 0)
-
-    if transition_width > 0 and np.any(ct_body_mask):
-        # 计算CT体内区域到边界的距离
-        dist_outside = ndimage.distance_transform_edt(~ct_body_mask)
-
-        # 过渡带: CT边界外侧 1~transition_width 体素
-        trans_mask = (dist_outside > 0) & (dist_outside <= transition_width)
-
-        # 权重: 1.0 在边界, 0.0 在过渡带外缘
-        weights = np.zeros_like(dist_outside, dtype=np.float32)
-        weights[trans_mask] = 1.0 - dist_outside[trans_mask] / transition_width
-
-        # 在过渡带内，用权重在CT材料和体模之间混合
-        transition_zone = trans_mask & (phantom_region_orig > 0)
-        # 高权重(靠近CT) → 用CT, 低权重 → 用体模
-        use_ct = transition_zone & (weights > 0.5) & (ct_materials > 0)
-        phantom_region_orig[use_ct] = ct_materials[use_ct]
-
-        print(f"  过渡带体素: {np.sum(transition_zone):,}")
-
-    # -- 6. 核心区域直接替换 --
-    replace_mask = ct_body_mask
-    phantom_region_orig[replace_mask] = ct_materials[replace_mask]
+    # 替换条件: CT有体 & 权重超过中点 & 体模也有体(避免CT扩展到体外)
+    replace_mask = ct_body_mask & (weight_3d > 0.5) & (phantom_region > 0)
+    phantom_region[replace_mask] = ct_materials[replace_mask]
 
     fusion_result[
         start_pos[0]:end_pos[0],
         start_pos[1]:end_pos[1],
         start_pos[2]:end_pos[2]
-    ] = phantom_region_orig
+    ] = phantom_region
 
-    replaced = np.sum(fusion_result != phantom_data)
-    print(f"  OK 融合完成: 替换体素 {replaced:,} ({replaced / phantom_data.size * 100:.2f}%)")
+    replaced = int(np.sum(replace_mask))
+    print(f"  融合完成: 替换体素 {replaced:,} "
+          f"({replaced / phantom_data.size * 100:.2f}%)")
     return fusion_result
 
 
@@ -772,11 +642,11 @@ def main_workflow_enhanced(ct_path: str, output_dir: str,
         force_region=force_region,
     )
 
-    # 4. 融合(含轮廓匹配+过渡带)
-    print("\n[步骤4] 融合（含横截面轮廓匹配）")
+    # 4. 融合 (Sigmoid过渡带, Kollitz et al. PMB 2022)
+    print("\n[步骤4] 融合（Sigmoid过渡带）")
     fusion_result = simple_fusion(
         ct_data, phantom_data, registration,
-        transition_width=5,
+        transition_cm=10.0,
         ct_spacing=ct_spacing,
         phantom_spacing=voxel_size,
     )
@@ -807,7 +677,7 @@ def main_workflow_enhanced(ct_path: str, output_dir: str,
         'patient_height': patient_height,
         'patient_weight': patient_weight,
         'voxel_size_mm': list(voxel_size),
-        'version': '4.0_contour_matched',
+        'version': '5.0_sigmoid_transition',
     }
     metadata_path = output_dir / 'fusion_metadata.json'
     with open(metadata_path, 'w', encoding='utf-8') as f:
