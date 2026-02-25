@@ -19,7 +19,7 @@ import numpy as np
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
 from pathlib import Path
-from scipy.ndimage import distance_transform_edt
+from scipy.ndimage import distance_transform_edt, gaussian_filter
 
 
 def normalize_array(array, percentile_clip=99.5):
@@ -45,12 +45,11 @@ def normalize_array(array, percentile_clip=99.5):
     return normalized
 
 
-def fill_zero_dose_by_distance(dose_array, body_mask, decay_length=20.0):
+def fill_zero_dose_by_distance(dose_array, body_mask, decay_length=20.0,
+                                blend_sigma=5.0, blend_radius=10):
     """
     用距离衰减填充体内零值区域，确保全身每个体素都有非零剂量。
-
-    对体内零值体素，计算到最近有剂量体素的距离，
-    赋值 = boundary_dose * exp(-distance / decay_length)
+    在剂量区域边界处应用高斯平滑，实现无缝过渡。
 
     Parameters:
     -----------
@@ -60,10 +59,14 @@ def fill_zero_dose_by_distance(dose_array, body_mask, decay_length=20.0):
         体内mask
     decay_length : float
         衰减常数（体素单位），越大衰减越慢，剂量传播越远
+    blend_sigma : float
+        边界平滑的高斯核标准差（体素单位）
+    blend_radius : int
+        边界平滑区域的半径（体素单位），边界两侧各blend_radius个体素
 
     Returns:
     --------
-    np.ndarray: 填充后的剂量数组（体内无零值）
+    np.ndarray: 填充后的剂量数组（体内无零值，边界平滑过渡）
     """
     result = dose_array.copy().astype(np.float64)
 
@@ -82,13 +85,37 @@ def fill_zero_dose_by_distance(dose_array, body_mask, decay_length=20.0):
         boundary_dose = 1e-10
 
     # 计算每个零值体素到最近有剂量体素的欧氏距离
-    dist = distance_transform_edt(~has_dose).astype(np.float64)
+    dist_outside = distance_transform_edt(~has_dose).astype(np.float64)
 
     # 指数衰减: dose = boundary_dose * exp(-dist / decay_length)
-    fill_values = boundary_dose * np.exp(-dist / decay_length)
+    fill_values = boundary_dose * np.exp(-dist_outside / decay_length)
 
     # 只填充体内零值区域
     result[body_no_dose] = fill_values[body_no_dose]
+
+    # ---- 边界平滑：消除局部CT和全身之间的矩形硬边界 ----
+    # 计算剂量区域内侧到边界的距离
+    dist_inside = distance_transform_edt(has_dose).astype(np.float64)
+
+    # 对填充后的完整剂量场做高斯平滑
+    smoothed = gaussian_filter(result, sigma=blend_sigma)
+
+    # 在边界带内（内外各blend_radius个体素），用平滑值替代原值
+    near_boundary = body_mask & (
+        (dist_inside <= blend_radius) | (dist_outside <= blend_radius)
+    )
+
+    # 加权混合：距离边界越远越保留原值，越近越用平滑值
+    min_dist_to_edge = np.where(has_dose, dist_inside, dist_outside)
+    weight = np.clip(min_dist_to_edge / blend_radius, 0, 1)
+    # smoothstep: 更平滑的过渡曲线 (Hermite插值)
+    weight = weight * weight * (3 - 2 * weight)
+
+    # 在边界带内混合：weight=1保留原值，weight=0用平滑值
+    result[near_boundary] = (
+        weight[near_boundary] * result[near_boundary] +
+        (1 - weight[near_boundary]) * smoothed[near_boundary]
+    )
 
     return result
 
