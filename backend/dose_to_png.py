@@ -45,11 +45,14 @@ def normalize_array(array, percentile_clip=99.5):
     return normalized
 
 
-def fill_zero_dose_by_distance(dose_array, body_mask, decay_length=20.0,
-                                blend_sigma=5.0, blend_radius=10):
+def fill_zero_dose_by_distance(dose_array, body_mask, decay_length=30.0,
+                                spread_sigma=15.0):
     """
-    用距离衰减填充体内零值区域，确保全身每个体素都有非零剂量。
-    在剂量区域边界处应用高斯平滑，实现无缝过渡。
+    用高斯扩散 + 距离衰减填充体内零值区域，实现无缝过渡。
+
+    核心思路：不再使用全局常数作为填充起始值，而是将真实剂量通过
+    高斯扩散自然向外蔓延。这样边界处的填充值是局部真实剂量的延伸，
+    颜色渐变自然，消除矩形硬边界。
 
     Parameters:
     -----------
@@ -58,15 +61,13 @@ def fill_zero_dose_by_distance(dose_array, body_mask, decay_length=20.0,
     body_mask : np.ndarray (bool)
         体内mask
     decay_length : float
-        衰减常数（体素单位），越大衰减越慢，剂量传播越远
-    blend_sigma : float
-        边界平滑的高斯核标准差（体素单位）
-    blend_radius : int
-        边界平滑区域的半径（体素单位），边界两侧各blend_radius个体素
+        远场指数衰减常数（体素单位）
+    spread_sigma : float
+        高斯扩散核标准差（体素单位），控制剂量向外蔓延的范围
 
     Returns:
     --------
-    np.ndarray: 填充后的剂量数组（体内无零值，边界平滑过渡）
+    np.ndarray: 填充后的剂量数组（体内无零值，边界无缝过渡）
     """
     result = dose_array.copy().astype(np.float64)
 
@@ -76,46 +77,44 @@ def fill_zero_dose_by_distance(dose_array, body_mask, decay_length=20.0,
     if not np.any(body_no_dose):
         return result
 
-    # 获取有剂量区域边缘的低值作为衰减起始值
-    positive_vals = result[has_dose]
-    boundary_dose = np.percentile(positive_vals, 5)
-    if boundary_dose <= 0:
-        boundary_dose = positive_vals.min()
-    if boundary_dose <= 0:
-        boundary_dose = 1e-10
+    # ---- 高斯扩散：将真实剂量自然向外蔓延 ----
+    # 对剂量场做高斯模糊，使边界处的值自然扩散到周围
+    smoothed_dose = gaussian_filter(result, sigma=spread_sigma)
+    # 同时模糊mask，用于归一化（避免边缘稀释）
+    mask_float = has_dose.astype(np.float64)
+    smoothed_mask = gaussian_filter(mask_float, sigma=spread_sigma)
+    smoothed_mask = np.maximum(smoothed_mask, 1e-10)
+    # 归一化扩散值 = 局部加权平均剂量（边界处自然渐变）
+    spread_dose = smoothed_dose / smoothed_mask
+    # 防止极端值
+    dose_max = result.max()
+    spread_dose = np.clip(spread_dose, 0, dose_max * 2)
 
-    # 计算每个零值体素到最近有剂量体素的欧氏距离
+    # ---- 距离衰减：远离剂量区域的地方进一步衰减 ----
     dist_outside = distance_transform_edt(~has_dose).astype(np.float64)
+    decay = np.exp(-dist_outside / decay_length)
 
-    # 指数衰减: dose = boundary_dose * exp(-dist / decay_length)
-    fill_values = boundary_dose * np.exp(-dist_outside / decay_length)
+    # 填充值 = 局部扩散剂量 × 距离衰减
+    fill_values = spread_dose * decay
 
-    # 只填充体内零值区域
+    # 填充体内零值区域
     result[body_no_dose] = fill_values[body_no_dose]
 
-    # ---- 边界平滑：消除局部CT和全身之间的矩形硬边界 ----
-    # 计算剂量区域内侧到边界的距离
+    # ---- 内侧边界混合：剂量区域边缘也渐变过渡 ----
+    # 对剂量区域内部靠近边界的体素，将原始值与扩散值混合
     dist_inside = distance_transform_edt(has_dose).astype(np.float64)
+    blend_width = spread_sigma  # 过渡带宽度与扩散半径匹配
 
-    # 对填充后的完整剂量场做高斯平滑
-    smoothed = gaussian_filter(result, sigma=blend_sigma)
-
-    # 在边界带内（内外各blend_radius个体素），用平滑值替代原值
-    near_boundary = body_mask & (
-        (dist_inside <= blend_radius) | (dist_outside <= blend_radius)
-    )
-
-    # 加权混合：距离边界越远越保留原值，越近越用平滑值
-    min_dist_to_edge = np.where(has_dose, dist_inside, dist_outside)
-    weight = np.clip(min_dist_to_edge / blend_radius, 0, 1)
-    # smoothstep: 更平滑的过渡曲线 (Hermite插值)
-    weight = weight * weight * (3 - 2 * weight)
-
-    # 在边界带内混合：weight=1保留原值，weight=0用平滑值
-    result[near_boundary] = (
-        weight[near_boundary] * result[near_boundary] +
-        (1 - weight[near_boundary]) * smoothed[near_boundary]
-    )
+    near_edge_inside = body_mask & has_dose & (dist_inside <= blend_width)
+    if np.any(near_edge_inside):
+        # t: 0 在边界，1 在深处
+        t = dist_inside[near_edge_inside] / blend_width
+        t = np.clip(t, 0, 1)
+        t = t * t * (3 - 2 * t)  # smoothstep
+        result[near_edge_inside] = (
+            t * result[near_edge_inside] +
+            (1 - t) * spread_dose[near_edge_inside]
+        )
 
     return result
 
