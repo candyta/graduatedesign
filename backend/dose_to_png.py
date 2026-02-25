@@ -45,14 +45,17 @@ def normalize_array(array, percentile_clip=99.5):
     return normalized
 
 
-def fill_zero_dose_by_distance(dose_array, body_mask, decay_length=30.0,
-                                spread_sigma=15.0):
+def fill_zero_dose_by_distance(dose_array, body_mask, decay_length=40.0,
+                                spread_sigma=20.0, transition_voxels=50):
     """
-    用高斯扩散 + 距离衰减填充体内零值区域，实现无缝过渡。
+    参考 Kollitz et al. (PMB 2022) 的过渡区方法，用高斯扩散 + cosine taper
+    实现局部CT剂量区与全身之间的无缝过渡。
 
-    核心思路：不再使用全局常数作为填充起始值，而是将真实剂量通过
-    高斯扩散自然向外蔓延。这样边界处的填充值是局部真实剂量的延伸，
-    颜色渐变自然，消除矩形硬边界。
+    核心思路：
+    1. 高斯扩散将真实剂量自然向外蔓延，得到局部平均剂量场 (spread_dose)
+    2. 剂量区域内侧用 ~10cm 宽的 cosine taper 从真实值渐变到 spread_dose
+    3. 剂量区域外侧用 spread_dose × 指数衰减
+    4. 边界处内外值严格连续（均 ≈ spread_dose），消除矩形硬边界
 
     Parameters:
     -----------
@@ -63,58 +66,55 @@ def fill_zero_dose_by_distance(dose_array, body_mask, decay_length=30.0,
     decay_length : float
         远场指数衰减常数（体素单位）
     spread_sigma : float
-        高斯扩散核标准差（体素单位），控制剂量向外蔓延的范围
+        高斯扩散核标准差（体素单位）
+    transition_voxels : int
+        内侧过渡带宽度（体素单位），~50体素≈10cm（参考文献值）
 
     Returns:
     --------
     np.ndarray: 填充后的剂量数组（体内无零值，边界无缝过渡）
     """
-    result = dose_array.copy().astype(np.float64)
+    original = dose_array.copy().astype(np.float64)
 
-    has_dose = result > 0
+    has_dose = original > 0
     body_no_dose = body_mask & (~has_dose)
 
     if not np.any(body_no_dose):
-        return result
+        return original
 
-    # ---- 高斯扩散：将真实剂量自然向外蔓延 ----
-    # 对剂量场做高斯模糊，使边界处的值自然扩散到周围
-    smoothed_dose = gaussian_filter(result, sigma=spread_sigma)
-    # 同时模糊mask，用于归一化（避免边缘稀释）
+    # ---- Step 1: 高斯扩散 → 生成局部平均剂量场 ----
+    smoothed_dose = gaussian_filter(original, sigma=spread_sigma)
     mask_float = has_dose.astype(np.float64)
     smoothed_mask = gaussian_filter(mask_float, sigma=spread_sigma)
     smoothed_mask = np.maximum(smoothed_mask, 1e-10)
-    # 归一化扩散值 = 局部加权平均剂量（边界处自然渐变）
+    # 归一化：消除边缘稀释效应，得到真正的局部加权平均
     spread_dose = smoothed_dose / smoothed_mask
-    # 防止极端值
-    dose_max = result.max()
-    spread_dose = np.clip(spread_dose, 0, dose_max * 2)
+    spread_dose = np.clip(spread_dose, 0, original.max() * 2)
 
-    # ---- 距离衰减：远离剂量区域的地方进一步衰减 ----
+    # ---- Step 2: 计算距离场 ----
     dist_outside = distance_transform_edt(~has_dose).astype(np.float64)
-    decay = np.exp(-dist_outside / decay_length)
-
-    # 填充值 = 局部扩散剂量 × 距离衰减
-    fill_values = spread_dose * decay
-
-    # 填充体内零值区域
-    result[body_no_dose] = fill_values[body_no_dose]
-
-    # ---- 内侧边界混合：剂量区域边缘也渐变过渡 ----
-    # 对剂量区域内部靠近边界的体素，将原始值与扩散值混合
     dist_inside = distance_transform_edt(has_dose).astype(np.float64)
-    blend_width = spread_sigma  # 过渡带宽度与扩散半径匹配
 
-    near_edge_inside = body_mask & has_dose & (dist_inside <= blend_width)
-    if np.any(near_edge_inside):
-        # t: 0 在边界，1 在深处
-        t = dist_inside[near_edge_inside] / blend_width
-        t = np.clip(t, 0, 1)
-        t = t * t * (3 - 2 * t)  # smoothstep
-        result[near_edge_inside] = (
-            t * result[near_edge_inside] +
-            (1 - t) * spread_dose[near_edge_inside]
-        )
+    # ---- Step 3: 构建最终剂量场 ----
+    result = np.zeros_like(original)
+
+    # (a) 剂量区域内侧：cosine taper 从原始值 → spread_dose
+    #     边界处(dist=0): weight=0 → 全用spread_dose
+    #     深处(dist>=transition): weight=1 → 全用原始值
+    inner_t = np.clip(dist_inside / transition_voxels, 0, 1)
+    inner_weight = 0.5 * (1.0 - np.cos(np.pi * inner_t))
+    inside_vals = inner_weight * original + (1.0 - inner_weight) * spread_dose
+
+    # (b) 剂量区域外侧：spread_dose × 指数衰减
+    decay = np.exp(-dist_outside / decay_length)
+    outside_vals = spread_dose * decay
+
+    # 组合：has_dose区域用内侧混合值，其余用外侧衰减值
+    result = np.where(has_dose, inside_vals, outside_vals)
+
+    # 体外置零
+    result[~body_mask] = 0.0
+    result = np.maximum(result, 0.0)
 
     return result
 
@@ -372,7 +372,7 @@ def process_dose_3d(npy_path, output_dir, ref_nii_path,
 
     if body_zero_count > 0 and np.any(has_dose):
         dose_array_filled = fill_zero_dose_by_distance(
-            dose_array_resampled, body_mask_3d, decay_length=25.0
+            dose_array_resampled, body_mask_3d
         )
         new_zero = np.sum(body_mask_3d & (dose_array_filled <= 0))
         print(f"  填充后体内零值: {new_zero}")
