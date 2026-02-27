@@ -99,13 +99,6 @@
                     class="medical-image"
                     @error="handleImageError"
                   />
-                  <!-- 剂量叠加层 -->
-                  <img 
-                    v-if="slices['dose' + capitalize(view)] && slices['dose' + capitalize(view)][sliceIndices[view]]"
-                    :src="getImageUrl(slices['dose' + capitalize(view)][sliceIndices[view]])"
-                    class="dose-overlay"
-                    :style="{ opacity: doseOpacity / 100 }"
-                  />
                   <div v-if="!slices[view] || slices[view].length === 0" class="placeholder">
                     <p>📷</p>
                     <p>等待加载影像数据...</p>
@@ -123,14 +116,6 @@
               </div>
             </div>
 
-            <!-- 剂量透明度控制（已禁用 - PNG图像无法动态调整） -->
-            <!--
-            <div v-if="hasDoseData" class="dose-control-bar">
-              <label>剂量叠加透明度:</label>
-              <input v-model.number="doseOpacity" type="range" min="0" max="100" class="slider" />
-              <span>{{ doseOpacity }}%</span>
-            </div>
-            -->
           </section>
         </div>
       </div>
@@ -138,32 +123,6 @@
       <!-- Tab 2: MCNP计算 -->
       <div v-show="activeTab === 'mcnp'" class="tab-content">
         <div class="mcnp-workspace">
-
-          <!-- 患者参数面板 (用于体模选择和缩放) -->
-          <div class="patient-params-panel" style="margin-bottom:16px; padding:16px; background:#f0f7ff; border-radius:8px; border:1px solid #d0e3f7;">
-            <h3 style="margin:0 0 12px 0;">🧑‍⚕️ 患者参数（体模构建用）</h3>
-            <div style="display:flex; gap:16px; flex-wrap:wrap;">
-              <div class="control-item">
-                <label>性别</label>
-                <select v-model="phantomGender" style="padding:6px 10px; border-radius:4px; border:1px solid #ccc;">
-                  <option value="male">男性 (AM体模)</option>
-                  <option value="female">女性 (AF体模)</option>
-                </select>
-              </div>
-              <div class="control-item">
-                <label>肿瘤区域</label>
-                <select v-model="phantomTumorRegion" style="padding:6px 10px; border-radius:4px; border:1px solid #ccc;">
-                  <option value="">自动识别</option>
-                  <option value="brain">脑部 (Brain)</option>
-                  <option value="nasopharynx">鼻咽 (Nasopharynx)</option>
-                  <option value="chest">胸部 (Chest)</option>
-                  <option value="abdomen">腹部 (Abdomen)</option>
-                  <option value="liver">肝脏 (Liver)</option>
-                  <option value="pelvis">骨盆 (Pelvis)</option>
-                </select>
-              </div>
-            </div>
-          </div>
 
           <div class="workflow-steps">
             <div 

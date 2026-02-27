@@ -209,6 +209,9 @@ def save_overlay_slices(dose_data, ct_data, output_dir, view_name,
 
         # 体外 → 全透明 (已经是0)
 
+        # 垂直翻转，使图像符合医学影像惯例（与nii_preview.py的origin='lower'一致）
+        out_rgba = out_rgba[::-1]
+
         img = Image.fromarray(out_rgba, mode='RGBA')
 
         # 按物理尺寸比例缩放图片
