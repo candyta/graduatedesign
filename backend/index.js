@@ -920,17 +920,16 @@ app.post('/generate-dvh', uploadOrganMasks.array('organMasks', 10), async (req, 
         const startTime = Date.now();
         console.log('[INFO] 请求开始时间:', new Date(startTime).toISOString());
 
-        const { niiPath, npyPath } = req.body;
+        const { npyPath } = req.body;
 
-        if (!niiPath || !npyPath) {
-            throw new Error('缺少 NIfTI 文件路径或 NPY 文件路径');
+        if (!npyPath) {
+            throw new Error('缺少 NPY 文件路径');
         }
 
         if (!req.files || req.files.length === 0) {
             throw new Error('没有上传器官掩膜文件');
         }
 
-        console.log('[DEBUG] 收到 NIfTI 文件路径:', niiPath);
         console.log('[DEBUG] 收到 NPY 文件路径:', npyPath);
         console.log('[DEBUG] 收到的器官掩膜文件:', req.files);
 
