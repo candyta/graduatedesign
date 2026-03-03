@@ -263,27 +263,47 @@ class BEIRVII_RiskEngine:
         
         return ear
     
+    def get_risk_level(self, lar_percent: float) -> str:
+        """
+        根据LAR值判断风险等级
+
+        参考ICRP 103辐射防护等级分类（归一化到LAR%单位）
+
+        Parameters:
+        -----------
+        lar_percent : float
+            终生归因风险（百分比）
+
+        Returns:
+        --------
+        str
+            风险等级: 'negligible'/'low'/'moderate'/'high'
+        """
+        if lar_percent < 0.001:
+            return 'negligible'   # 可忽略 (<0.001%)
+        elif lar_percent < 0.01:
+            return 'low'          # 低风险 (0.001%~0.01%)
+        elif lar_percent < 0.1:
+            return 'moderate'     # 中等风险 (0.01%~0.1%)
+        else:
+            return 'high'         # 高风险 (>0.1%)
+
     def calculate_lar(self,
                      organ: str,
                      dose_sv: float,
                      survival_function: Optional[callable] = None,
                      life_expectancy: int = 85) -> float:
         """
-        计算终生归因风险（LAR）
-        
-        LAR = ∫[e+L to L] ERR(D,e) × λ₀(a) × S(a|e) da
-        
-        或
-        
-        LAR = ∫[e+L to L] EAR(D,e,a) × S(a|e) da / 10,000
-        
+        基于ERR模型计算终生归因风险（LAR）
+
+        LAR_ERR = ∫[e+L to L] ERR(D,e) × λ₀(a) × S(a|e) da
+
         其中：
         e = 照射时年龄
-        L = 终生（通常85岁）
         L = 潜伏期
         λ₀(a) = 基线发病率
         S(a|e) = 从年龄e生存到年龄a的概率
-        
+
         Parameters:
         -----------
         organ : str
@@ -294,7 +314,7 @@ class BEIRVII_RiskEngine:
             生存函数 S(age)
         life_expectancy : int
             预期寿命
-            
+
         Returns:
         --------
         float
@@ -305,41 +325,152 @@ class BEIRVII_RiskEngine:
             latency = self.LATENCY_PERIOD['leukemia']
         else:
             latency = self.LATENCY_PERIOD['solid_cancer']
-        
+
         # 积分起始和终止年龄
         start_age = self.patient_age + latency
         end_age = life_expectancy
-        
+
         if start_age >= end_age:
             return 0.0
-        
+
         # 如果没有提供生存函数，使用简化模型
         if survival_function is None:
             # 简化：假设恒定的年死亡率
             annual_mortality = 0.01  # 1%每年
             def survival_function(age):
                 return np.exp(-annual_mortality * (age - self.patient_age))
-        
+
         # 获取基线发病率
         baseline = self.BASELINE_INCIDENCE.get(organ, {}).get(self.patient_gender, 0)
         baseline_rate = baseline / 100000  # 转换为比率
-        
+
         # 数值积分（简化为求和）
         lar = 0.0
-        
-        # 使用ERR模型
+
+        # 使用ERR模型：LAR_ERR = Σ ERR(D,e) × λ₀(a) × S(a|e)
+        err = self.calculate_err(organ, dose_sv, self.patient_age)
         for age in range(start_age, end_age + 1):
-            err = self.calculate_err(organ, dose_sv, self.patient_age)
-            
-            # ERR贡献
             risk_at_age = err * baseline_rate * survival_function(age)
-            
             lar += risk_at_age
-        
+
         # 转换为百分比
         lar_percent = lar * 100
-        
+
         return lar_percent
+
+    def calculate_lar_ear(self,
+                          organ: str,
+                          dose_sv: float,
+                          survival_function: Optional[callable] = None,
+                          life_expectancy: int = 85) -> float:
+        """
+        基于EAR模型计算终生归因风险（LAR）
+
+        LAR_EAR = ∫[e+L to L] EAR(D,e,a) × S(a|e) da / 10,000
+
+        其中：
+        EAR单位为每10,000人年超额病例数
+
+        Parameters:
+        -----------
+        organ : str
+            器官名称
+        dose_sv : float
+            器官剂量当量（Sv）
+        survival_function : callable, optional
+            生存函数 S(age)
+        life_expectancy : int
+            预期寿命
+
+        Returns:
+        --------
+        float
+            LAR（百分比）
+        """
+        if organ not in self.EAR_PARAMETERS:
+            return 0.0
+
+        gender_params = self.EAR_PARAMETERS[organ].get(self.patient_gender)
+        if gender_params is None:
+            return 0.0
+
+        # 确定潜伏期
+        if organ == 'leukemia':
+            latency = self.LATENCY_PERIOD['leukemia']
+        else:
+            latency = self.LATENCY_PERIOD['solid_cancer']
+
+        start_age = self.patient_age + latency
+        end_age = life_expectancy
+
+        if start_age >= end_age:
+            return 0.0
+
+        if survival_function is None:
+            annual_mortality = 0.01
+            def survival_function(age):
+                return np.exp(-annual_mortality * (age - self.patient_age))
+
+        # 数值积分：LAR_EAR = Σ EAR(D,e,a) × S(a|e) / 10,000
+        lar = 0.0
+        for age in range(start_age, end_age + 1):
+            ear = self.calculate_ear(organ, dose_sv, self.patient_age, age)
+            # EAR单位为每10,000人年，转换为概率
+            risk_at_age = ear * survival_function(age) / 10000
+            lar += risk_at_age
+
+        # 转换为百分比
+        lar_percent = lar * 100
+
+        return lar_percent
+
+    def calculate_lar_combined(self,
+                               organ: str,
+                               dose_sv: float,
+                               survival_function: Optional[callable] = None,
+                               life_expectancy: int = 85,
+                               err_weight: float = 0.5) -> Dict:
+        """
+        使用BEIR VII推荐的ERR和EAR加权组合计算LAR
+
+        LAR_combined = w_ERR × LAR_ERR + w_EAR × LAR_EAR
+
+        BEIR VII 对大多数实体癌使用等权重（w=0.5）
+
+        Parameters:
+        -----------
+        organ : str
+            器官名称
+        dose_sv : float
+            器官剂量当量（Sv）
+        survival_function : callable, optional
+            生存函数
+        life_expectancy : int
+            预期寿命
+        err_weight : float
+            ERR模型权重（EAR权重 = 1 - err_weight）
+
+        Returns:
+        --------
+        dict
+            包含 lar_err, lar_ear, lar_combined 的字典
+        """
+        lar_err = self.calculate_lar(organ, dose_sv, survival_function, life_expectancy)
+        lar_ear = self.calculate_lar_ear(organ, dose_sv, survival_function, life_expectancy)
+
+        ear_weight = 1.0 - err_weight
+
+        # 如果EAR模型不可用（返回0），仅用ERR模型
+        if lar_ear > 0:
+            lar_combined = err_weight * lar_err + ear_weight * lar_ear
+        else:
+            lar_combined = lar_err
+
+        return {
+            'lar_err': lar_err,
+            'lar_ear': lar_ear,
+            'lar_combined': lar_combined
+        }
     
     def assess_all_organs(self,
                          organ_doses: Dict[str, float],
@@ -397,22 +528,32 @@ class BEIRVII_RiskEngine:
             if site_dose > 0 and len(matched_organs) > 0:
                 # 平均剂量
                 avg_dose = site_dose / len(matched_organs)
-                
-                # 计算LAR
-                lar = self.calculate_lar(
+
+                # 使用ERR+EAR组合模型计算LAR（BEIR VII推荐）
+                lar_data = self.calculate_lar_combined(
                     cancer_site,
                     avg_dose,
                     life_expectancy=life_expectancy
                 )
-                
+
+                lar = lar_data['lar_combined']
+
                 if lar > 0:
+                    # 计算中间年龄处的EAR（用于参考）
+                    mid_age = min(int((self.patient_age + life_expectancy) / 2), life_expectancy - 1)
+                    ear_val = self.calculate_ear(cancer_site, avg_dose, self.patient_age, mid_age)
+
                     results[cancer_site] = {
                         'organs': matched_organs,
                         'dose_sv': avg_dose,
                         'lar_percent': lar,
-                        'err': self.calculate_err(cancer_site, avg_dose, self.patient_age)
+                        'lar_err_percent': lar_data['lar_err'],
+                        'lar_ear_percent': lar_data['lar_ear'],
+                        'err': self.calculate_err(cancer_site, avg_dose, self.patient_age),
+                        'ear': ear_val,
+                        'risk_level': self.get_risk_level(lar)
                     }
-                    
+
                     total_risk += lar
         
         # 添加总风险

@@ -526,36 +526,108 @@
 
             <!-- 评估结果 -->
             <div v-if="riskResults" class="risk-results">
-              <h3>评估结果</h3>
-              
+              <h3>二次癌风险评估结果</h3>
+
+              <!-- 总体风险概览卡片 -->
               <div class="result-card">
-                <h4>总体风险评分</h4>
+                <h4>全身累积二次癌终生归因风险（LAR）</h4>
                 <div class="risk-score" :class="getRiskLevel(riskResults.totalRisk)">
-                  {{ riskResults.totalRisk.toFixed(2) }}
+                  {{ riskResults.totalRisk.toFixed(4) }}%
                 </div>
                 <p class="risk-description">{{ getRiskDescription(riskResults.totalRisk) }}</p>
+                <div class="risk-legend">
+                  <span class="legend-item negligible">可忽略 &lt;0.001%</span>
+                  <span class="legend-item low">低风险 0.001‒0.01%</span>
+                  <span class="legend-item moderate">中等 0.01‒0.1%</span>
+                  <span class="legend-item high">较高 &gt;0.1%</span>
+                </div>
               </div>
 
+              <!-- 详细二次癌风险分析表格 -->
+              <div class="secondary-cancer-section">
+                <h4>各癌症部位详细风险分析（基于 BEIR VII 模型）</h4>
+                <p class="section-note">
+                  LAR = 终生归因风险（百分比）；ERR = 超额相对风险；EAR = 超额绝对风险（/10,000人年）；
+                  组合LAR 采用 ERR 与 EAR 等权重平均（各50%）。
+                </p>
+
+                <div class="risk-table-wrapper">
+                  <table class="secondary-risk-table">
+                    <thead>
+                      <tr>
+                        <th>癌症部位</th>
+                        <th>器官剂量 (Sv)</th>
+                        <th>LAR<sub>ERR</sub> (%)</th>
+                        <th>LAR<sub>EAR</sub> (%)</th>
+                        <th>LAR<sub>组合</sub> (%)</th>
+                        <th>ERR</th>
+                        <th>EAR (/万人年)</th>
+                        <th>风险等级</th>
+                        <th>相对大小</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="organ in riskResults.organs" :key="organ.name">
+                        <td class="organ-name-cell">{{ organ.name }}</td>
+                        <td class="num-cell">{{ organ.doseSv.toFixed(4) }}</td>
+                        <td class="num-cell">{{ organ.larErr.toFixed(5) }}</td>
+                        <td class="num-cell">{{ organ.larEar.toFixed(5) }}</td>
+                        <td class="num-cell lar-combined">{{ organ.risk.toFixed(5) }}</td>
+                        <td class="num-cell">{{ organ.err.toFixed(4) }}</td>
+                        <td class="num-cell">{{ organ.ear.toFixed(4) }}</td>
+                        <td>
+                          <span :class="['risk-badge', organ.riskLevel]">
+                            {{ getRiskLevelLabel(organ.riskLevel) }}
+                          </span>
+                        </td>
+                        <td class="bar-cell">
+                          <div class="inline-bar-container">
+                            <div
+                              class="inline-bar-fill"
+                              :class="organ.riskLevel"
+                              :style="{ width: (organ.risk / riskResults.maxRisk * 100) + '%' }"
+                            ></div>
+                          </div>
+                        </td>
+                      </tr>
+                    </tbody>
+                    <tfoot>
+                      <tr class="total-row">
+                        <td>全身累积</td>
+                        <td>—</td>
+                        <td>—</td>
+                        <td>—</td>
+                        <td class="num-cell lar-combined">{{ riskResults.totalRisk.toFixed(5) }}</td>
+                        <td>—</td>
+                        <td>—</td>
+                        <td>—</td>
+                        <td>—</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+
+              <!-- 器官风险条形图（保留原有可视化） -->
               <div class="organ-risks">
-                <h4>器官风险分布</h4>
+                <h4>器官风险分布（LAR 组合值）</h4>
                 <div class="risk-chart">
-                  <!-- 这里可以集成图表库显示器官风险 -->
-                  <div v-for="organ in riskResults.organs" :key="organ.name" class="organ-risk-bar">
+                  <div v-for="organ in riskResults.organs" :key="organ.name + '_bar'" class="organ-risk-bar">
                     <span class="organ-label">{{ organ.name }}</span>
                     <div class="risk-bar-container">
-                      <div 
-                        class="risk-bar-fill" 
+                      <div
+                        class="risk-bar-fill"
                         :style="{ width: (organ.risk / riskResults.maxRisk * 100) + '%' }"
                         :class="getRiskLevel(organ.risk)"
                       ></div>
                     </div>
-                    <span class="risk-value">{{ organ.risk.toFixed(3) }}</span>
+                    <span class="risk-value">{{ organ.risk.toFixed(5) }}%</span>
                   </div>
                 </div>
               </div>
 
               <button @click="exportRiskReport" class="btn btn-primary">
-                导出评估报告
+                导出评估报告（JSON）
               </button>
             </div>
           </div>
@@ -1138,18 +1210,39 @@ export default {
           );
           
           if (statusResponse.data.status === 'completed') {
-            // 获取结果
+            // 获取结果（JSON格式）
             const resultsResponse = await axios.get(
-              `${API_BASE}/api/wholebody/report/${sessionId}`
+              `${API_BASE}/api/wholebody/report/${sessionId}?format=json`
             );
-            this.riskResults = resultsResponse.data;
+            // 将Python后端返回的原始器官风险数据转换为前端显示格式
+            const rawReport = resultsResponse.data.report || {};
+            const organList = Object.entries(rawReport)
+              .filter(([key]) => key !== 'total')
+              .map(([site, data]) => ({
+                name: site,
+                risk: data.lar_percent || 0,
+                larErr: data.lar_err_percent || data.lar_percent || 0,
+                larEar: data.lar_ear_percent || 0,
+                doseSv: data.dose_sv || 0,
+                err: data.err || 0,
+                ear: data.ear || 0,
+                riskLevel: data.risk_level || this.calcRiskLevel(data.lar_percent || 0),
+                organs: data.organs || []
+              }))
+              .sort((a, b) => b.risk - a.risk);
+            const maxRisk = organList.reduce((m, o) => Math.max(m, o.risk), 0);
+            this.riskResults = {
+              totalRisk: (rawReport.total && rawReport.total.lar_percent) || 0,
+              organs: organList,
+              maxRisk: maxRisk || 1
+            };
 
             // 获取可视化
             const vizResponse = await axios.get(
               `${API_BASE}/api/wholebody/visualization/${sessionId}`
             );
-            this.riskVisualization = vizResponse.data.visualizationPath 
-              ? `${API_BASE}${vizResponse.data.visualizationPath}` 
+            this.riskVisualization = vizResponse.data.visualizationPath
+              ? `${API_BASE}${vizResponse.data.visualizationPath}`
               : '';
 
             this.showMessage('风险评估完成', 'success');
@@ -1172,6 +1265,43 @@ export default {
       if (risk < 0.001) return 'low';
       if (risk < 0.01) return 'medium';
       return 'high';
+    },
+
+    // 与后端 get_risk_level 一致的四档分类
+    calcRiskLevel(lar) {
+      if (lar < 0.001) return 'negligible';
+      if (lar < 0.01) return 'low';
+      if (lar < 0.1) return 'moderate';
+      return 'high';
+    },
+
+    getRiskDescription(totalRisk) {
+      if (totalRisk < 0.001) return '风险可忽略：治疗带来的二次癌症额外风险极低，在可接受范围内。';
+      if (totalRisk < 0.01) return '低风险：终生归因风险较低，建议定期随访观察。';
+      if (totalRisk < 0.1) return '中等风险：存在一定的二次癌症风险，请结合临床综合评估。';
+      return '较高风险：请临床医生综合权衡治疗收益与二次癌症风险，制定随访方案。';
+    },
+
+    getRiskLevelLabel(level) {
+      const labels = {
+        negligible: '可忽略',
+        low: '低风险',
+        moderate: '中等风险',
+        high: '较高风险'
+      };
+      return labels[level] || level;
+    },
+
+    async exportRiskReport() {
+      if (!this.riskResults) return;
+      const data = JSON.stringify(this.riskResults, null, 2);
+      const blob = new Blob([data], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'secondary_cancer_risk_report.json';
+      a.click();
+      URL.revokeObjectURL(url);
     },
 
   }
@@ -2273,6 +2403,137 @@ export default {
   text-align: right;
   font-weight: 600;
   color: #333;
+}
+
+/* ========== 二次癌风险分析 ========== */
+.risk-legend {
+  display: flex;
+  gap: 0.8rem;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+  font-size: 0.82rem;
+}
+
+.legend-item {
+  padding: 0.25rem 0.7rem;
+  border-radius: 12px;
+  font-weight: 600;
+  color: white;
+}
+
+.legend-item.negligible { background: #95a5a6; }
+.legend-item.low        { background: #2ecc71; }
+.legend-item.moderate   { background: #f39c12; }
+.legend-item.high       { background: #e74c3c; }
+
+.secondary-cancer-section {
+  margin: 1.5rem 0;
+}
+
+.secondary-cancer-section h4 {
+  color: #667eea;
+  margin-bottom: 0.5rem;
+  font-size: 1.05rem;
+}
+
+.section-note {
+  font-size: 0.82rem;
+  color: #888;
+  margin-bottom: 1rem;
+  line-height: 1.5;
+}
+
+.risk-table-wrapper {
+  overflow-x: auto;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+
+.secondary-risk-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.secondary-risk-table th {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  padding: 0.7rem 0.9rem;
+  text-align: center;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.secondary-risk-table td {
+  padding: 0.6rem 0.9rem;
+  border-bottom: 1px solid #f0f0f0;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.secondary-risk-table tbody tr:hover {
+  background: #f5f7ff;
+}
+
+.organ-name-cell {
+  text-align: left !important;
+  font-weight: 600;
+  color: #333;
+  text-transform: capitalize;
+}
+
+.num-cell {
+  font-family: 'Courier New', monospace;
+  color: #444;
+}
+
+.lar-combined {
+  font-weight: 700;
+  color: #667eea !important;
+}
+
+.risk-badge {
+  display: inline-block;
+  padding: 0.2rem 0.6rem;
+  border-radius: 10px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: white;
+  white-space: nowrap;
+}
+
+.risk-badge.negligible { background: #95a5a6; }
+.risk-badge.low        { background: #2ecc71; }
+.risk-badge.moderate   { background: #f39c12; }
+.risk-badge.high       { background: #e74c3c; }
+
+.bar-cell {
+  min-width: 100px;
+}
+
+.inline-bar-container {
+  background: #e0e0e0;
+  height: 12px;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.inline-bar-fill {
+  height: 100%;
+  border-radius: 6px;
+  transition: width 0.5s;
+}
+
+.inline-bar-fill.negligible { background: #95a5a6; }
+.inline-bar-fill.low        { background: linear-gradient(90deg, #2ecc71, #27ae60); }
+.inline-bar-fill.moderate   { background: linear-gradient(90deg, #f39c12, #e67e22); }
+.inline-bar-fill.high       { background: linear-gradient(90deg, #e74c3c, #c0392b); }
+
+.total-row td {
+  background: #f0f4ff;
+  font-weight: 700;
+  border-top: 2px solid #667eea;
 }
 
 .risk-visualization h4 {
