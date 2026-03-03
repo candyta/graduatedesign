@@ -1130,6 +1130,8 @@ export default {
       this.organFiles.forEach(file => {
         formData.append('organMasks', file);
       });
+      formData.append('niiPath', this.niiPath);
+      formData.append('npyPath', this.npyPath);
 
       try {
         const response = await axios.post(`${API_BASE}/generate-dvh`, formData);
