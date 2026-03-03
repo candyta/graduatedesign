@@ -124,42 +124,6 @@
       <div v-show="activeTab === 'mcnp'" class="tab-content">
         <div class="mcnp-workspace">
 
-          <!-- 患者参数设置 -->
-          <div class="phantom-params-panel">
-            <h4>患者参数设置</h4>
-            <div class="params-grid">
-              <label>
-                <span>性别:</span>
-                <select v-model="phantomGender">
-                  <option value="male">男</option>
-                  <option value="female">女</option>
-                </select>
-              </label>
-              <label>
-                <span>年龄:</span>
-                <input v-model.number="phantomAge" type="number" min="0" max="120" />
-              </label>
-              <label>
-                <span>身高 (cm):</span>
-                <input v-model.number="phantomHeight" type="number" min="100" max="220" />
-              </label>
-              <label>
-                <span>体重 (kg):</span>
-                <input v-model.number="phantomWeight" type="number" min="20" max="200" />
-              </label>
-              <label>
-                <span>照射部位:</span>
-                <select v-model="phantomTumorRegion">
-                  <option value="">自动识别</option>
-                  <option value="brain">脑部</option>
-                  <option value="nasopharynx">鼻咽部</option>
-                  <option value="lung">肺部</option>
-                  <option value="liver">肝部</option>
-                </select>
-              </label>
-            </div>
-          </div>
-
           <div class="workflow-steps">
             <div 
               v-for="(step, index) in mcnpSteps" 
@@ -514,12 +478,7 @@
               <div class="step">
                 <h4>1. 全身体模状态</h4>
                 <div v-if="phantomBuilt" class="phantom-status-ok">
-                  <span class="status-check">✓ 全身体模已构建完成</span>
-                  <div class="phantom-summary">
-                    <span>性别：{{ phantomGender === 'male' ? '男' : '女' }}</span>
-                    <span>年龄：{{ phantomAge }} 岁</span>
-                    <span>照射部位：{{ phantomTumorRegion ? {'brain':'脑部','nasopharynx':'鼻咽部','lung':'肺部','liver':'肝部'}[phantomTumorRegion] || phantomTumorRegion : '自动识别' }}</span>
-                  </div>
+                  <span class="status-check">✓ 全身体模已构建完成（男性标准体模，照射部位自动识别）</span>
                 </div>
                 <div v-else class="phantom-status-warn">
                   请先在「MCNP计算」标签页中完成全身体模构建，<br/>风险评估将直接基于已构建的体模和照射位置进行。
@@ -529,6 +488,10 @@
               <div class="step">
                 <h4>2. 评估参数</h4>
                 <div class="param-group">
+                  <label>
+                    <span>年龄:</span>
+                    <input v-model.number="riskParams.age" type="number" min="0" max="120" />
+                  </label>
                   <label>
                     <span>辐照时间 (分钟):</span>
                     <input v-model.number="riskParams.exposureTime" type="number" min="1" max="120" />
@@ -810,11 +773,6 @@ export default {
 
       // 体模构建参数
       phantomBuilt: false,
-      phantomGender: 'male',
-      phantomAge: 50,
-      phantomHeight: 170,
-      phantomWeight: 70,
-      phantomTumorRegion: '',   // '' = 自动识别
     };
   },
 
@@ -954,8 +912,7 @@ export default {
       try {
         const response = await axios.post(`${API_BASE}/build-wholebody-phantom`, {
           niiPath: this.niiPath,
-          gender: this.phantomGender,
-          tumorRegion: this.phantomTumorRegion
+          gender: 'male'
         });
 
         this.mcnpSteps[0].status = 'completed';
@@ -1210,11 +1167,11 @@ export default {
         const sessionResponse = await axios.post(
           `${API_BASE}/api/wholebody/create-session`,
           {
-            age: this.phantomAge,
-            gender: this.phantomGender,
-            height: this.phantomHeight,
-            weight: this.phantomWeight,
-            tumorLocation: this.phantomTumorRegion || 'brain',
+            age: this.riskParams.age,
+            gender: 'male',
+            height: 170,
+            weight: 70,
+            tumorLocation: 'brain',
             niiPath: this.niiPath || null
           }
         );
@@ -2268,43 +2225,6 @@ export default {
 
 .stats-table tr:last-child td {
   border-bottom: none;
-}
-
-/* ========== MCNP体模参数面板 ========== */
-.phantom-params-panel {
-  background: #f0f4ff;
-  border: 1px solid #c7d2fe;
-  border-radius: 8px;
-  padding: 1.2rem 1.5rem;
-  margin-bottom: 1.5rem;
-}
-
-.phantom-params-panel h4 {
-  color: #4338ca;
-  margin-bottom: 1rem;
-  font-size: 0.95rem;
-}
-
-.params-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 0.75rem;
-}
-
-.params-grid label {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-  font-size: 0.85rem;
-  color: #555;
-}
-
-.params-grid input,
-.params-grid select {
-  padding: 0.4rem 0.6rem;
-  border: 1px solid #c7d2fe;
-  border-radius: 4px;
-  font-size: 0.9rem;
 }
 
 /* ========== 风险评估 ========== */
