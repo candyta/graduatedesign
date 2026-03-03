@@ -1052,9 +1052,85 @@ app.use('/wholebody_output', express.static(WHOLEBODY_OUTPUT_DIR));
 // ==================== API端点 ====================
 
 /**
+ * 0. 直接创建会话（无需上传CT文件）
+ * POST /api/wholebody/create-session
+ *
+ * 请求参数（JSON body）:
+ * - age: 患者年龄
+ * - gender: 性别（male/female）
+ * - height: 身高(cm)，默认170
+ * - weight: 体重(kg)，默认70
+ * - tumorLocation: 肿瘤/照射位置（brain/lung/liver/nasopharynx）
+ * - niiPath: 已在服务器上的CT文件路径（可选）
+ */
+app.post('/api/wholebody/create-session', async (req, res) => {
+    try {
+        console.log('[全身评估] 收到直接创建会话请求');
+
+        const {
+            age,
+            gender,
+            height,
+            weight,
+            tumorLocation,
+            niiPath
+        } = req.body;
+
+        if (!age || !gender) {
+            return res.status(400).json({
+                success: false,
+                message: '缺少必需参数: age, gender'
+            });
+        }
+
+        // 创建会话
+        const sessionId = `session_${Date.now()}`;
+        const sessionDir = path.join(WHOLEBODY_OUTPUT_DIR, sessionId);
+        fs.ensureDirSync(sessionDir);
+
+        console.log(`[全身评估] 创建会话: ${sessionId}`);
+
+        // 保存患者信息（CT路径使用已有的服务器路径，可选）
+        const patientInfo = {
+            sessionId,
+            age: parseInt(age),
+            gender,
+            height: parseFloat(height) || 170,
+            weight: parseFloat(weight) || 70,
+            tumor_location: tumorLocation || 'brain',
+            ct_path: niiPath || null,
+            timestamp: new Date().toISOString()
+        };
+
+        const patientInfoPath = path.join(sessionDir, 'patient_info.json');
+        fs.writeJsonSync(patientInfoPath, patientInfo, { spaces: 2 });
+
+        console.log(`[全身评估] 患者信息已保存: ${patientInfoPath}`);
+
+        res.json({
+            success: true,
+            sessionId,
+            message: '会话已创建',
+            patientInfo: {
+                ...patientInfo,
+                ct_path: niiPath ? 'existing' : 'none'
+            }
+        });
+
+    } catch (err) {
+        console.error('[全身评估] 创建会话失败:', err);
+        res.status(500).json({
+            success: false,
+            message: '创建会话失败',
+            error: err.message
+        });
+    }
+});
+
+/**
  * 1. 上传患者信息和CT文件
  * POST /api/wholebody/upload-patient-ct
- * 
+ *
  * 请求参数:
  * - ctFile: CT文件（可选）
  * - patientAge: 患者年龄
@@ -1422,6 +1498,7 @@ app.get('/api/wholebody/sessions', async (req, res) => {
 });
 
 console.log('[全身评估] API端点已加载');
+console.log(`  - POST /api/wholebody/create-session`);
 console.log(`  - POST /api/wholebody/upload-patient-ct`);
 console.log(`  - POST /api/wholebody/run-assessment`);
 console.log(`  - GET  /api/wholebody/assessment-status/:sessionId`);

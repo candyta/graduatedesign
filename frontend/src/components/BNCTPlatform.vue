@@ -124,6 +124,42 @@
       <div v-show="activeTab === 'mcnp'" class="tab-content">
         <div class="mcnp-workspace">
 
+          <!-- 患者参数设置 -->
+          <div class="phantom-params-panel">
+            <h4>患者参数设置</h4>
+            <div class="params-grid">
+              <label>
+                <span>性别:</span>
+                <select v-model="phantomGender">
+                  <option value="male">男</option>
+                  <option value="female">女</option>
+                </select>
+              </label>
+              <label>
+                <span>年龄:</span>
+                <input v-model.number="phantomAge" type="number" min="0" max="120" />
+              </label>
+              <label>
+                <span>身高 (cm):</span>
+                <input v-model.number="phantomHeight" type="number" min="100" max="220" />
+              </label>
+              <label>
+                <span>体重 (kg):</span>
+                <input v-model.number="phantomWeight" type="number" min="20" max="200" />
+              </label>
+              <label>
+                <span>照射部位:</span>
+                <select v-model="phantomTumorRegion">
+                  <option value="">自动识别</option>
+                  <option value="brain">脑部</option>
+                  <option value="nasopharynx">鼻咽部</option>
+                  <option value="lung">肺部</option>
+                  <option value="liver">肝部</option>
+                </select>
+              </label>
+            </div>
+          </div>
+
           <div class="workflow-steps">
             <div 
               v-for="(step, index) in mcnpSteps" 
@@ -474,37 +510,25 @@
             <h3>🧬 全身风险评估</h3>
             
             <div class="assessment-steps">
+              <!-- 体模状态 -->
               <div class="step">
-                <h4>1. 患者CT数据</h4>
-                <button @click="$refs.patientCtInput.click()" class="btn btn-primary">
-                  上传患者CT
-                </button>
-                <input 
-                  ref="patientCtInput" 
-                  type="file" 
-                  @change="handlePatientCtUpload" 
-                  accept=".nii.gz" 
-                  style="display: none"
-                />
-                <div v-if="patientCtFile" class="file-info">
-                  ✓ {{ patientCtFile.name }}
+                <h4>1. 全身体模状态</h4>
+                <div v-if="phantomBuilt" class="phantom-status-ok">
+                  <span class="status-check">✓ 全身体模已构建完成</span>
+                  <div class="phantom-summary">
+                    <span>性别：{{ phantomGender === 'male' ? '男' : '女' }}</span>
+                    <span>年龄：{{ phantomAge }} 岁</span>
+                    <span>照射部位：{{ phantomTumorRegion ? {'brain':'脑部','nasopharynx':'鼻咽部','lung':'肺部','liver':'肝部'}[phantomTumorRegion] || phantomTumorRegion : '自动识别' }}</span>
+                  </div>
+                </div>
+                <div v-else class="phantom-status-warn">
+                  请先在「MCNP计算」标签页中完成全身体模构建，<br/>风险评估将直接基于已构建的体模和照射位置进行。
                 </div>
               </div>
 
               <div class="step">
                 <h4>2. 评估参数</h4>
                 <div class="param-group">
-                  <label>
-                    <span>年龄:</span>
-                    <input v-model.number="riskParams.age" type="number" min="0" max="120" />
-                  </label>
-                  <label>
-                    <span>性别:</span>
-                    <select v-model="riskParams.gender">
-                      <option value="male">男</option>
-                      <option value="female">女</option>
-                    </select>
-                  </label>
                   <label>
                     <span>辐照时间 (分钟):</span>
                     <input v-model.number="riskParams.exposureTime" type="number" min="1" max="120" />
@@ -514,13 +538,14 @@
 
               <div class="step">
                 <h4>3. 运行评估</h4>
-                <button 
-                  @click="runRiskAssessment" 
+                <button
+                  @click="runRiskAssessment"
                   :disabled="!canRunRiskAssessment || loading"
                   class="btn btn-success btn-large"
                 >
                   {{ loading ? '评估中...' : '开始风险评估' }}
                 </button>
+                <p v-if="!phantomBuilt" class="hint-text">需先完成体模构建</p>
               </div>
             </div>
 
@@ -784,7 +809,11 @@ export default {
       doseStats: null,         // { max, mean, coverage }
 
       // 体模构建参数
+      phantomBuilt: false,
       phantomGender: 'male',
+      phantomAge: 50,
+      phantomHeight: 170,
+      phantomWeight: 70,
       phantomTumorRegion: '',   // '' = 自动识别
     };
   },
@@ -794,7 +823,7 @@ export default {
       return this.organFiles.length > 0 && this.hasDoseData;
     },
     canRunRiskAssessment() {
-      return this.patientCtFile !== null;
+      return this.phantomBuilt;
     }
   },
 
@@ -932,9 +961,10 @@ export default {
         this.mcnpSteps[0].status = 'completed';
         this.mcnpSteps[0].result = `体模构建完成: ${response.data.message || '成功'}`;
         this.mcnpSteps[1].disabled = false;
-        
+        this.phantomBuilt = true;
+
         this.addLog('全身体模构建成功', 'success');
-        this.showMessage('全身体模构建成功,可以开始MCNP计算', 'success');
+        this.showMessage('全身体模构建成功，可以开始MCNP计算或直接进行风险评估', 'success');
       } catch (error) {
         this.mcnpSteps[0].status = 'error';
         this.mcnpSteps[0].result = '构建失败';
@@ -1166,97 +1196,73 @@ export default {
     },
 
     // ========== 风险评估 ==========
-    async handlePatientCtUpload(e) {
-      const file = e.target.files[0];
-      if (!file) return;
-      
-      this.patientCtFile = file;
-      this.showMessage('患者CT文件已选择', 'success');
-    },
-
     async runRiskAssessment() {
       if (!this.canRunRiskAssessment) {
-        this.showMessage('请先上传患者CT数据', 'error');
+        this.showMessage('请先在"MCNP计算"页面完成全身体模构建', 'error');
         return;
       }
 
       this.loading = true;
       this.loadingMessage = '运行全身风险评估...';
 
-      const formData = new FormData();
-      formData.append('ctFile', this.patientCtFile);
-      formData.append('age', this.riskParams.age);
-      formData.append('gender', this.riskParams.gender);
-      formData.append('exposureTime', this.riskParams.exposureTime);
-
       try {
-        // 上传CT
-        const uploadResponse = await axios.post(
-          `${API_BASE}/api/wholebody/upload-patient-ct`, 
-          formData
-        );
-        const sessionId = uploadResponse.data.sessionId;
-
-        // 运行评估
-        await axios.post(`${API_BASE}/api/wholebody/run-assessment`, {
-          sessionId,
-          ...this.riskParams
-        });
-
-        // 轮询状态
-        const checkStatus = async () => {
-          const statusResponse = await axios.get(
-            `${API_BASE}/api/wholebody/assessment-status/${sessionId}`
-          );
-          
-          if (statusResponse.data.status === 'completed') {
-            // 获取结果（JSON格式）
-            const resultsResponse = await axios.get(
-              `${API_BASE}/api/wholebody/report/${sessionId}?format=json`
-            );
-            // 将Python后端返回的原始器官风险数据转换为前端显示格式
-            const rawReport = resultsResponse.data.report || {};
-            const organList = Object.entries(rawReport)
-              .filter(([key]) => key !== 'total')
-              .map(([site, data]) => ({
-                name: site,
-                risk: data.lar_percent || 0,
-                larErr: data.lar_err_percent || data.lar_percent || 0,
-                larEar: data.lar_ear_percent || 0,
-                doseSv: data.dose_sv || 0,
-                err: data.err || 0,
-                ear: data.ear || 0,
-                riskLevel: data.risk_level || this.calcRiskLevel(data.lar_percent || 0),
-                organs: data.organs || []
-              }))
-              .sort((a, b) => b.risk - a.risk);
-            const maxRisk = organList.reduce((m, o) => Math.max(m, o.risk), 0);
-            this.riskResults = {
-              totalRisk: (rawReport.total && rawReport.total.lar_percent) || 0,
-              organs: organList,
-              maxRisk: maxRisk || 1
-            };
-
-            // 获取可视化
-            const vizResponse = await axios.get(
-              `${API_BASE}/api/wholebody/visualization/${sessionId}`
-            );
-            this.riskVisualization = vizResponse.data.visualizationPath
-              ? `${API_BASE}${vizResponse.data.visualizationPath}`
-              : '';
-
-            this.showMessage('风险评估完成', 'success');
-            this.loading = false;
-          } else if (statusResponse.data.status === 'error') {
-            throw new Error('评估失败');
-          } else {
-            setTimeout(checkStatus, 2000);
+        // 1. 直接用已有体模参数创建评估会话（无需重新上传CT）
+        const sessionResponse = await axios.post(
+          `${API_BASE}/api/wholebody/create-session`,
+          {
+            age: this.phantomAge,
+            gender: this.phantomGender,
+            height: this.phantomHeight,
+            weight: this.phantomWeight,
+            tumorLocation: this.phantomTumorRegion || 'brain',
+            niiPath: this.niiPath || null
           }
+        );
+        const sessionId = sessionResponse.data.sessionId;
+
+        // 2. 运行风险评估（后端同步返回结果）
+        await axios.post(`${API_BASE}/api/wholebody/run-assessment`, { sessionId });
+
+        // 3. 获取评估报告（JSON格式）
+        const resultsResponse = await axios.get(
+          `${API_BASE}/api/wholebody/report/${sessionId}?format=json`
+        );
+
+        const rawReport = resultsResponse.data.report || {};
+        const organList = Object.entries(rawReport)
+          .filter(([key]) => key !== 'total')
+          .map(([site, data]) => ({
+            name: site,
+            risk: data.lar_percent || 0,
+            larErr: data.lar_err_percent || data.lar_percent || 0,
+            larEar: data.lar_ear_percent || 0,
+            doseSv: data.dose_sv || 0,
+            err: data.err || 0,
+            ear: data.ear || 0,
+            riskLevel: data.risk_level || this.calcRiskLevel(data.lar_percent || 0),
+            organs: data.organs || []
+          }))
+          .sort((a, b) => b.risk - a.risk);
+
+        const maxRisk = organList.reduce((m, o) => Math.max(m, o.risk), 0);
+        this.riskResults = {
+          totalRisk: (rawReport.total && rawReport.total.lar_percent) || 0,
+          organs: organList,
+          maxRisk: maxRisk || 1
         };
 
-        await checkStatus();
+        // 4. 获取可视化
+        const vizResponse = await axios.get(
+          `${API_BASE}/api/wholebody/visualization/${sessionId}`
+        );
+        this.riskVisualization = vizResponse.data.visualizationPath
+          ? `${API_BASE}${vizResponse.data.visualizationPath}`
+          : '';
+
+        this.showMessage('风险评估完成', 'success');
       } catch (error) {
         this.showMessage('评估失败: ' + (error.response && error.response.data && error.response.data.message || error.message), 'error');
+      } finally {
         this.loading = false;
       }
     },
@@ -2264,6 +2270,43 @@ export default {
   border-bottom: none;
 }
 
+/* ========== MCNP体模参数面板 ========== */
+.phantom-params-panel {
+  background: #f0f4ff;
+  border: 1px solid #c7d2fe;
+  border-radius: 8px;
+  padding: 1.2rem 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.phantom-params-panel h4 {
+  color: #4338ca;
+  margin-bottom: 1rem;
+  font-size: 0.95rem;
+}
+
+.params-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 0.75rem;
+}
+
+.params-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  color: #555;
+}
+
+.params-grid input,
+.params-grid select {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid #c7d2fe;
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+
 /* ========== 风险评估 ========== */
 .risk-workspace {
   display: grid;
@@ -2317,6 +2360,43 @@ export default {
   border: 1px solid #ddd;
   border-radius: 4px;
   width: 60%;
+}
+
+.phantom-status-ok {
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+}
+
+.phantom-status-ok .status-check {
+  color: #059669;
+  font-weight: 600;
+  display: block;
+  margin-bottom: 0.5rem;
+}
+
+.phantom-summary {
+  display: flex;
+  gap: 1.5rem;
+  font-size: 0.88rem;
+  color: #374151;
+}
+
+.phantom-status-warn {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  color: #92400e;
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+
+.hint-text {
+  margin-top: 0.5rem;
+  font-size: 0.82rem;
+  color: #9ca3af;
 }
 
 .risk-results {
