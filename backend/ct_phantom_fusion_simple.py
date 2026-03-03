@@ -34,6 +34,41 @@ class CTPhantomFusion:
         self.tumor_mask = None
         self.fusion_result = None
         
+    def load_ct_image(self, nii_path: str):
+        """
+        从NIfTI文件加载CT影像
+
+        Parameters:
+        -----------
+        nii_path : str
+            NIfTI文件路径 (.nii 或 .nii.gz)
+        """
+        print(f"\n从NIfTI文件加载CT影像: {nii_path}")
+
+        try:
+            import nibabel as nib
+        except ImportError:
+            raise ImportError("需要nibabel库加载NIfTI文件: pip install nibabel")
+
+        nii = nib.load(nii_path)
+        self.ct_data = nii.get_fdata()
+        voxel_sizes = nib.affines.voxel_sizes(nii.affine)
+        self.ct_spacing = tuple(float(v) for v in voxel_sizes)
+
+        # 交叉验证pixdim
+        try:
+            pixdim = nii.header['pixdim'][1:4]
+            if all(abs(s - 1.0) < 0.01 for s in self.ct_spacing) and \
+               not all(abs(p - 1.0) < 0.01 for p in pixdim) and \
+               all(p > 0 for p in pixdim):
+                self.ct_spacing = tuple(float(p) for p in pixdim)
+        except Exception:
+            pass
+
+        print(f"✓ CT影像尺寸: {self.ct_data.shape}")
+        print(f"  体素间距: {self.ct_spacing} mm")
+        print(f"  数值范围: [{self.ct_data.min():.1f}, {self.ct_data.max():.1f}]")
+
     def load_ct_from_npy(self, npy_path: str, spacing: Tuple[float, float, float] = (1.0, 1.0, 1.0)):
         """
         从numpy数组加载CT影像
@@ -73,6 +108,10 @@ class CTPhantomFusion:
         print(f"✓ CT影像尺寸: {self.ct_data.shape}")
         print(f"  数值范围: [{self.ct_data.min():.1f}, {self.ct_data.max():.1f}]")
         
+    def load_tumor_mask(self, mask_path: str):
+        """load_tumor_mask_npy的别名，兼容bnct_complete_pipeline调用"""
+        return self.load_tumor_mask_npy(mask_path)
+
     def load_tumor_mask_npy(self, mask_path: str):
         """
         从numpy数组加载肿瘤掩膜
