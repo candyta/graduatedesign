@@ -1136,8 +1136,8 @@ export default {
       try {
         const response = await axios.post(`${API_BASE}/generate-dvh`, formData);
         
-        this.dvhImage = response.data.dvhImagePath 
-          ? `${API_BASE}${response.data.dvhImagePath}?t=${Date.now()}` 
+        this.dvhImage = response.data.dvhImagePath
+          ? `${API_BASE}${response.data.dvhImagePath}`
           : '';
         this.dvhStats = response.data.stats || null;
 

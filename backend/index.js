@@ -985,11 +985,9 @@ app.post('/generate-dvh', uploadOrganMasks.array('organMasks', 10), async (req, 
             throw new Error('DVH 图像未生成');
         }
 
-        const dvhPlotPaths = {
-            total: `http://localhost:3000/dvh/dvh.png`
-        };
+        const dvhImageRelPath = `/dvh/dvh.png?t=${Date.now()}`;
 
-        console.log('[INFO] DVH图像生成路径：', dvhPlotPaths);
+        console.log('[INFO] DVH图像生成路径：', dvhImageRelPath);
 
         const endTime = Date.now();
         console.log('[INFO] 请求结束时间:', new Date(endTime).toISOString());
@@ -998,7 +996,7 @@ app.post('/generate-dvh', uploadOrganMasks.array('organMasks', 10), async (req, 
         res.json({
             success: true,
             message: 'DVH 图像生成成功',
-            dvhPlotPaths
+            dvhImagePath: dvhImageRelPath
         });
 
     } catch (err) {
