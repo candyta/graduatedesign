@@ -1428,6 +1428,83 @@ console.log(`  - GET  /api/wholebody/assessment-status/:sessionId`);
 console.log(`  - GET  /api/wholebody/visualization/:sessionId`);
 console.log(`  - GET  /api/wholebody/report/:sessionId`);
 console.log(`  - GET  /api/wholebody/sessions`);
+
+/**
+ * 快速评估接口 - 直接从体模构建参数触发风险评估
+ * POST /api/wholebody/quick-assess
+ *
+ * 请求体（JSON）:
+ * { age, gender, height, weight, tumorLocation, niiPath }
+ *
+ * 体模构建成功后由前端自动调用，无需用户重新上传CT
+ */
+app.post('/api/wholebody/quick-assess', async (req, res) => {
+    try {
+        const { age, gender, height, weight, tumorLocation, niiPath } = req.body;
+
+        if (!age || !gender) {
+            return res.status(400).json({ success: false, message: '缺少必要患者参数 (age, gender)' });
+        }
+
+        // 创建本次评估会话目录
+        const sessionId = `session_${Date.now()}`;
+        const sessionDir = path.join(WHOLEBODY_OUTPUT_DIR, sessionId);
+        fs.ensureDirSync(sessionDir);
+
+        console.log(`[快速评估] 创建会话: ${sessionId}`);
+
+        // 保存患者信息（Python脚本读取此文件）
+        const patientInfo = {
+            age: parseInt(age),
+            gender: gender,
+            height: parseFloat(height) || 170,
+            weight: parseFloat(weight) || 65,
+            tumor_location: tumorLocation || 'brain',
+            ct_path: niiPath || null,
+            timestamp: new Date().toISOString()
+        };
+        fs.writeJsonSync(path.join(sessionDir, 'patient_info.json'), patientInfo);
+
+        // 调用 Python 风险评估脚本
+        const pythonScript = path.join(__dirname, 'wholebody_risk_api.py');
+        const pythonPath = 'D:/python.exe';
+        const command = `"${pythonPath}" "${pythonScript}" --session-dir "${sessionDir}" --icrp-path "${ICRP_DATA_PATH}"`;
+
+        console.log(`[快速评估] 执行命令: ${command}`);
+
+        const { stdout, stderr } = await execAsync(command, {
+            maxBuffer: 10 * 1024 * 1024,
+            env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
+        });
+
+        if (stderr) console.error('[快速评估] Python stderr:', stderr);
+
+        // 解析 Python 输出
+        const resultMatch = stdout.match(/=== ASSESSMENT_RESULT ===([\s\S]*)=== END_RESULT ===/);
+        if (!resultMatch) throw new Error('未找到评估结果输出');
+
+        const assessmentResult = JSON.parse(resultMatch[1].trim());
+        if (!assessmentResult.success) throw new Error(assessmentResult.error || '评估失败');
+
+        // 读取完整 JSON 报告
+        const reportPath = path.join(sessionDir, 'risk_assessment_report.json');
+        const report = fs.existsSync(reportPath) ? fs.readJsonSync(reportPath) : {};
+
+        console.log(`[快速评估] 完成: sessionId=${sessionId}, totalRisk=${assessmentResult.total_risk}`);
+
+        res.json({
+            success: true,
+            sessionId,
+            totalRisk: assessmentResult.total_risk,
+            report
+        });
+
+    } catch (err) {
+        console.error('[快速评估] 失败:', err);
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+console.log(`  - POST /api/wholebody/quick-assess`);
 console.log(`  ICRP数据路径: ${ICRP_DATA_PATH}`);
 app.listen(PORT, () => {
     log(`服务器已启动: http://localhost:${PORT}`);

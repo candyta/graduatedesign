@@ -124,6 +124,51 @@
       <div v-show="activeTab === 'mcnp'" class="tab-content">
         <div class="mcnp-workspace">
 
+          <!-- 患者基本信息 - 构建体模 & 风险评估共用 -->
+          <div class="patient-info-card">
+            <h3>👤 患者基本信息</h3>
+            <p class="patient-info-hint">以下参数将用于全身体模缩放和 BEIR VII 二次癌风险评估，体模构建完成后自动计算风险。</p>
+            <div class="patient-params-grid">
+              <label class="param-item">
+                <span>年龄（岁）</span>
+                <input v-model.number="patientParams.age" type="number" min="0" max="120" />
+              </label>
+              <label class="param-item">
+                <span>性别</span>
+                <select v-model="patientParams.gender">
+                  <option value="male">男</option>
+                  <option value="female">女</option>
+                </select>
+              </label>
+              <label class="param-item">
+                <span>身高（cm）</span>
+                <input v-model.number="patientParams.height" type="number" min="50" max="250" />
+              </label>
+              <label class="param-item">
+                <span>体重（kg）</span>
+                <input v-model.number="patientParams.weight" type="number" min="10" max="300" />
+              </label>
+              <label class="param-item">
+                <span>肿瘤位置</span>
+                <select v-model="patientParams.tumorLocation">
+                  <option value="brain">脑部</option>
+                  <option value="liver">肝脏</option>
+                  <option value="lung">肺部</option>
+                  <option value="head_neck">头颈</option>
+                  <option value="other">其他</option>
+                </select>
+              </label>
+            </div>
+            <!-- 风险评估自动运行状态 -->
+            <div v-if="riskAutoRunning" class="risk-auto-status">
+              <span class="spinner-small">⟳</span> 正在自动运行二次癌风险评估，完成后可在「风险评估」Tab查看结果...
+            </div>
+            <div v-if="!riskAutoRunning && riskResults" class="risk-auto-done">
+              ✓ 风险评估已完成 — 全身累积 LAR = <strong>{{ riskResults.totalRisk.toFixed(5) }}%</strong>，
+              请切换至「风险评估」Tab查看详情
+            </div>
+          </div>
+
           <div class="workflow-steps">
             <div 
               v-for="(step, index) in mcnpSteps" 
@@ -471,57 +516,31 @@
       <div v-show="activeTab === 'risk'" class="tab-content">
         <div class="risk-workspace">
           <div class="risk-assessment-panel">
-            <h3>🧬 全身风险评估</h3>
-            
-            <div class="assessment-steps">
-              <div class="step">
-                <h4>1. 患者CT数据</h4>
-                <button @click="$refs.patientCtInput.click()" class="btn btn-primary">
-                  上传患者CT
-                </button>
-                <input 
-                  ref="patientCtInput" 
-                  type="file" 
-                  @change="handlePatientCtUpload" 
-                  accept=".nii.gz" 
-                  style="display: none"
-                />
-                <div v-if="patientCtFile" class="file-info">
-                  ✓ {{ patientCtFile.name }}
-                </div>
-              </div>
+            <h3>🧬 二次癌风险评估（BEIR VII）</h3>
 
-              <div class="step">
-                <h4>2. 评估参数</h4>
-                <div class="param-group">
-                  <label>
-                    <span>年龄:</span>
-                    <input v-model.number="riskParams.age" type="number" min="0" max="120" />
-                  </label>
-                  <label>
-                    <span>性别:</span>
-                    <select v-model="riskParams.gender">
-                      <option value="male">男</option>
-                      <option value="female">女</option>
-                    </select>
-                  </label>
-                  <label>
-                    <span>辐照时间 (分钟):</span>
-                    <input v-model.number="riskParams.exposureTime" type="number" min="1" max="120" />
-                  </label>
-                </div>
-              </div>
+            <!-- 当体模尚未构建时的引导提示 -->
+            <div v-if="!riskResults && !riskAutoRunning" class="risk-guide">
+              <p>ℹ️ 风险评估将在「MCNP计算」Tab 完成全身体模构建后自动运行，无需手动操作。</p>
+              <p>请按以下步骤操作：</p>
+              <ol>
+                <li>在「CT影像」Tab 上传患者 CT 数据</li>
+                <li>切换至「MCNP计算」Tab，填写患者基本信息（年龄、身高、体重等）</li>
+                <li>点击「构建体模」按钮，体模构建完成后风险评估将<strong>自动执行</strong></li>
+                <li>返回本页查看详细二次癌风险分析结果</li>
+              </ol>
+            </div>
 
-              <div class="step">
-                <h4>3. 运行评估</h4>
-                <button 
-                  @click="runRiskAssessment" 
-                  :disabled="!canRunRiskAssessment || loading"
-                  class="btn btn-success btn-large"
-                >
-                  {{ loading ? '评估中...' : '开始风险评估' }}
-                </button>
-              </div>
+            <!-- 自动运行中的状态提示 -->
+            <div v-if="riskAutoRunning" class="risk-running">
+              <span class="spinner-large">⟳</span>
+              <p>正在基于 BEIR VII 模型计算二次癌终生归因风险，请稍候...</p>
+            </div>
+
+            <!-- 评估参数摘要（只读显示，来自 MCNP 步骤） -->
+            <div v-if="riskResults" class="risk-params-summary">
+              <span>患者：{{ patientParams.gender === 'male' ? '男' : '女' }}，{{ patientParams.age }} 岁</span>
+              <span>身高 {{ patientParams.height }} cm / 体重 {{ patientParams.weight }} kg</span>
+              <span>肿瘤位置：{{ patientParams.tumorLocation }}</span>
             </div>
 
             <!-- 评估结果 -->
@@ -720,15 +739,18 @@ export default {
       dvhImage: '',
       dvhStats: null,
 
-      // 风险评估
+      // 风险评估 - 参数统一在 MCNP 体模步骤中填写，评估自动触发
       patientCtFile: null,
-      riskParams: {
+      patientParams: {
         age: 50,
         gender: 'male',
-        exposureTime: 30
+        height: 170,
+        weight: 65,
+        tumorLocation: 'brain'
       },
       riskResults: null,
       riskVisualization: '',
+      riskAutoRunning: false,
 
       // MCNP工作流
       mcnpSteps: [
@@ -783,9 +805,6 @@ export default {
       // 剂量统计信息
       doseStats: null,         // { max, mean, coverage }
 
-      // 体模构建参数
-      phantomGender: 'male',
-      phantomTumorRegion: '',   // '' = 自动识别
     };
   },
 
@@ -925,16 +944,19 @@ export default {
       try {
         const response = await axios.post(`${API_BASE}/build-wholebody-phantom`, {
           niiPath: this.niiPath,
-          gender: this.phantomGender,
-          tumorRegion: this.phantomTumorRegion
+          gender: this.patientParams.gender,
+          tumorRegion: this.patientParams.tumorLocation
         });
 
         this.mcnpSteps[0].status = 'completed';
         this.mcnpSteps[0].result = `体模构建完成: ${response.data.message || '成功'}`;
         this.mcnpSteps[1].disabled = false;
-        
+
         this.addLog('全身体模构建成功', 'success');
-        this.showMessage('全身体模构建成功,可以开始MCNP计算', 'success');
+        this.showMessage('全身体模构建成功，正在自动运行二次癌风险评估...', 'success');
+
+        // 体模构建成功后，自动触发风险评估
+        this.runAutoRiskAssessment();
       } catch (error) {
         this.mcnpSteps[0].status = 'error';
         this.mcnpSteps[0].result = '构建失败';
@@ -943,6 +965,57 @@ export default {
       } finally {
         this.loading = false;
         this.currentStep = -1;
+      }
+    },
+
+    // 体模构建成功后自动调用，无需用户再操作风险评估Tab
+    async runAutoRiskAssessment() {
+      this.riskAutoRunning = true;
+      this.addLog('开始自动二次癌风险评估（BEIR VII 模型）...', 'info');
+
+      try {
+        const response = await axios.post(`${API_BASE}/api/wholebody/quick-assess`, {
+          age: this.patientParams.age,
+          gender: this.patientParams.gender,
+          height: this.patientParams.height,
+          weight: this.patientParams.weight,
+          tumorLocation: this.patientParams.tumorLocation,
+          niiPath: this.niiPath || null
+        });
+
+        if (!response.data.success) throw new Error(response.data.message || '评估失败');
+
+        const rawReport = response.data.report || {};
+        const organList = Object.entries(rawReport)
+          .filter(([key]) => key !== 'total')
+          .map(([site, data]) => ({
+            name: site,
+            risk: data.lar_percent || 0,
+            larErr: data.lar_err_percent || data.lar_percent || 0,
+            larEar: data.lar_ear_percent || 0,
+            doseSv: data.dose_sv || 0,
+            err: data.err || 0,
+            ear: data.ear || 0,
+            riskLevel: data.risk_level || this.calcRiskLevel(data.lar_percent || 0),
+            organs: data.organs || []
+          }))
+          .sort((a, b) => b.risk - a.risk);
+
+        const maxRisk = organList.reduce((m, o) => Math.max(m, o.risk), 0);
+        this.riskResults = {
+          totalRisk: (rawReport.total && rawReport.total.lar_percent) || response.data.totalRisk || 0,
+          organs: organList,
+          maxRisk: maxRisk || 1
+        };
+
+        this.addLog(`风险评估完成！全身累积LAR = ${this.riskResults.totalRisk.toFixed(5)}%`, 'success');
+        this.showMessage('二次癌风险评估完成，请切换至"风险评估"Tab查看详细结果', 'success');
+      } catch (error) {
+        const msg = (error.response && error.response.data && error.response.data.message) || error.message;
+        this.addLog('风险评估失败: ' + msg, 'error');
+        this.showMessage('风险评估失败: ' + msg, 'error');
+      } finally {
+        this.riskAutoRunning = false;
       }
     },
 
@@ -1705,6 +1778,137 @@ export default {
 }
 
 /* ========== MCNP工作流 ========== */
+/* 患者基本信息卡片（MCNP Tab 顶部） */
+.patient-info-card {
+  grid-column: 1 / -1;
+  background: linear-gradient(135deg, #f0f4ff 0%, #e8f0fe 100%);
+  border: 1px solid #c5d0f8;
+  border-radius: 10px;
+  padding: 1.2rem 1.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.patient-info-card h3 {
+  color: #667eea;
+  margin-bottom: 0.4rem;
+  font-size: 1.05rem;
+}
+
+.patient-info-hint {
+  font-size: 0.82rem;
+  color: #777;
+  margin-bottom: 1rem;
+}
+
+.patient-params-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.param-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 130px;
+}
+
+.param-item span {
+  font-size: 0.82rem;
+  color: #555;
+  font-weight: 500;
+}
+
+.param-item input,
+.param-item select {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid #c8d4f8;
+  border-radius: 5px;
+  font-size: 0.9rem;
+  background: white;
+  color: #333;
+}
+
+.risk-auto-status {
+  margin-top: 0.8rem;
+  color: #667eea;
+  font-size: 0.88rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.spinner-small {
+  display: inline-block;
+  animation: spin 1s linear infinite;
+}
+
+.risk-auto-done {
+  margin-top: 0.8rem;
+  color: #27ae60;
+  font-size: 0.88rem;
+  background: #eafaf1;
+  padding: 0.5rem 0.8rem;
+  border-radius: 6px;
+  border-left: 3px solid #27ae60;
+}
+
+/* 风险评估 Tab 引导和状态样式 */
+.risk-guide {
+  background: #f0f4ff;
+  border-left: 4px solid #667eea;
+  border-radius: 6px;
+  padding: 1rem 1.2rem;
+  font-size: 0.9rem;
+  color: #444;
+  line-height: 1.8;
+}
+
+.risk-guide ol {
+  padding-left: 1.2rem;
+  margin-top: 0.5rem;
+}
+
+.risk-running {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  padding: 2rem;
+  color: #667eea;
+  font-size: 1rem;
+}
+
+.spinner-large {
+  font-size: 2.5rem;
+  display: inline-block;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.risk-params-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  background: #f5f7ff;
+  border-radius: 6px;
+  padding: 0.7rem 1rem;
+  font-size: 0.85rem;
+  color: #555;
+  border: 1px solid #dce4ff;
+}
+
+.risk-params-summary span {
+  padding: 0.2rem 0.6rem;
+  background: white;
+  border-radius: 12px;
+  border: 1px solid #c5d0f8;
+}
+
 .mcnp-workspace {
   display: grid;
   grid-template-columns: 2fr 1fr;
