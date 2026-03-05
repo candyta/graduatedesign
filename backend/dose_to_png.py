@@ -24,21 +24,26 @@ from scipy.ndimage import gaussian_filter
 # ─── 体模解剖灰度 LUT（缓存）────────────────────────────────────────────
 _PHANTOM_GRAY_LUT = None
 
+def _density_to_gray(density: float) -> int:
+    """将组织密度(g/cm³)映射为灰度值，模拟CT HU显示。"""
+    if density < 0.5:                   # 肺/气腔 → 暗灰
+        return int(np.clip(density * 60, 8, 35))
+    elif density < 1.1:                 # 软组织 → 中灰
+        return 85
+    elif density < 1.5:                 # 软骨/骨髓 → 浅灰白
+        return int(np.clip(110 + (density - 1.1) * 150, 110, 170))
+    else:                               # 皮质骨 → 亮白
+        return int(np.clip(180 + (density - 1.5) * 90, 180, 245))
+
+
 def _get_phantom_gray_lut() -> np.ndarray:
     """
     构建 organ_id → 灰度值(0-255) 查找表，用于渲染解剖背景。
 
-    映射规则（与 CT HU 密度对应）：
-      骨骼 (density > 1.3 g/cm³) → 亮白 170-240
-      软组织 (0.9-1.2 g/cm³)     → 中灰 80-100
-      肺/气腔 (< 0.5 g/cm³)      → 暗灰 15-40
-      体外 (0)                    → 黑 0
+    优先从 ICRP-110 材质文件（AM_organs.dat / AM_media.dat）加载精确密度映射。
+    若文件不存在，回落至合成解剖灰度表。
 
-    CT 融合替换码 (来自 ct_phantom_fusion.py)：
-      46  = 骨骼 (HU ≥ 100)
-      81  = 肺/体内气腔
-      107 = 软组织
-      900 = 肿瘤软组织 (B-10)
+    CT 融合替换码 (46=骨, 81=肺, 107=软组织) 始终直接映射。
     """
     global _PHANTOM_GRAY_LUT
     if _PHANTOM_GRAY_LUT is not None:
@@ -47,44 +52,54 @@ def _get_phantom_gray_lut() -> np.ndarray:
     lut = np.full(1024, 88, dtype=np.uint8)   # 默认：软组织中灰
     lut[0] = 0                                  # 体外空气 → 黑
 
-    # CT 融合替换码
-    lut[46]  = 215   # CT 骨骼 → 亮白
-    lut[81]  = 28    # CT 肺/气腔 → 暗灰
-    lut[107] = 88    # CT 软组织 → 中灰
-    lut[900] = 88    # 肿瘤软组织 → 中灰
+    # CT 融合替换码（来自 ct_phantom_fusion.simple_fusion）
+    lut[46]  = 215   # CT 骨骼 (HU ≥ 100) → 亮白
+    lut[81]  = 25    # CT 肺/体内气腔     → 暗灰
+    lut[107] = 88    # CT 软组织          → 中灰
+    lut[900] = 88    # 肿瘤软组织 (B-10)  → 中灰
 
-    # 尝试从 ICRP-110 材质文件中读取精确密度映射
+    # ── 从 ICRP-110 材质文件加载精确密度映射 ──────────────────────────
+    icrp_loaded = False
     try:
         from icrp110_material_map import ICRP110Materials
-        script_dir = Path(__file__).parent
-        loaded = False
         for pt in ['AM', 'AF']:
-            for base in [script_dir / pt,
-                         script_dir / 'phantom_data' / pt,
-                         script_dir]:
-                organs_f = base / f"{pt}_organs.dat"
-                media_f  = base / f"{pt}_media.dat"
-                if organs_f.exists() and media_f.exists():
-                    mat = ICRP110Materials(str(organs_f), str(media_f))
-                    for organ_id, (_, density, _name) in mat.organs.items():
-                        if not (0 <= organ_id < 1024):
-                            continue
-                        if density < 0.5:                  # 肺/气腔
-                            gray = int(np.clip(density * 70, 10, 40))
-                        elif density < 1.1:                # 软组织
-                            gray = 85
-                        elif density < 1.5:                # 软骨/骨髓
-                            gray = int(np.clip(110 + (density - 1.1) * 130, 110, 170))
-                        else:                              # 皮质骨
-                            gray = int(np.clip(175 + (density - 1.5) * 85, 175, 240))
-                        lut[organ_id] = gray
-                    loaded = True
-                    print(f"  [anatomy] 已加载 {pt} 材质密度映射")
-                    break
-            if loaded:
+            try:
+                mat = ICRP110Materials(pt)   # 自动在 backend/{pt}/ 下查找
+                for organ_id, (_, density, _) in mat.organs.items():
+                    if 0 <= organ_id < 1024:
+                        lut[organ_id] = _density_to_gray(density)
+                print(f"  [anatomy] 已加载 ICRP-110 {pt} 材质密度映射 "
+                      f"({len(mat.organs)} 种器官)")
+                icrp_loaded = True
                 break
+            except FileNotFoundError:
+                continue
     except Exception as e:
-        print(f"  [anatomy] 使用内置灰度表 ({e})")
+        pass
+
+    # ── 回落：合成解剖灰度表（无需 ICRP 数据文件）────────────────────
+    if not icrp_loaded:
+        print("  [anatomy] ICRP-110 材质文件不可用，使用合成解剖灰度表")
+        # 按已知 ICRP-110 AM 体模器官密度范围批量设置：
+        # 器官 ID 1-13: 脊椎各节段 → 骨骼高密度
+        for i in range(1, 14):
+            lut[i] = 210
+        # 器官 ID 14-20: 颅骨/锁骨/肩胛/胸骨/肱骨/尺桡骨 → 骨骼
+        for i in range(14, 21):
+            lut[i] = 205
+        # 器官 ID 21-30: 股骨/胫腓骨/髌骨/手足骨 → 骨骼
+        for i in range(21, 31):
+            lut[i] = 200
+        # 器官 ID 31-40: 肋骨/骨盆 → 骨骼
+        for i in range(31, 41):
+            lut[i] = 195
+        # 器官 ID 50-55: 肺 → 暗灰（低密度）
+        for i in range(50, 56):
+            lut[i] = 22
+        # 器官 ID 60-65: 软骨 → 中等灰白
+        for i in range(60, 66):
+            lut[i] = 130
+        # 其余保持默认软组织灰度 88
 
     _PHANTOM_GRAY_LUT = lut
     return lut
