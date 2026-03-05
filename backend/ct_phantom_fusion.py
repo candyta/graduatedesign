@@ -421,10 +421,14 @@ def generate_mcnp_input_enhanced(phantom_data: np.ndarray,
     z_max = nz * dz_cm
 
     # ---- 源位置 ----
-    x_src = x_max / 2.0
-    y_src = y_max / 2.0
+    # 必须放在lattice元素中心而非边界，否则MCNP5报 "zero lattice element hit"
+    # 错误原因: z_mid_vox * VZ_MM/10 = integer * dz_cm → 恰好落在lattice边界
+    # 修复: 先转换为降采样后的索引，再加0.5置于元素中心
+    x_src = (nx // 2 + 0.5) * dx_cm
+    y_src = (ny // 2 + 0.5) * dy_cm
     z_mid_vox = (registration['z_range'][0] + registration['z_range'][1]) // 2
-    z_src = z_mid_vox * VZ_MM / 10.0
+    z_src_ds_idx = z_mid_vox // DS_FACTOR
+    z_src = (z_src_ds_idx + 0.5) * dz_cm
 
     # ---- FMESH bins (与降采样后的体素网格对齐) ----
     n_bins_x, n_bins_y, n_bins_z = nx, ny, nz
