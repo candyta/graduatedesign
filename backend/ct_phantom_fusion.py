@@ -438,14 +438,51 @@ def generate_mcnp_input_enhanced(phantom_data: np.ndarray,
     z_max = nz * dz_cm
 
     # ---- 源位置 ----
-    # 必须放在lattice元素中心而非边界，否则MCNP5报 "zero lattice element hit"
-    # 错误原因: z_mid_vox * VZ_MM/10 = integer * dz_cm → 恰好落在lattice边界
-    # 修复: 先转换为降采样后的索引，再加0.5置于元素中心
-    x_src = (nx // 2 + 0.5) * dx_cm
-    y_src = (ny // 2 + 0.5) * dy_cm
+    # 必须满足两个条件：
+    #   1) 置于lattice元素中心（+0.5），避免 "zero lattice element hit"
+    #   2) 落在非零材料体素（imp:n=1），否则报 "source in cell of zero importance"
+    # 策略：先计算理想中心索引，若对应体素为void则搜索最近的非零体素
+    i_tgt = nx // 2
+    j_tgt = ny // 2
     z_mid_vox = (registration['z_range'][0] + registration['z_range'][1]) // 2
-    z_src_ds_idx = z_mid_vox // DS_FACTOR
-    z_src = (z_src_ds_idx + 0.5) * dz_cm
+    k_tgt = min(z_mid_vox // DS_FACTOR, nz - 1)
+
+    # 若目标体素为void，在z方向同一层内找最近的非零体素，然后扩展到全体
+    def _nearest_nonzero(vol, i0, j0, k0):
+        nx_, ny_, nz_ = vol.shape
+        i0 = max(0, min(nx_ - 1, i0))
+        j0 = max(0, min(ny_ - 1, j0))
+        k0 = max(0, min(nz_ - 1, k0))
+        if vol[i0, j0, k0] > 0:
+            return i0, j0, k0
+        # 在 ±5层z范围内搜索
+        z_lo = max(0, k0 - 5)
+        z_hi = min(nz_, k0 + 6)
+        sub = vol[:, :, z_lo:z_hi]
+        cands = np.argwhere(sub > 0)
+        if len(cands) == 0:
+            # 全体积搜索
+            cands = np.argwhere(vol > 0)
+            if len(cands) == 0:
+                return i0, j0, k0   # 无组织体素，保持原位
+            dists = np.sum((cands - np.array([i0, j0, k0]))**2, axis=1)
+            best = cands[np.argmin(dists)]
+            return int(best[0]), int(best[1]), int(best[2])
+        # 把sub的z索引转回全体积索引
+        cands_full = cands.copy()
+        cands_full[:, 2] += z_lo
+        dists = np.sum((cands_full - np.array([i0, j0, k0]))**2, axis=1)
+        best = cands_full[np.argmin(dists)]
+        return int(best[0]), int(best[1]), int(best[2])
+
+    i_src, j_src, k_src = _nearest_nonzero(mat_vol, i_tgt, j_tgt, k_tgt)
+    if (i_src, j_src, k_src) != (i_tgt, j_tgt, k_tgt):
+        print(f"  [源位置修正] 目标体素({i_tgt},{j_tgt},{k_tgt})为void, "
+              f"调整至最近非零体素({i_src},{j_src},{k_src}), "
+              f"材料ID={mat_vol[i_src, j_src, k_src]}")
+    x_src = (i_src + 0.5) * dx_cm
+    y_src = (j_src + 0.5) * dy_cm
+    z_src = (k_src + 0.5) * dz_cm
 
     # ---- FMESH bins (与降采样后的体素网格对齐) ----
     n_bins_x, n_bins_y, n_bins_z = nx, ny, nz
