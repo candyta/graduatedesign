@@ -234,16 +234,58 @@ def log_normalize(dose_array, body_mask, log_orders=7):
     return result
 
 
+def _hu_to_gray(hu_values: np.ndarray) -> np.ndarray:
+    """
+    将CT的HU值映射为灰度值（0-255），用于CT区域的解剖背景渲染。
+
+    采用宽窗宽设置以同时显示软组织和骨骼细节:
+      - 气腔/肺 (HU < -500) → 暗灰 (10-35)
+      - 脂肪    (-500~-100)  → 较暗灰 (40-70)
+      - 软组织  (-100~100)   → 中灰 (75-100)
+      - 肌肉/实质 (100~300)  → 浅灰 (105-145)
+      - 骨骼    (> 300)      → 亮白 (160-245)
+    """
+    gray = np.empty_like(hu_values, dtype=np.float32)
+
+    # 气腔/肺
+    m = hu_values < -500
+    gray[m] = np.clip(10 + (hu_values[m] + 1000) * 25.0 / 500, 10, 35)
+
+    # 脂肪
+    m = (hu_values >= -500) & (hu_values < -100)
+    gray[m] = np.clip(40 + (hu_values[m] + 500) * 30.0 / 400, 40, 70)
+
+    # 软组织
+    m = (hu_values >= -100) & (hu_values < 100)
+    gray[m] = np.clip(75 + (hu_values[m] + 100) * 25.0 / 200, 75, 100)
+
+    # 肌肉/实质
+    m = (hu_values >= 100) & (hu_values < 300)
+    gray[m] = np.clip(105 + (hu_values[m] - 100) * 40.0 / 200, 105, 145)
+
+    # 骨骼
+    m = hu_values >= 300
+    gray[m] = np.clip(160 + (hu_values[m] - 300) * 85.0 / 700, 160, 245)
+
+    return gray
+
+
 def save_overlay_slices(dose_data, ct_data, output_dir, view_name,
                         dose_alpha=0.85, slice_interval=1, colormap='jet',
                         figsize=None, body_mask=None,
                         pixel_spacing_hw=(1.0, 1.0),
-                        organ_data=None):
+                        organ_data=None, ct_background=None):
     """
     保存全身剂量分布切片（参考BNCT文献的彩色全身热力图风格）。
 
     体内所有体素都用jet彩色（红=高，黄/绿=中，蓝=低），
     体外完全透明。
+
+    ct_background : np.ndarray or None
+        CT原始HU值数组（与dose_data同shape）。值为-9999表示该处使用ICRP
+        体模灰度；其余值为HU数值，用_hu_to_gray()转换为解剖背景灰度。
+        若提供，则CT融合区域呈现真实CT解剖外观（可见骨骼、肺等细节），
+        而非均一的材料代码灰度。
     """
     from PIL import Image
 
@@ -297,6 +339,15 @@ def save_overlay_slices(dose_data, ct_data, output_dir, view_name,
                 organ_sl = organ_data[i]
                 organ_ids = np.clip(organ_sl, 0, 1023).astype(np.int32)
                 gray_bg = gray_lut[organ_ids].astype(np.float32)   # (h, w)
+
+                # ── 若提供CT背景，在CT融合区域用CT HU值覆盖材料代码灰度 ──
+                # 这样CT区域显示真实CT解剖（骨骼亮白，肺暗，软组织中灰），
+                # 而非均一的材料代码灰度（消除"方形块"伪影）
+                if ct_background is not None:
+                    ct_sl = ct_background[i]
+                    ct_valid = (ct_sl > -9000)   # 非哨兵值 → CT融合区域
+                    if np.any(ct_valid):
+                        gray_bg[ct_valid] = _hu_to_gray(ct_sl[ct_valid])
 
                 r = np.clip(colors[:, :, 0] * DOSE_W + gray_bg * ANAT_W, 0, 255).astype(np.uint8)
                 g = np.clip(colors[:, :, 1] * DOSE_W + gray_bg * ANAT_W, 0, 255).astype(np.uint8)
@@ -491,6 +542,22 @@ def process_dose_3d(npy_path, output_dir, ref_nii_path,
 
     organ_3d = ref_array if is_wholebody_phantom else None
 
+    # 尝试加载CT背景（用真实HU值渲染CT融合区域，消除"方形块"视觉伪影）
+    ct_background_3d = None
+    if is_wholebody_phantom:
+        phantom_dir = Path(ref_nii_path).parent
+        ct_bg_path = phantom_dir / 'ct_background.nii.gz'
+        if ct_bg_path.exists():
+            try:
+                ct_bg_sitk = sitk.ReadImage(str(ct_bg_path))
+                ct_background_3d = sitk.GetArrayFromImage(ct_bg_sitk)  # (Z,Y,X)
+                print(f"  [CT背景] 已加载CT背景: {ct_bg_path}, shape={ct_background_3d.shape}")
+            except Exception as e:
+                print(f"  [CT背景] 加载失败（将使用材料代码灰度）: {e}")
+        else:
+            print(f"  [CT背景] 未找到ct_background.nii.gz，使用材料代码灰度")
+            print(f"  [CT背景] 提示: 重新执行'构建全身体模'步骤可生成该文件")
+
     sp = ref_img.GetSpacing()
     sp_x, sp_y, sp_z = sp[0], sp[1], sp[2]
     print(f"  参考图体素间距: X={sp_x:.3f}mm, Y={sp_y:.3f}mm, Z={sp_z:.3f}mm")
@@ -512,13 +579,15 @@ def process_dose_3d(npy_path, output_dir, ref_nii_path,
         slice_interval=slice_interval,
         body_mask=body_mask_3d,
         pixel_spacing_hw=(sp_y, sp_x),
-        organ_data=organ_3d
+        organ_data=organ_3d,
+        ct_background=ct_background_3d
     )
 
     # 冠状面 (Coronal)
     print("\n  生成冠状面 (Coronal)...")
     body_mask_coronal = np.transpose(body_mask_3d, (1, 0, 2))
     organ_coronal = np.transpose(organ_3d, (1, 0, 2)) if organ_3d is not None else None
+    ct_bg_coronal = np.transpose(ct_background_3d, (1, 0, 2)) if ct_background_3d is not None else None
     views['coronal'] = {
         'dose': np.transpose(dose_normalized, (1, 0, 2)),
         'ct': np.transpose(ct_normalized, (1, 0, 2))
@@ -532,13 +601,15 @@ def process_dose_3d(npy_path, output_dir, ref_nii_path,
         slice_interval=slice_interval,
         body_mask=body_mask_coronal,
         pixel_spacing_hw=(sp_z, sp_x),
-        organ_data=organ_coronal
+        organ_data=organ_coronal,
+        ct_background=ct_bg_coronal
     )
 
     # 矢状面 (Sagittal)
     print("\n  生成矢状面 (Sagittal)...")
     body_mask_sagittal = np.transpose(body_mask_3d, (2, 0, 1))
     organ_sagittal = np.transpose(organ_3d, (2, 0, 1)) if organ_3d is not None else None
+    ct_bg_sagittal = np.transpose(ct_background_3d, (2, 0, 1)) if ct_background_3d is not None else None
     views['sagittal'] = {
         'dose': np.transpose(dose_normalized, (2, 0, 1)),
         'ct': np.transpose(ct_normalized, (2, 0, 1))
@@ -552,7 +623,8 @@ def process_dose_3d(npy_path, output_dir, ref_nii_path,
         slice_interval=slice_interval,
         body_mask=body_mask_sagittal,
         pixel_spacing_hw=(sp_z, sp_y),
-        organ_data=organ_sagittal
+        organ_data=organ_sagittal,
+        ct_background=ct_bg_sagittal
     )
 
     # ==================== 8. 生成汇总信息 ====================

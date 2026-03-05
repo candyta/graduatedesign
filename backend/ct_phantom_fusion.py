@@ -458,7 +458,19 @@ def simple_fusion(ct_data, phantom_data, registration,
     replaced = int(np.sum(replace_mask))
     print(f"  融合完成: 替换体素 {replaced:,} "
           f"({replaced / phantom_data.size * 100:.2f}%)")
-    return fusion_result
+
+    # -- 构建CT背景数组（用于可视化：在CT区域保存原始HU值）--
+    # 用哨兵值 -9999 表示"使用ICRP体模"，CT替换区域则存储HU值
+    ct_background = np.full(phantom_data.shape, -9999.0, dtype=np.float32)
+    ct_bg_view = ct_background[
+        start_pos[0]:end_pos[0],
+        start_pos[1]:end_pos[1],
+        start_pos[2]:end_pos[2]
+    ]
+    ct_bg_view[replace_mask] = ct_region[replace_mask].astype(np.float32)
+    print(f"  CT背景: 已记录 {replaced:,} 个CT体素的HU值（用于可视化解剖背景）")
+
+    return fusion_result, ct_background
 
 
 # =====================================================================
@@ -793,7 +805,7 @@ def main_workflow_enhanced(ct_path: str, output_dir: str,
 
     # 4. 融合 (Sigmoid过渡带, Kollitz et al. PMB 2022)
     print("\n[步骤4] 融合（Sigmoid过渡带）")
-    fusion_result = simple_fusion(
+    fusion_result, ct_background = simple_fusion(
         ct_data, phantom_data, registration,
         transition_cm=10.0,
         ct_spacing=ct_spacing,
@@ -802,11 +814,17 @@ def main_workflow_enhanced(ct_path: str, output_dir: str,
 
     # 5. 保存融合体模
     print("\n[步骤5] 保存融合体模")
-    fusion_nii_path = output_dir / 'fused_phantom.nii.gz'
     affine = np.diag([voxel_size[0], voxel_size[1], voxel_size[2], 1])
+    fusion_nii_path = output_dir / 'fused_phantom.nii.gz'
     nii_out = nib.Nifti1Image(fusion_result.astype(np.int16), affine)
     nib.save(nii_out, fusion_nii_path)
     print(f"  OK 融合体模: {fusion_nii_path}")
+
+    # 保存CT背景（用于可视化：CT区域用真实HU值渲染，而非材料代码）
+    ct_bg_nii_path = output_dir / 'ct_background.nii.gz'
+    ct_bg_nii = nib.Nifti1Image(ct_background, affine)
+    nib.save(ct_bg_nii, ct_bg_nii_path)
+    print(f"  OK CT背景:   {ct_bg_nii_path}")
 
     # 6. 生成MCNP输入(多材料lattice)
     print("\n[步骤6] 生成MCNP输入文件（多材料体素lattice）")
