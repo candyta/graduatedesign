@@ -293,14 +293,23 @@ def save_overlay_slices(dose_data, ct_data, output_dir, view_name,
             colors = lut[idx]   # shape (h, w, 4)
 
             if gray_lut is not None:
-                # ── 有解剖背景：将剂量叠加在灰度解剖图上 ──────────────────
+                # ── 有解剖背景：剂量驱动动态混合（消除方形色块边界）────────
+                # 低剂量区域显示解剖背景，高剂量区域才显示剂量颜色。
+                # dose_slice 是 0~1 对数归一化值：
+                #   < 0.05           → 纯解剖灰（MCNP网格边界外无色块）
+                #   0.05 ~ 0.35      → 线性过渡（骨骼/解剖轮廓依然可见）
+                #   > 0.35           → 最大剂量权重 DOSE_W
                 organ_sl = organ_data[i]
                 organ_ids = np.clip(organ_sl, 0, 1023).astype(np.int32)
                 gray_bg = gray_lut[organ_ids].astype(np.float32)   # (h, w)
 
-                r = np.clip(colors[:, :, 0] * DOSE_W + gray_bg * ANAT_W, 0, 255).astype(np.uint8)
-                g = np.clip(colors[:, :, 1] * DOSE_W + gray_bg * ANAT_W, 0, 255).astype(np.uint8)
-                b = np.clip(colors[:, :, 2] * DOSE_W + gray_bg * ANAT_W, 0, 255).astype(np.uint8)
+                # 剂量动态权重：在 [0.05, 0.35] 范围内从 0 线性升至 DOSE_W
+                dose_w_2d = np.clip((dose_slice - 0.05) / 0.30, 0.0, 1.0).astype(np.float32) * DOSE_W
+                anat_w_2d = 1.0 - dose_w_2d   # 互补：低剂量时解剖权重接近1
+
+                r = np.clip(colors[:, :, 0] * dose_w_2d + gray_bg * anat_w_2d, 0, 255).astype(np.uint8)
+                g = np.clip(colors[:, :, 1] * dose_w_2d + gray_bg * anat_w_2d, 0, 255).astype(np.uint8)
+                b = np.clip(colors[:, :, 2] * dose_w_2d + gray_bg * anat_w_2d, 0, 255).astype(np.uint8)
 
                 out_rgba[in_body, 0] = r[in_body]
                 out_rgba[in_body, 1] = g[in_body]
