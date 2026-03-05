@@ -21,6 +21,74 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 from scipy.ndimage import gaussian_filter
 
+# ─── 体模解剖灰度 LUT（缓存）────────────────────────────────────────────
+_PHANTOM_GRAY_LUT = None
+
+def _get_phantom_gray_lut() -> np.ndarray:
+    """
+    构建 organ_id → 灰度值(0-255) 查找表，用于渲染解剖背景。
+
+    映射规则（与 CT HU 密度对应）：
+      骨骼 (density > 1.3 g/cm³) → 亮白 170-240
+      软组织 (0.9-1.2 g/cm³)     → 中灰 80-100
+      肺/气腔 (< 0.5 g/cm³)      → 暗灰 15-40
+      体外 (0)                    → 黑 0
+
+    CT 融合替换码 (来自 ct_phantom_fusion.py)：
+      46  = 骨骼 (HU ≥ 100)
+      81  = 肺/体内气腔
+      107 = 软组织
+      900 = 肿瘤软组织 (B-10)
+    """
+    global _PHANTOM_GRAY_LUT
+    if _PHANTOM_GRAY_LUT is not None:
+        return _PHANTOM_GRAY_LUT
+
+    lut = np.full(1024, 88, dtype=np.uint8)   # 默认：软组织中灰
+    lut[0] = 0                                  # 体外空气 → 黑
+
+    # CT 融合替换码
+    lut[46]  = 215   # CT 骨骼 → 亮白
+    lut[81]  = 28    # CT 肺/气腔 → 暗灰
+    lut[107] = 88    # CT 软组织 → 中灰
+    lut[900] = 88    # 肿瘤软组织 → 中灰
+
+    # 尝试从 ICRP-110 材质文件中读取精确密度映射
+    try:
+        from icrp110_material_map import ICRP110Materials
+        script_dir = Path(__file__).parent
+        loaded = False
+        for pt in ['AM', 'AF']:
+            for base in [script_dir / pt,
+                         script_dir / 'phantom_data' / pt,
+                         script_dir]:
+                organs_f = base / f"{pt}_organs.dat"
+                media_f  = base / f"{pt}_media.dat"
+                if organs_f.exists() and media_f.exists():
+                    mat = ICRP110Materials(str(organs_f), str(media_f))
+                    for organ_id, (_, density, _name) in mat.organs.items():
+                        if not (0 <= organ_id < 1024):
+                            continue
+                        if density < 0.5:                  # 肺/气腔
+                            gray = int(np.clip(density * 70, 10, 40))
+                        elif density < 1.1:                # 软组织
+                            gray = 85
+                        elif density < 1.5:                # 软骨/骨髓
+                            gray = int(np.clip(110 + (density - 1.1) * 130, 110, 170))
+                        else:                              # 皮质骨
+                            gray = int(np.clip(175 + (density - 1.5) * 85, 175, 240))
+                        lut[organ_id] = gray
+                    loaded = True
+                    print(f"  [anatomy] 已加载 {pt} 材质密度映射")
+                    break
+            if loaded:
+                break
+    except Exception as e:
+        print(f"  [anatomy] 使用内置灰度表 ({e})")
+
+    _PHANTOM_GRAY_LUT = lut
+    return lut
+
 
 def normalize_array(array, percentile_clip=99.5):
     """
@@ -181,6 +249,13 @@ def save_overlay_slices(dose_data, ct_data, output_dir, view_name,
         cmap_fn = plt.get_cmap(colormap)
     lut = (cmap_fn(np.linspace(0, 1, 256)) * 255).astype(np.uint8)
 
+    # 解剖背景 LUT（当 organ_data 存在时启用）
+    gray_lut = _get_phantom_gray_lut() if organ_data is not None else None
+    # 剂量叠加在解剖背景上时的混合权重
+    # dose_weight + anat_weight = 1.0，保证解剖结构始终可见
+    DOSE_W = 0.65
+    ANAT_W = 0.35
+
     saved_count = 0
     for i in range(0, num_slices, slice_interval):
 
@@ -198,14 +273,30 @@ def save_overlay_slices(dose_data, ct_data, output_dir, view_name,
         in_body = (mask == 1)
 
         if np.any(in_body):
-            # 直接线性映射到LUT（已经做过对数归一化了）
+            # 剂量颜色（jet LUT）
             idx = (np.clip(dose_slice, 0, 1) * 255).astype(np.uint8)
-            colors = lut[idx]
+            colors = lut[idx]   # shape (h, w, 4)
 
-            out_rgba[in_body, 0] = colors[in_body, 0]
-            out_rgba[in_body, 1] = colors[in_body, 1]
-            out_rgba[in_body, 2] = colors[in_body, 2]
-            out_rgba[in_body, 3] = int(dose_alpha * 255)
+            if gray_lut is not None:
+                # ── 有解剖背景：将剂量叠加在灰度解剖图上 ──────────────────
+                organ_sl = organ_data[i]
+                organ_ids = np.clip(organ_sl, 0, 1023).astype(np.int32)
+                gray_bg = gray_lut[organ_ids].astype(np.float32)   # (h, w)
+
+                r = np.clip(colors[:, :, 0] * DOSE_W + gray_bg * ANAT_W, 0, 255).astype(np.uint8)
+                g = np.clip(colors[:, :, 1] * DOSE_W + gray_bg * ANAT_W, 0, 255).astype(np.uint8)
+                b = np.clip(colors[:, :, 2] * DOSE_W + gray_bg * ANAT_W, 0, 255).astype(np.uint8)
+
+                out_rgba[in_body, 0] = r[in_body]
+                out_rgba[in_body, 1] = g[in_body]
+                out_rgba[in_body, 2] = b[in_body]
+                out_rgba[in_body, 3] = 255   # 不透明：解剖背景已含在像素内
+            else:
+                # ── 无解剖背景：原始行为（纯剂量热图）───────────────────────
+                out_rgba[in_body, 0] = colors[in_body, 0]
+                out_rgba[in_body, 1] = colors[in_body, 1]
+                out_rgba[in_body, 2] = colors[in_body, 2]
+                out_rgba[in_body, 3] = int(dose_alpha * 255)
 
         # 体外 → 全透明 (已经是0)
 
