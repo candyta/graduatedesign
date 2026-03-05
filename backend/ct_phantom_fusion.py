@@ -170,14 +170,23 @@ def detect_anatomical_region(ct_data: np.ndarray, ct_affine=None,
 
 
 # 区域参数表
+# ICRP-110 AM体模：222层 × 8mm/层 = 1776mm，Z=0为足底，Z=221为头顶。
+# 各区域Z坐标范围（相对于体模总高度的比例）基于ICRP-110解剖结构：
+#   脑部/头顶：第197-222层 → 88%-100%
+#   鼻咽/颈部：第185-202层 → 83%-91%
+#   胸部（肺）：第155-195层 → 70%-88%
+#   腹部：      第115-165层 → 52%-74%
+#   肝脏：      第125-165层 → 56%-74%
+#   骨盆：      第75-120层  → 34%-54%
+#   腿部：      第0-80层    → 0%-36%
 ANATOMICAL_REGIONS = {
-    'brain':       {'z_range': (0.75, 0.95), 'center_offset': (0, 0, 0),    'description': '头部/脑部',   'description_en': 'Head/Brain'},
-    'nasopharynx': {'z_range': (0.70, 0.80), 'center_offset': (0, -0.1, 0), 'description': '鼻咽部',     'description_en': 'Nasopharynx'},
-    'chest':       {'z_range': (0.50, 0.70), 'center_offset': (0, 0, 0),    'description': '胸部',       'description_en': 'Chest'},
-    'abdomen':     {'z_range': (0.40, 0.60), 'center_offset': (0, 0, 0),    'description': '腹部',       'description_en': 'Abdomen'},
-    'liver':       {'z_range': (0.45, 0.60), 'center_offset': (0.05, 0, 0), 'description': '肝脏区域',   'description_en': 'Liver'},
-    'pelvis':      {'z_range': (0.25, 0.45), 'center_offset': (0, 0, 0),    'description': '骨盆',       'description_en': 'Pelvis'},
-    'legs':        {'z_range': (0.00, 0.30), 'center_offset': (0, 0, 0),    'description': '腿部',       'description_en': 'Legs'},
+    'brain':       {'z_range': (0.87, 1.00), 'center_offset': (0, 0, 0),    'description': '头部/脑部',   'description_en': 'Head/Brain'},
+    'nasopharynx': {'z_range': (0.80, 0.92), 'center_offset': (0, -0.1, 0), 'description': '鼻咽部',     'description_en': 'Nasopharynx'},
+    'chest':       {'z_range': (0.65, 0.87), 'center_offset': (0, 0, 0),    'description': '胸部',       'description_en': 'Chest'},
+    'abdomen':     {'z_range': (0.50, 0.72), 'center_offset': (0, 0, 0),    'description': '腹部',       'description_en': 'Abdomen'},
+    'liver':       {'z_range': (0.54, 0.72), 'center_offset': (0.05, 0, 0), 'description': '肝脏区域',   'description_en': 'Liver'},
+    'pelvis':      {'z_range': (0.32, 0.52), 'center_offset': (0, 0, 0),    'description': '骨盆',       'description_en': 'Pelvis'},
+    'legs':        {'z_range': (0.00, 0.36), 'center_offset': (0, 0, 0),    'description': '腿部',       'description_en': 'Legs'},
     'wholebody':   {'z_range': (0.10, 0.90), 'center_offset': (0, 0, 0),    'description': '全身',       'description_en': 'Whole body'},
 }
 
