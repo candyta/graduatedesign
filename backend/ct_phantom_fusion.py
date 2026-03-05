@@ -511,7 +511,7 @@ def generate_mcnp_input_enhanced(phantom_data: np.ndarray,
             f.write(f"{mat_id} {mat_id} -{density:.4f} -10  "
                     f"u={mat_id}  imp:n=1  $ {tissue_name}\n")
         # 体外空气 universe
-        f.write("100 0  -10  u=100  imp:n=0  $ External air\n")
+        f.write("100 0  -10  u=100  imp:n=1  $ External air (void but trackable)\n")
 
         # Lattice cell
         f.write("c\nc  Lattice cell\n")
