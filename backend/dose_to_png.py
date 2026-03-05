@@ -489,7 +489,20 @@ def process_dose_3d(npy_path, output_dir, ref_nii_path,
     # ==================== 7. 生成三视图 ====================
     print("\n[步骤7] 生成三视图切片")
 
-    organ_3d = ref_array if is_wholebody_phantom else None
+    # 解剖背景优先使用原始ICRP体模（含100+种器官细节），避免CT替换区域呈现方形色块。
+    # 若原始体模不可用，回落到融合体模（CT区域仅3类灰度，会有轻微方形感）。
+    organ_3d = None
+    if is_wholebody_phantom:
+        ref_dir = Path(ref_nii_path).parent
+        original_phantom_path = ref_dir / 'original_phantom.nii.gz'
+        if original_phantom_path.exists():
+            print(f"  [解剖背景] 加载原始ICRP体模: {original_phantom_path}")
+            orig_img = sitk.ReadImage(str(original_phantom_path))
+            organ_3d = sitk.GetArrayFromImage(orig_img)
+            print(f"  [解剖背景] 原始体模 shape: {organ_3d.shape}")
+        else:
+            print("  [解剖背景] 未找到 original_phantom.nii.gz，使用融合体模")
+            organ_3d = ref_array
 
     sp = ref_img.GetSpacing()
     sp_x, sp_y, sp_z = sp[0], sp[1], sp[2]

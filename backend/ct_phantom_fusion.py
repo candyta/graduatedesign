@@ -800,10 +800,18 @@ def main_workflow_enhanced(ct_path: str, output_dir: str,
         phantom_spacing=voxel_size,
     )
 
-    # 5. 保存融合体模
+    # 5. 保存融合体模（及原始体模用于可视化背景）
     print("\n[步骤5] 保存融合体模")
-    fusion_nii_path = output_dir / 'fused_phantom.nii.gz'
     affine = np.diag([voxel_size[0], voxel_size[1], voxel_size[2], 1])
+
+    # 保存原始ICRP体模（融合前），供可视化时作为解剖背景使用
+    # 避免CT替换区域呈现方形色块，确保全身解剖结构始终完整可见
+    original_nii_path = output_dir / 'original_phantom.nii.gz'
+    nii_orig = nib.Nifti1Image(phantom_data.astype(np.int16), affine)
+    nib.save(nii_orig, original_nii_path)
+    print(f"  OK 原始体模: {original_nii_path}")
+
+    fusion_nii_path = output_dir / 'fused_phantom.nii.gz'
     nii_out = nib.Nifti1Image(fusion_result.astype(np.int16), affine)
     nib.save(nii_out, fusion_nii_path)
     print(f"  OK 融合体模: {fusion_nii_path}")
