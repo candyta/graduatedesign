@@ -171,8 +171,14 @@ def detect_anatomical_region(ct_data: np.ndarray, ct_affine=None,
 
 # 区域参数表
 ANATOMICAL_REGIONS = {
-    'brain':       {'z_range': (0.75, 0.95), 'center_offset': (0, 0, 0),    'description': '头部/脑部',   'description_en': 'Head/Brain'},
-    'nasopharynx': {'z_range': (0.70, 0.80), 'center_offset': (0, -0.1, 0), 'description': '鼻咽部',     'description_en': 'Nasopharynx'},
+    # z_range 对应 ICRP-110 AM 体模 (222 slices, 8mm/slice, 总高 177.6 cm)
+    # 各区域覆盖范围（距脚底高度 cm → 距头顶 cm）：
+    #   (0.86, 0.98) → z=190-217 → 152-173.6cm → 2-24cm below crown  ← 大脑
+    #   (0.80, 0.88) → z=177-195 → 141.6-156cm → 20-34cm below crown ← 鼻咽
+    #   (0.50, 0.70) → z=111-155 → 88.8-124cm  → 52-88cm below crown ← 胸部
+    #   (0.40, 0.60) → z=88-133  → 70.4-106.4cm                      ← 腹部
+    'brain':       {'z_range': (0.86, 0.98), 'center_offset': (0, 0, 0),    'description': '头部/脑部',   'description_en': 'Head/Brain'},
+    'nasopharynx': {'z_range': (0.80, 0.88), 'center_offset': (0, -0.1, 0), 'description': '鼻咽部',     'description_en': 'Nasopharynx'},
     'chest':       {'z_range': (0.50, 0.70), 'center_offset': (0, 0, 0),    'description': '胸部',       'description_en': 'Chest'},
     'abdomen':     {'z_range': (0.40, 0.60), 'center_offset': (0, 0, 0),    'description': '腹部',       'description_en': 'Abdomen'},
     'liver':       {'z_range': (0.45, 0.60), 'center_offset': (0.05, 0, 0), 'description': '肝脏区域',   'description_en': 'Liver'},
@@ -438,14 +444,39 @@ def generate_mcnp_input_enhanced(phantom_data: np.ndarray,
     z_max = nz * dz_cm
 
     # ---- 源位置 ----
-    # 必须放在lattice元素中心而非边界，否则MCNP5报 "zero lattice element hit"
-    # 错误原因: z_mid_vox * VZ_MM/10 = integer * dz_cm → 恰好落在lattice边界
-    # 修复: 先转换为降采样后的索引，再加0.5置于元素中心
-    x_src = (nx // 2 + 0.5) * dx_cm
-    y_src = (ny // 2 + 0.5) * dy_cm
+    # 规则1: 坐标为lattice元素中心（+0.5），避免 "zero lattice element hit"
+    # 规则2: 源必须位于体组织体素内（mat_vol > 0），否则 MCNP5 报
+    #        "source particle started in a cell of zero importance"
     z_mid_vox = (registration['z_range'][0] + registration['z_range'][1]) // 2
-    z_src_ds_idx = z_mid_vox // DS_FACTOR
-    z_src = (z_src_ds_idx + 0.5) * dz_cm
+    src_k = z_mid_vox // DS_FACTOR   # 降采样后z索引
+    src_i = nx // 2                  # 初始XY取网格中心
+    src_j = ny // 2
+
+    # 校验源体素是否有体组织；若为空，自动搜索最近非空体素
+    if mat_vol[src_i, src_j, src_k] == 0:
+        body_xy = mat_vol[:, :, src_k] > 0
+        if not np.any(body_xy):
+            # 当前z层全空 → 向上/下搜索有体组织的z层
+            for dz in range(1, nz):
+                for k_try in [src_k + dz, src_k - dz]:
+                    if 0 <= k_try < nz and np.any(mat_vol[:, :, k_try] > 0):
+                        src_k = k_try
+                        body_xy = mat_vol[:, :, src_k] > 0
+                        break
+                else:
+                    continue
+                break
+        # 在该z层找距网格中心最近的体组织体素
+        xi, yi = np.where(body_xy)
+        dists = (xi - src_i) ** 2 + (yi - src_j) ** 2
+        best = int(np.argmin(dists))
+        src_i, src_j = int(xi[best]), int(yi[best])
+        print(f"  [注意] 初始源位置为外部空气，已自动调整至体内体素 "
+              f"({src_i},{src_j},{src_k})")
+
+    x_src = (src_i + 0.5) * dx_cm
+    y_src = (src_j + 0.5) * dy_cm
+    z_src = (src_k + 0.5) * dz_cm
 
     # ---- FMESH bins (与降采样后的体素网格对齐) ----
     n_bins_x, n_bins_y, n_bins_z = nx, ny, nz
