@@ -128,29 +128,44 @@ def _build_fallback_phantom() -> np.ndarray:
 # 2. 解剖区域识别与配准
 # =====================================================================
 
-def detect_anatomical_region(ct_data: np.ndarray, ct_affine=None) -> str:
-    """自动识别CT中的解剖区域"""
+def detect_anatomical_region(ct_data: np.ndarray, ct_affine=None,
+                             ct_spacing=(1.0, 1.0, 1.0)) -> str:
+    """
+    自动识别CT/MRI中的解剖区域。
+
+    使用物理FOV尺寸（cm）而非体素层数进行判断，
+    避免高分辨率薄层扫描（如1mm脑部MRI有155层）被误判为全身扫描。
+    """
     print("\n[自动识别解剖区域]")
     shape = ct_data.shape
     print(f"  CT尺寸: {shape}")
 
     bone_ratio = np.sum(ct_data > 200) / ct_data.size
-    air_ratio = np.sum(ct_data < -500) / ct_data.size
-    z_slices = shape[2]
+    air_ratio  = np.sum(ct_data < -500) / ct_data.size
 
-    if z_slices < 50:
-        if bone_ratio > 0.15:
-            region = 'brain'
-        elif air_ratio > 0.3:
-            region = 'chest'
-        else:
-            region = 'abdomen'
-    elif z_slices < 150:
+    # 物理Z方向长度（cm），与层厚无关
+    z_physical_cm = shape[2] * ct_spacing[2] / 10.0
+    print(f"  Z方向物理范围: {z_physical_cm:.1f} cm "
+          f"({ct_spacing[2]:.2f} mm × {shape[2]} 层)")
+
+    if z_physical_cm < 25:
+        # ≤25 cm: 头颅/脑部 FOV（脑部MRI/CT通常15-20 cm）
+        region = 'brain'
+    elif z_physical_cm < 45:
+        # 25-45 cm: 颈胸过渡区
+        region = 'chest' if air_ratio > 0.2 else 'nasopharynx'
+    elif z_physical_cm < 70:
+        # 45-70 cm: 胸部或腹部
         region = 'chest' if air_ratio > 0.2 else 'abdomen'
+    elif z_physical_cm < 100:
+        # 70-100 cm: 腹部或盆腔
+        region = 'abdomen' if bone_ratio > 0.05 else 'pelvis'
     else:
+        # >100 cm: 全身
         region = 'wholebody'
 
-    print(f"  OK 识别结果: {region}")
+    print(f"  OK 识别结果: {region} "
+          f"(bone={bone_ratio:.3f}, air={air_ratio:.3f})")
     return region
 
 
@@ -167,9 +182,11 @@ ANATOMICAL_REGIONS = {
 }
 
 
-def smart_registration(ct_data, phantom_data, phantom_voxel_size, force_region=None):
+def smart_registration(ct_data, phantom_data, phantom_voxel_size,
+                       force_region=None, ct_spacing=(1.0, 1.0, 1.0)):
     """智能配准: 识别CT区域并计算其在体模中的位置"""
-    region = force_region if force_region else detect_anatomical_region(ct_data)
+    region = (force_region if force_region
+              else detect_anatomical_region(ct_data, ct_spacing=ct_spacing))
     rp = ANATOMICAL_REGIONS.get(region, ANATOMICAL_REGIONS['wholebody'])
 
     ps = phantom_data.shape
@@ -644,6 +661,7 @@ def main_workflow_enhanced(ct_path: str, output_dir: str,
         ct_data, phantom_data,
         phantom_voxel_size=voxel_size,
         force_region=force_region,
+        ct_spacing=ct_spacing,
     )
 
     # 4. 融合 (Sigmoid过渡带, Kollitz et al. PMB 2022)
