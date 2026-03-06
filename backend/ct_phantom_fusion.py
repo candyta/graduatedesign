@@ -808,6 +808,12 @@ def main_workflow_enhanced(ct_path: str, output_dir: str,
     nib.save(nii_out, fusion_nii_path)
     print(f"  OK 融合体模: {fusion_nii_path}")
 
+    # 5.1 额外保存原始ICRP体模（用于可视化解剖背景，保留140种器官细节）
+    icrp_nii_path = output_dir / 'icrp_phantom.nii.gz'
+    nii_icrp = nib.Nifti1Image(phantom_data.astype(np.int16), affine)
+    nib.save(nii_icrp, icrp_nii_path)
+    print(f"  OK 原始ICRP体模: {icrp_nii_path}")
+
     # 6. 生成MCNP输入(多材料lattice)
     print("\n[步骤6] 生成MCNP输入文件（多材料体素lattice）")
     mcnp_input_path = output_dir / 'wholebody_mcnp.inp'
@@ -837,6 +843,7 @@ def main_workflow_enhanced(ct_path: str, output_dir: str,
     print("=" * 60)
     print(f"  MCNP输入: {mcnp_input_path}")
     print(f"  融合体模: {fusion_nii_path}")
+    print(f"  原始体模: {icrp_nii_path}")
     print(f"  元数据:   {metadata_path}")
 
 

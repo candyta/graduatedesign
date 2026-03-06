@@ -266,10 +266,11 @@ def save_overlay_slices(dose_data, ct_data, output_dir, view_name,
 
     # 解剖背景 LUT（当 organ_data 存在时启用）
     gray_lut = _get_phantom_gray_lut() if organ_data is not None else None
-    # 剂量叠加在解剖背景上时的混合权重
-    # dose_weight + anat_weight = 1.0，保证解剖结构始终可见
-    DOSE_W = 0.65
-    ANAT_W = 0.35
+    # 剂量叠加参数：使用动态 alpha，剂量高→颜色主导，剂量低→解剖清晰可见
+    # MIN_DOSE_ALPHA: 零剂量时的最小透明度（解剖背景始终可见）
+    # MAX_DOSE_ALPHA: 满剂量时的最大透明度
+    MIN_DOSE_ALPHA = 0.15   # 低剂量区域：85%解剖背景，15%剂量颜色
+    MAX_DOSE_ALPHA = 0.72   # 高剂量区域：28%解剖背景，72%剂量颜色
 
     saved_count = 0
     for i in range(0, num_slices, slice_interval):
@@ -293,19 +294,33 @@ def save_overlay_slices(dose_data, ct_data, output_dir, view_name,
             colors = lut[idx]   # shape (h, w, 4)
 
             if gray_lut is not None:
-                # ── 有解剖背景：将剂量叠加在灰度解剖图上 ──────────────────
+                # ── 有解剖背景：动态 alpha 透明叠加 ─────────────────────────
+                # 步骤1: 解剖灰度背景（来自ICRP体模器官ID）
                 organ_sl = organ_data[i]
                 organ_ids = np.clip(organ_sl, 0, 1023).astype(np.int32)
-                gray_bg = gray_lut[organ_ids].astype(np.float32)   # (h, w)
+                gray_bg = gray_lut[organ_ids].astype(np.float32)   # (h, w) 0-255
 
-                r = np.clip(colors[:, :, 0] * DOSE_W + gray_bg * ANAT_W, 0, 255).astype(np.uint8)
-                g = np.clip(colors[:, :, 1] * DOSE_W + gray_bg * ANAT_W, 0, 255).astype(np.uint8)
-                b = np.clip(colors[:, :, 2] * DOSE_W + gray_bg * ANAT_W, 0, 255).astype(np.uint8)
+                # 步骤2: 基于剂量值计算动态透明度
+                #   低剂量区（骨骼/肺等远离源区）→ 解剖结构清晰可见
+                #   高剂量区（源照射区）→ 剂量颜色主导
+                dose_vals = np.clip(dose_slice, 0.0, 1.0)
+                alpha_map = (MIN_DOSE_ALPHA +
+                             (MAX_DOSE_ALPHA - MIN_DOSE_ALPHA) * dose_vals)  # (h,w)
+                inv_alpha = 1.0 - alpha_map
+
+                # 步骤3: alpha 合成 = 剂量颜色 × alpha + 解剖灰度 × (1-alpha)
+                d_r = colors[:, :, 0].astype(np.float32)
+                d_g = colors[:, :, 1].astype(np.float32)
+                d_b = colors[:, :, 2].astype(np.float32)
+
+                r = np.clip(d_r * alpha_map + gray_bg * inv_alpha, 0, 255).astype(np.uint8)
+                g = np.clip(d_g * alpha_map + gray_bg * inv_alpha, 0, 255).astype(np.uint8)
+                b = np.clip(d_b * alpha_map + gray_bg * inv_alpha, 0, 255).astype(np.uint8)
 
                 out_rgba[in_body, 0] = r[in_body]
                 out_rgba[in_body, 1] = g[in_body]
                 out_rgba[in_body, 2] = b[in_body]
-                out_rgba[in_body, 3] = 255   # 不透明：解剖背景已含在像素内
+                out_rgba[in_body, 3] = 255   # 不透明：解剖+剂量已合成在像素内
             else:
                 # ── 无解剖背景：原始行为（纯剂量热图）───────────────────────
                 out_rgba[in_body, 0] = colors[in_body, 0]
@@ -382,7 +397,7 @@ def process_dose_3d(npy_path, output_dir, ref_nii_path,
 
     is_wholebody_phantom = 'fused_phantom' in str(ref_nii_path)
     if is_wholebody_phantom:
-        print("  [全身体模模式] 剂量图不使用CT灰度，仅使用body mask")
+        print("  [全身体模模式] 剂量图不使用CT灰度，使用解剖体模灰度作为背景")
         ct_normalized = np.zeros_like(ref_array, dtype=np.float32)
     else:
         ct_normalized = normalize_array(ref_array, percentile_clip=99.5)
@@ -489,7 +504,21 @@ def process_dose_3d(npy_path, output_dir, ref_nii_path,
     # ==================== 7. 生成三视图 ====================
     print("\n[步骤7] 生成三视图切片")
 
-    organ_3d = ref_array if is_wholebody_phantom else None
+    # 优先使用原始ICRP体模（保留140种器官细节）作为解剖背景
+    # 若不存在则回落到融合体模
+    if is_wholebody_phantom:
+        icrp_path = Path(ref_nii_path).parent / 'icrp_phantom.nii.gz'
+        if icrp_path.exists():
+            print(f"  [解剖背景] 加载原始ICRP体模: {icrp_path}")
+            icrp_img = sitk.ReadImage(str(icrp_path))
+            organ_3d = sitk.GetArrayFromImage(icrp_img)
+            print(f"  ICRP体模 shape: {organ_3d.shape}, "
+                  f"器官ID范围: {organ_3d.min()} ~ {organ_3d.max()}")
+        else:
+            print("  [解剖背景] 未找到icrp_phantom.nii.gz，使用融合体模")
+            organ_3d = ref_array
+    else:
+        organ_3d = None
 
     sp = ref_img.GetSpacing()
     sp_x, sp_y, sp_z = sp[0], sp[1], sp[2]
