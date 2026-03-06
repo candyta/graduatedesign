@@ -19,6 +19,88 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # ============================================================
+# ICRP Publication 103 Table 3 组织权重因子 wT
+# 来源: ICRP 103 (2007), 用于有效剂量计算 E = Σ(wT × HT)
+# None 表示该器官属于 "Remainder" 组 (余量组 wT = 0.12 共享)
+# ============================================================
+ICRP103_TISSUE_WEIGHT = {
+    'Adrenals':              None,   # Remainder
+    'Brain':                 0.01,
+    'Breasts':               0.12,
+    'Colon wall':            0.12,
+    'Eye lenses':            None,   # Remainder
+    'Gallbladder wall':      None,   # Remainder
+    'Heart muscle':          None,   # Remainder
+    'Kidneys':               None,   # Remainder
+    'Liver':                 0.04,
+    'Lungs (with blood)':    0.12,
+    'Oesophagus':            0.04,
+    'Pancreas':              None,   # Remainder
+    'Prostate':              None,   # Remainder (Gonads: 0.08)
+    'Salivary glands':       0.01,
+    'Skin':                  0.01,
+    'Spinal cord':           None,   # Remainder
+    'Spleen':                None,   # Remainder
+    'Stomach wall':          0.12,
+    'Testes':                0.08,   # Gonads
+    'Thymus':                None,   # Remainder
+    'Thyroid':               0.04,
+    'Urinary bladder wall':  0.04,
+    'Ovaries':               0.08,   # Gonads (AF)
+    'Uterus/cervix':         None,   # Remainder
+}
+
+# ============================================================
+# 器官 → BEIR VII 癌症部位 映射（用于关联风险评估结果）
+# ============================================================
+ORGAN_TO_CANCER_SITE = {
+    'Adrenals':              None,
+    'Brain':                 'brain',
+    'Breasts':               'breast',
+    'Colon wall':            'colon',
+    'Eye lenses':            None,
+    'Gallbladder wall':      None,
+    'Heart muscle':          None,
+    'Kidneys':               'kidney',
+    'Liver':                 'liver',
+    'Lungs (with blood)':    'lung',
+    'Oesophagus':            'esophagus',
+    'Pancreas':              'pancreas',
+    'Prostate':              None,
+    'Salivary glands':       None,
+    'Skin':                  None,
+    'Spinal cord':           None,
+    'Spleen':                None,
+    'Stomach wall':          'stomach',
+    'Testes':                None,
+    'Thymus':                None,
+    'Thyroid':               'thyroid',
+    'Urinary bladder wall':  'bladder',
+    'Ovaries':               'ovary',
+    'Uterus/cervix':         None,
+}
+
+# ============================================================
+# BEIR VII 基线癌症发病率（中国数据，每10万人年）
+# 来源: 中国肿瘤登记年报，beir7_risk_engine.py 中使用的相同数据
+# ============================================================
+BEIR7_BASELINE_INCIDENCE = {
+    'stomach':   {'male': 41.4,  'female': 19.2},
+    'colon':     {'male': 28.6,  'female': 22.1},
+    'liver':     {'male': 38.8,  'female': 14.3},
+    'lung':      {'male': 60.2,  'female': 28.5},
+    'breast':    {'male': None,  'female': 42.6},
+    'ovary':     {'male': None,  'female':  7.8},
+    'bladder':   {'male':  9.8,  'female':  3.5},
+    'thyroid':   {'male':  3.2,  'female': 11.4},
+    'esophagus': {'male': 22.1,  'female': 10.2},
+    'pancreas':  {'male': 10.8,  'female':  8.3},
+    'kidney':    {'male':  9.5,  'female':  5.2},
+    'brain':     {'male':  5.2,  'female':  3.8},
+    'leukemia':  {'male':  5.8,  'female':  4.2},
+}
+
+# ============================================================
 # ICRP-110 Table A.1 发布的参考器官质量 (单位: g)
 # 来源: ICRP Publication 110, Table A.1 (AM) and Table A.2 (AF)
 # ============================================================
@@ -291,6 +373,15 @@ def run_comparison(phantom_type, data_dir, output_chart_path=None):
         else:
             discretization_note = ''
 
+        # ICRP 103 组织权重因子和 BEIR VII 关联信息
+        icrp103_wt = ICRP103_TISSUE_WEIGHT.get(organ_name, None)
+        cancer_site = ORGAN_TO_CANCER_SITE.get(organ_name, None)
+        gender_key = 'male' if phantom_type == 'AM' else 'female'
+        if cancer_site and cancer_site in BEIR7_BASELINE_INCIDENCE:
+            baseline = BEIR7_BASELINE_INCIDENCE[cancer_site].get(gender_key, None)
+        else:
+            baseline = None
+
         results.append({
             'organ': organ_name,
             'calculated_g': round(calc_mass, 2),
@@ -301,6 +392,10 @@ def run_comparison(phantom_type, data_dir, output_chart_path=None):
             'volume_deviation_pct': round(volume_deviation_pct, 1) if volume_deviation_pct is not None else None,
             'voxel_count': voxel_count,
             'discretization_note': discretization_note,
+            # 剂量与风险参考数据（ICRP 103 & BEIR VII）
+            'icrp103_wt': icrp103_wt,          # 组织权重因子（计算有效剂量用）
+            'cancer_site': cancer_site,         # 对应 BEIR VII 癌症部位
+            'baseline_incidence_per100k': baseline,  # 基线发病率（每10万人年）
         })
 
     # 排序：按参考质量降序

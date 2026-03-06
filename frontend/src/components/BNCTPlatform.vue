@@ -727,14 +727,27 @@
                 大器官（肝脏、肺、脑等）误差通常 &lt;1%，验证了计算流程的正确性。
                 <br><strong>参考体积</strong> = ICRP参考质量 / 体模组织密度（与体素数据一致的密度值）。
               </div>
+              <!-- 剂量与风险数据提示 -->
+              <div v-if="riskResults" class="icrp-risk-tip">
+                <strong>✓ 已检测到风险评估结果</strong>，下表已自动关联计算剂量与 LAR 风险数据。
+                （性别：{{ icrcPhantomType === 'AM' ? '男性' : '女性' }}，BEIR VII 基线发病率来自中国肿瘤登记年报）
+              </div>
+              <div v-else class="icrp-risk-tip icrp-risk-tip--none">
+                <strong>ℹ 尚未运行风险评估</strong>，表格仅显示质量与体积对比。
+                请先在「全身风险评估」选项卡完成评估后，再次查看本表格可获取剂量与风险对比列。
+              </div>
+
               <table class="icrp-table">
                 <thead>
                   <tr>
                     <th rowspan="2" style="vertical-align:middle;">器官</th>
-                    <th colspan="3" class="th-group-mass">质量对比</th>
-                    <th colspan="3" class="th-group-volume">体积对比</th>
+                    <th colspan="3" class="th-group-mass">质量对比（ICRP 110）</th>
+                    <th colspan="3" class="th-group-volume">体积对比（ICRP 110）</th>
+                    <template v-if="riskResults">
+                      <th colspan="4" class="th-group-risk">剂量与风险（BEIR VII / ICRP 103）</th>
+                    </template>
                     <th rowspan="2" style="vertical-align:middle;">体素数</th>
-                    <th rowspan="2" style="vertical-align:middle;">评级 / 说明</th>
+                    <th rowspan="2" style="vertical-align:middle;">几何评级</th>
                   </tr>
                   <tr>
                     <th class="th-sub th-sub-mass">ICRP参考 (g)</th>
@@ -743,6 +756,12 @@
                     <th class="th-sub th-sub-vol">ICRP参考 (cm³)</th>
                     <th class="th-sub th-sub-vol">体模计算 (cm³)</th>
                     <th class="th-sub th-sub-vol">偏差 (%)</th>
+                    <template v-if="riskResults">
+                      <th class="th-sub th-sub-risk">计算剂量 (Sv)</th>
+                      <th class="th-sub th-sub-risk">LAR (%)</th>
+                      <th class="th-sub th-sub-risk">基线发病率<br>(per 10万/年)</th>
+                      <th class="th-sub th-sub-risk">风险等级</th>
+                    </template>
                   </tr>
                 </thead>
                 <tbody>
@@ -761,7 +780,32 @@
                     <td :class="row.voxel_count && row.voxel_count < 500 ? 'dev-disc' : getDeviationClass(row.volume_deviation_pct)">
                       {{ row.volume_deviation_pct !== null && row.volume_deviation_pct !== undefined ? (row.volume_deviation_pct > 0 ? '+' : '') + row.volume_deviation_pct.toFixed(1) + '%' : '-' }}
                     </td>
-                    <!-- 体素数 & 评级 -->
+                    <!-- 剂量与风险列（仅在有风险评估结果时显示） -->
+                    <template v-if="riskResults">
+                      <td class="val-dose">
+                        {{ getOrganRiskData(row.cancer_site, 'doseSv') !== null
+                            ? getOrganRiskData(row.cancer_site, 'doseSv').toFixed(4)
+                            : '-' }}
+                      </td>
+                      <td :class="getLarClass(getOrganRiskData(row.cancer_site, 'risk'))">
+                        {{ getOrganRiskData(row.cancer_site, 'risk') !== null
+                            ? getOrganRiskData(row.cancer_site, 'risk').toFixed(4) + '%'
+                            : '-' }}
+                      </td>
+                      <td class="val-baseline">
+                        {{ row.baseline_incidence_per100k !== null && row.baseline_incidence_per100k !== undefined
+                            ? row.baseline_incidence_per100k.toFixed(1)
+                            : '-' }}
+                      </td>
+                      <td>
+                        <span v-if="getOrganRiskData(row.cancer_site, 'riskLevel')"
+                              :class="'badge-risk-' + getOrganRiskData(row.cancer_site, 'riskLevel')">
+                          {{ getRiskLevelLabel(getOrganRiskData(row.cancer_site, 'riskLevel')) }}
+                        </span>
+                        <span v-else class="badge-none">-</span>
+                      </td>
+                    </template>
+                    <!-- 体素数 & 几何评级 -->
                     <td class="val-voxel">
                       {{ row.voxel_count !== undefined ? row.voxel_count.toLocaleString() : '-' }}
                       <span v-if="row.voxel_count && row.voxel_count < 500" class="disc-star" title="小器官，体素离散化误差较大">★</span>
@@ -777,6 +821,16 @@
                   </tr>
                 </tbody>
               </table>
+              <!-- 总风险汇总行（有风险数据时显示） -->
+              <div v-if="riskResults" class="icrp-risk-summary">
+                <strong>全身累积二次癌风险（LAR）：</strong>
+                <span :class="riskResults.totalRisk > 0.1 ? 'risk-val-high' : riskResults.totalRisk > 0.01 ? 'risk-val-mod' : 'risk-val-low'">
+                  {{ riskResults.totalRisk.toFixed(4) }}%
+                </span>
+                &emsp;|&emsp;
+                <strong>ICRP 103 有效剂量限值参考：</strong>
+                职业照射 20 mSv/年，公众照射 1 mSv/年
+              </div>
             </div>
           </div>
 
@@ -1504,6 +1558,32 @@ export default {
       if (abs <= 5) return '优秀';
       if (abs <= 15) return '良好';
       return '注意';
+    },
+
+    // ── 剂量 & 风险关联方法 ──────────────────────────────────
+    /**
+     * 从 riskResults.organs 中按 cancer_site 名称查找指定字段值
+     * @param {string|null} cancerSite  - 如 'brain'、'liver' 等
+     * @param {string}      field       - 'doseSv' | 'risk' | 'riskLevel' | 'larErr' | 'larEar'
+     */
+    getOrganRiskData(cancerSite, field) {
+      if (!this.riskResults || !cancerSite) return null;
+      const found = this.riskResults.organs.find(o => o.name === cancerSite);
+      if (!found) return null;
+      return found[field] !== undefined ? found[field] : null;
+    },
+
+    getLarClass(lar) {
+      if (lar === null) return '';
+      if (lar < 0.001) return 'lar-negligible';
+      if (lar < 0.01)  return 'lar-low';
+      if (lar < 0.1)   return 'lar-moderate';
+      return 'lar-high';
+    },
+
+    getRiskLevelLabel(level) {
+      const map = { negligible: '可忽略', low: '低风险', moderate: '中风险', high: '高风险' };
+      return map[level] || level || '-';
     },
 
   }
@@ -3188,6 +3268,58 @@ export default {
 .dev-disc { color: #9E9E9E; font-weight: 600; }
 
 .disc-star { color: #9E9E9E; margin-left: 2px; font-size: 0.85rem; cursor: help; }
+
+/* 剂量与风险列组样式 */
+.th-group-risk {
+  background: #5D4037;
+  border-left: 2px solid #fff;
+}
+.th-sub-risk { background: #8D6E63; }
+
+.val-dose     { color: #1565C0; font-weight: 600; }
+.val-baseline { color: #616161; font-size: 0.88rem; }
+
+/* LAR 风险着色 */
+.lar-negligible { color: #4CAF50; font-weight: 700; }
+.lar-low        { color: #8BC34A; font-weight: 700; }
+.lar-moderate   { color: #FF9800; font-weight: 700; }
+.lar-high       { color: #F44336; font-weight: 700; }
+
+/* 风险等级徽章 */
+.badge-risk-negligible { background: #e8f5e9; color: #4CAF50; padding: 0.1rem 0.4rem; border-radius: 10px; font-size: 0.78rem; font-weight: 600; }
+.badge-risk-low        { background: #f1f8e9; color: #8BC34A; padding: 0.1rem 0.4rem; border-radius: 10px; font-size: 0.78rem; font-weight: 600; }
+.badge-risk-moderate   { background: #fff3e0; color: #FF9800; padding: 0.1rem 0.4rem; border-radius: 10px; font-size: 0.78rem; font-weight: 600; }
+.badge-risk-high       { background: #ffebee; color: #F44336; padding: 0.1rem 0.4rem; border-radius: 10px; font-size: 0.78rem; font-weight: 600; }
+
+/* 风险数据提示条 */
+.icrp-risk-tip {
+  background: #e8f5e9;
+  border-left: 4px solid #4CAF50;
+  padding: 0.55rem 1rem;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  color: #2e7d32;
+  margin-bottom: 0.7rem;
+}
+.icrp-risk-tip--none {
+  background: #f5f5f5;
+  border-left-color: #9E9E9E;
+  color: #616161;
+}
+
+/* 总风险汇总行 */
+.icrp-risk-summary {
+  margin-top: 0.8rem;
+  padding: 0.6rem 1rem;
+  background: #fce4ec;
+  border-left: 4px solid #e91e63;
+  border-radius: 4px;
+  font-size: 0.88rem;
+  color: #444;
+}
+.risk-val-high  { color: #F44336; font-weight: 700; font-size: 1.05rem; }
+.risk-val-mod   { color: #FF9800; font-weight: 700; font-size: 1.05rem; }
+.risk-val-low   { color: #4CAF50; font-weight: 700; font-size: 1.05rem; }
 
 .icrp-empty {
   text-align: center;
