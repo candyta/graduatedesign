@@ -384,19 +384,23 @@ class BNCTRiskAssessmentPipeline:
         # 需要转置后对齐
         phantom_voxels = self.phantom.voxel_data
         if dose_3d.shape != phantom_voxels.shape:
-            transposed = dose_3d.transpose(2, 1, 0)
+            # MCNP mesh tally 输出轴序为 (nz, ny, nx)，而体模为 (nx, ny, nz)
+            # 必须先转置再 zoom，否则 Z 轴（头脚方向）会与 X 轴（左右方向）混淆，
+            # 导致参考器官（脑）的平均剂量极小，归一化系数爆炸，LAR 虚高千倍。
+            transposed = dose_3d.transpose(2, 1, 0)  # (nz,ny,nx) → (nx,ny,nz)
+            print(f"  转置剂量数组 (nz,ny,nx)→(nx,ny,nz): {dose_3d.shape} → {transposed.shape}")
             if transposed.shape == phantom_voxels.shape:
                 dose_3d = transposed
                 print(f"  已转置剂量数组 → {dose_3d.shape}")
             else:
-                # 形状仍不匹配，尝试插值缩放
+                # 形状仍不匹配，对转置后的数组做插值缩放
                 try:
                     from scipy.ndimage import zoom
                     zoom_factors = tuple(
-                        phantom_voxels.shape[i] / dose_3d.shape[i]
+                        phantom_voxels.shape[i] / transposed.shape[i]
                         for i in range(3)
                     )
-                    dose_3d = zoom(dose_3d, zoom_factors, order=1)
+                    dose_3d = zoom(transposed, zoom_factors, order=1)
                     print(f"  插值缩放剂量数组 → {dose_3d.shape}")
                 except ImportError:
                     print("  [警告] scipy不可用，无法缩放剂量数组，回退到估算剂量")
