@@ -747,7 +747,7 @@
                       <th colspan="4" class="th-group-risk">剂量与风险（BEIR VII / ICRP 103）</th>
                     </template>
                     <th rowspan="2" style="vertical-align:middle;">体素数</th>
-                    <th rowspan="2" style="vertical-align:middle;">几何评级</th>
+                    <th rowspan="2" style="vertical-align:middle;">评级</th>
                   </tr>
                   <tr>
                     <th class="th-sub th-sub-mass">ICRP参考 (g)</th>
@@ -757,10 +757,10 @@
                     <th class="th-sub th-sub-vol">体模计算 (cm³)</th>
                     <th class="th-sub th-sub-vol">偏差 (%)</th>
                     <template v-if="riskResults">
-                      <th class="th-sub th-sub-risk">计算剂量 (Sv)</th>
+                      <th class="th-sub th-sub-risk">剂量 (Sv)</th>
                       <th class="th-sub th-sub-risk">LAR (%)</th>
-                      <th class="th-sub th-sub-risk">基线发病率<br>(per 10万/年)</th>
-                      <th class="th-sub th-sub-risk">风险等级</th>
+                      <th class="th-sub th-sub-risk">基线(/10万年)</th>
+                      <th class="th-sub th-sub-risk">风险</th>
                     </template>
                   </tr>
                 </thead>
@@ -812,7 +812,7 @@
                     </td>
                     <td>
                       <span v-if="row.voxel_count && row.voxel_count < 500" class="badge-disc">
-                        离散化误差
+                        离散★
                       </span>
                       <span v-else :class="'badge-' + getDeviationRating(row.deviation_pct)">
                         {{ getDeviationRatingLabel(row.deviation_pct) }}
@@ -821,6 +821,10 @@
                   </tr>
                 </tbody>
               </table>
+              <!-- 空值说明 -->
+              <div v-if="riskResults" class="icrp-null-note">
+                — 表示该器官在 BEIR VII 模型中无对应辐射致癌风险系数（如皮肤、心脏、肾脏、脾脏等），不参与二次癌风险计算，属正常数据缺失。
+              </div>
               <!-- 总风险汇总行（有风险数据时显示） -->
               <div v-if="riskResults" class="icrp-risk-summary">
                 <strong>全身累积二次癌风险（LAR）：</strong>
@@ -1489,10 +1493,10 @@ export default {
 
     getRiskLevelLabel(level) {
       const labels = {
-        negligible: '可忽略',
-        low: '低风险',
-        moderate: '中等风险',
-        high: '较高风险'
+        negligible: '忽略',
+        low: '低',
+        moderate: '中',
+        high: '高'
       };
       return labels[level] || level;
     },
@@ -1555,8 +1559,8 @@ export default {
     getDeviationRatingLabel(pct) {
       if (pct === null) return '-';
       const abs = Math.abs(pct);
-      if (abs <= 5) return '优秀';
-      if (abs <= 15) return '良好';
+      if (abs <= 5) return '优';
+      if (abs <= 15) return '良';
       return '注意';
     },
 
@@ -3239,10 +3243,10 @@ export default {
 .dev-ok   { color: #FF9800; font-weight: 700; }
 .dev-warn { color: #F44336; font-weight: 700; }
 
-.badge-good { background: #e8f5e9; color: #4CAF50; padding: 0.1rem 0.5rem; border-radius: 10px; font-size: 0.8rem; font-weight: 600; }
-.badge-ok   { background: #fff3e0; color: #FF9800; padding: 0.1rem 0.5rem; border-radius: 10px; font-size: 0.8rem; font-weight: 600; }
-.badge-warn { background: #ffebee; color: #F44336; padding: 0.1rem 0.5rem; border-radius: 10px; font-size: 0.8rem; font-weight: 600; }
-.badge-disc { background: #f5f5f5; color: #9E9E9E; padding: 0.1rem 0.5rem; border-radius: 10px; font-size: 0.8rem; font-weight: 600; }
+.badge-good { background: #e8f5e9; color: #4CAF50; padding: 0.1rem 0.5rem; border-radius: 10px; font-size: 0.8rem; font-weight: 600; white-space: nowrap; }
+.badge-ok   { background: #fff3e0; color: #FF9800; padding: 0.1rem 0.5rem; border-radius: 10px; font-size: 0.8rem; font-weight: 600; white-space: nowrap; }
+.badge-warn { background: #ffebee; color: #F44336; padding: 0.1rem 0.5rem; border-radius: 10px; font-size: 0.8rem; font-weight: 600; white-space: nowrap; }
+.badge-disc { background: #f5f5f5; color: #9E9E9E; padding: 0.1rem 0.5rem; border-radius: 10px; font-size: 0.8rem; font-weight: 600; white-space: nowrap; }
 .badge-none { color: #999; }
 
 .icrp-disc-note {
@@ -3281,12 +3285,20 @@ export default {
 .lar-high       { color: #F44336; font-weight: 700; }
 
 /* 风险等级徽章 */
-.badge-risk-negligible { background: #e8f5e9; color: #4CAF50; padding: 0.1rem 0.4rem; border-radius: 10px; font-size: 0.78rem; font-weight: 600; }
-.badge-risk-low        { background: #f1f8e9; color: #8BC34A; padding: 0.1rem 0.4rem; border-radius: 10px; font-size: 0.78rem; font-weight: 600; }
-.badge-risk-moderate   { background: #fff3e0; color: #FF9800; padding: 0.1rem 0.4rem; border-radius: 10px; font-size: 0.78rem; font-weight: 600; }
-.badge-risk-high       { background: #ffebee; color: #F44336; padding: 0.1rem 0.4rem; border-radius: 10px; font-size: 0.78rem; font-weight: 600; }
+.badge-risk-negligible { background: #e8f5e9; color: #4CAF50; padding: 0.1rem 0.4rem; border-radius: 10px; font-size: 0.78rem; font-weight: 600; white-space: nowrap; }
+.badge-risk-low        { background: #f1f8e9; color: #8BC34A; padding: 0.1rem 0.4rem; border-radius: 10px; font-size: 0.78rem; font-weight: 600; white-space: nowrap; }
+.badge-risk-moderate   { background: #fff3e0; color: #FF9800; padding: 0.1rem 0.4rem; border-radius: 10px; font-size: 0.78rem; font-weight: 600; white-space: nowrap; }
+.badge-risk-high       { background: #ffebee; color: #F44336; padding: 0.1rem 0.4rem; border-radius: 10px; font-size: 0.78rem; font-weight: 600; white-space: nowrap; }
 
 /* 风险数据提示条 */
+.icrp-null-note {
+  font-size: 0.78rem;
+  color: #888;
+  margin-top: 0.4rem;
+  margin-bottom: 0.4rem;
+  padding-left: 0.3rem;
+}
+
 .icrp-risk-tip {
   background: #e8f5e9;
   border-left: 4px solid #4CAF50;
