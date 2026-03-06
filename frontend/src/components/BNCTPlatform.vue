@@ -315,7 +315,7 @@
         <h3>🫀 器官轮廓</h3>
         <div class="dose-organ-list">
           <div
-            v-for="(organ, idx) in doseOrganList"
+            v-for="organ in doseOrganList"
             :key="organ.keyword"
             class="dose-organ-item"
             @click="organ.visible = !organ.visible; doseOrgansDirty = true"
