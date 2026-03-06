@@ -785,11 +785,19 @@ export default {
     }
   },
 
-  mounted() {
+  async mounted() {
     // 绑定MCNP步骤的action
     this.mcnpSteps[0].action = this.buildWholeBodyPhantom;
     this.mcnpSteps[1].action = this.runMcnpCalculation;
     this.mcnpSteps[2].action = this.generateWholeBodyDoseMap;
+
+    // 页面加载时清除上次会话的文件，确保新流程不受旧文件干扰
+    try {
+      await axios.post(`${API_BASE}/clear-session`);
+      console.log('[初始化] 已清除上次会话文件，可以开始新的处理流程');
+    } catch (err) {
+      console.warn('[初始化] 清除会话文件失败（可忽略）:', err.message);
+    }
   },
 
   methods: {

@@ -1494,6 +1494,120 @@ app.get('/api/wholebody/sessions', async (req, res) => {
     }
 });
 
+// ==================== 清除会话文件 ====================
+app.post('/clear-session', async (req, res) => {
+    try {
+        console.log('[清除会话] 开始清除所有工作文件...');
+        const errors = [];
+
+        // 1. 清除 uploads/ 下所有 nii_* 文件夹
+        if (fs.existsSync(DIRS.UPLOADS)) {
+            const uploadFolders = fs.readdirSync(DIRS.UPLOADS)
+                .filter(f => f.startsWith('nii_'));
+            for (const folder of uploadFolders) {
+                try {
+                    fs.removeSync(path.join(DIRS.UPLOADS, folder));
+                    console.log(`[清除会话] 已删除上传文件夹: ${folder}`);
+                } catch (e) { errors.push(`uploads/${folder}: ${e.message}`); }
+            }
+        }
+
+        // 2. 清除 C:/i/ 目录中的MCNP输入文件及相关文件
+        if (fs.existsSync(DIRS.INPUT)) {
+            const inputFiles = fs.readdirSync(DIRS.INPUT);
+            for (const file of inputFiles) {
+                try {
+                    fs.removeSync(path.join(DIRS.INPUT, file));
+                } catch (e) { errors.push(`C:/i/${file}: ${e.message}`); }
+            }
+            console.log(`[清除会话] 已清除 C:/i/ 目录 (${inputFiles.length} 个文件)`);
+        }
+
+        // 3. 清除 C:/o/ 目录内容
+        if (fs.existsSync(DIRS.OUTPUT)) {
+            const outputFiles = fs.readdirSync(DIRS.OUTPUT);
+            for (const file of outputFiles) {
+                try {
+                    fs.removeSync(path.join(DIRS.OUTPUT, file));
+                } catch (e) { errors.push(`C:/o/${file}: ${e.message}`); }
+            }
+            console.log(`[清除会话] 已清除 C:/o/ 目录 (${outputFiles.length} 个文件)`);
+        }
+
+        // 4. 清除 dose_results/ 中的 .npy 文件
+        const doseResultsDir = path.join(__dirname, 'dose_results');
+        if (fs.existsSync(doseResultsDir)) {
+            const npyFiles = fs.readdirSync(doseResultsDir).filter(f => f.endsWith('.npy'));
+            for (const file of npyFiles) {
+                try {
+                    fs.removeSync(path.join(doseResultsDir, file));
+                } catch (e) { errors.push(`dose_results/${file}: ${e.message}`); }
+            }
+            console.log(`[清除会话] 已清除 dose_results/ 中 ${npyFiles.length} 个 .npy 文件`);
+        }
+
+        // 5. 清除 dosepng/wholebody/ 目录
+        const doseWholebodyDir = path.join(DIRS.DOSE_PNG, 'wholebody');
+        if (fs.existsSync(doseWholebodyDir)) {
+            try {
+                fs.removeSync(doseWholebodyDir);
+                fs.ensureDirSync(doseWholebodyDir);
+                console.log('[清除会话] 已清除 dosepng/wholebody/ 目录');
+            } catch (e) { errors.push(`dosepng/wholebody: ${e.message}`); }
+        }
+
+        // 6. 清除 wholebody_phantom/ 目录
+        const phantomDir = path.join(__dirname, 'wholebody_phantom');
+        if (fs.existsSync(phantomDir)) {
+            try {
+                fs.removeSync(phantomDir);
+                console.log('[清除会话] 已清除 wholebody_phantom/ 目录');
+            } catch (e) { errors.push(`wholebody_phantom: ${e.message}`); }
+        }
+
+        // 7. 清除 organ/ 目录内容
+        const organDir = path.join(__dirname, 'organ');
+        if (fs.existsSync(organDir)) {
+            const organFiles = fs.readdirSync(organDir);
+            for (const file of organFiles) {
+                try {
+                    fs.removeSync(path.join(organDir, file));
+                } catch (e) { errors.push(`organ/${file}: ${e.message}`); }
+            }
+            console.log(`[清除会话] 已清除 organ/ 目录 (${organFiles.length} 个文件)`);
+        }
+
+        // 8. 清除 plus/ 和 dvh/ 目录内容
+        for (const dirName of ['plus', 'dvh']) {
+            const dirPath = path.join(__dirname, dirName);
+            if (fs.existsSync(dirPath)) {
+                const files = fs.readdirSync(dirPath);
+                for (const file of files) {
+                    try {
+                        fs.removeSync(path.join(dirPath, file));
+                    } catch (e) { errors.push(`${dirName}/${file}: ${e.message}`); }
+                }
+                console.log(`[清除会话] 已清除 ${dirName}/ 目录 (${files.length} 个文件)`);
+            }
+        }
+
+        console.log('[清除会话] 清除完成');
+        res.json({
+            success: true,
+            message: '会话文件已清除，可以开始新的处理流程',
+            errors: errors.length > 0 ? errors : undefined
+        });
+
+    } catch (err) {
+        console.error('[清除会话] 清除失败:', err.message);
+        res.status(500).json({
+            success: false,
+            message: '清除会话文件失败',
+            error: err.message
+        });
+    }
+});
+
 console.log('[全身评估] API端点已加载');
 console.log(`  - POST /api/wholebody/create-session`);
 console.log(`  - POST /api/wholebody/upload-patient-ct`);
