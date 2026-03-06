@@ -41,7 +41,7 @@ def update_status(session_dir: Path, step: str, progress: int, message: str):
     print(f"[{step}] {progress}% - {message}")
 
 
-def run_assessment(session_dir: str, icrp_data_path: str):
+def run_assessment(session_dir: str, icrp_data_path: str, dose_npy_path: str = None):
     """
     运行完整的风险评估流程
     
@@ -91,11 +91,22 @@ def run_assessment(session_dir: str, icrp_data_path: str):
         # 运行评估
         update_status(session_dir, 'assessing', 30, '开始风险评估...')
         
+        if dose_npy_path and Path(dose_npy_path).exists():
+            update_status(session_dir, 'assessing', 35, f'使用MCNP真实剂量: {Path(dose_npy_path).name}')
+            print(f"[风险评估] 使用MCNP真实剂量文件: {dose_npy_path}")
+        else:
+            if dose_npy_path:
+                print(f"[风险评估] 警告：指定的剂量文件不存在 ({dose_npy_path})，将使用估算剂量", file=sys.stderr)
+            else:
+                print("[风险评估] 未提供MCNP剂量文件，将使用估算剂量", file=sys.stderr)
+            dose_npy_path = None
+
         results = pipeline.run_complete_assessment(
             patient_params=patient_params,
             ct_path=ct_path,
             tumor_mask_path=tumor_mask_path,
-            skip_mcnp=True  # 默认使用模拟剂量
+            skip_mcnp=True,
+            dose_npy_path=dose_npy_path
         )
         
         update_status(session_dir, 'generating_viz', 80, '生成可视化数据...')
@@ -221,6 +232,9 @@ def main():
     parser.add_argument('--icrp-path', type=str,
                        help='ICRP 110数据路径')
     
+    parser.add_argument('--dose-npy', type=str, default=None,
+                       help='MCNP计算生成的3D剂量数组路径（.npy），用于真实器官剂量提取')
+
     parser.add_argument('--test', action='store_true',
                        help='测试模块导入')
     
@@ -246,7 +260,7 @@ def main():
         parser.print_help()
         return 1
     
-    return run_assessment(args.session_dir, args.icrp_path)
+    return run_assessment(args.session_dir, args.icrp_path, args.dose_npy)
 
 
 if __name__ == '__main__':

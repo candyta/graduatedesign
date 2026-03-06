@@ -89,10 +89,11 @@ class BNCTRiskAssessmentPipeline:
                                patient_params: Dict,
                                ct_path: Optional[str] = None,
                                tumor_mask_path: Optional[str] = None,
-                               skip_mcnp: bool = True) -> Dict:
+                               skip_mcnp: bool = True,
+                               dose_npy_path: Optional[str] = None) -> Dict:
         """
         运行完整的风险评估流程
-        
+
         Parameters:
         -----------
         patient_params : dict
@@ -110,6 +111,9 @@ class BNCTRiskAssessmentPipeline:
             肿瘤掩膜路径
         skip_mcnp : bool
             是否跳过MCNP计算（用于测试）
+        dose_npy_path : str, optional
+            MCNP计算生成的3D剂量数组路径（.npy文件）。
+            若提供则使用真实MCNP剂量计算器官受量，否则使用估算模型。
             
         Returns:
         --------
@@ -266,10 +270,19 @@ class BNCTRiskAssessmentPipeline:
         print("Step 5/6: MCNP5蒙特卡罗计算")
         print("-"*70)
         
-        if skip_mcnp:
-            print("⚠ 跳过MCNP计算（测试模式）")
-            print("使用模拟剂量数据...")
-            
+        if dose_npy_path and Path(dose_npy_path).exists():
+            print(f"✓ 使用MCNP真实剂量数据: {dose_npy_path}")
+            self.organ_doses = self._extract_organ_doses_from_mcnp(
+                dose_npy_path,
+                tumor_location
+            )
+            results['steps_completed'].append('mcnp_dose_real')
+            results['dose_source'] = 'mcnp_real'
+            results['dose_file'] = dose_npy_path
+        elif skip_mcnp:
+            print("⚠ 跳过MCNP计算（测试模式），使用估算剂量数据")
+            print("  提示：完成 CT → 建立体模 → MCNP计算 流程后，风险评估将自动使用真实剂量")
+
             # 生成模拟的器官剂量数据
             self.organ_doses = self._generate_mock_organ_doses(
                 tumor_location,
@@ -277,8 +290,8 @@ class BNCTRiskAssessmentPipeline:
                 height,
                 weight
             )
-            
             results['steps_completed'].append('mcnp_skipped')
+            results['dose_source'] = 'estimated'
         else:
             print("提示: 需要在外部运行MCNP5")
             print(f"命令: mcnp5 i={mcnp_input_path}")
@@ -336,6 +349,105 @@ class BNCTRiskAssessmentPipeline:
         
         return results
     
+    def _extract_organ_doses_from_mcnp(self,
+                                       dose_npy_path: str,
+                                       tumor_location: str,
+                                       treatment_dose_gy: float = 14.0,
+                                       bnct_rbe: float = 3.8) -> Dict[str, float]:
+        """
+        从MCNP生成的3D剂量数组中提取各器官平均剂量
+
+        MCNP mesh tally 输出为相对单位（每源粒子剂量），通过将肿瘤区域归一化到
+        典型BNCT处方剂量（默认 14 Gy-eq，脑肿瘤标准处方），再乘以BNCT生物权重因子
+        RBE（默认 3.8）转换为 Sv，供 BEIR VII 模型使用。
+
+        Parameters:
+        -----------
+        dose_npy_path : str
+            MCNP dose_results 目录下的 .npy 文件路径
+        tumor_location : str
+            肿瘤部位（'brain'/'lung'/'liver'），用于归一化参考器官选取
+        treatment_dose_gy : float
+            处方剂量 (Gy)，默认 14 Gy（脑肿瘤 BNCT 典型值）
+        bnct_rbe : float
+            BNCT 综合生物权重因子 (RBE)，默认 3.8
+        """
+        print(f"\n[从MCNP结果提取器官剂量]")
+        print(f"  剂量文件: {dose_npy_path}")
+        print(f"  处方剂量: {treatment_dose_gy} Gy  RBE: {bnct_rbe}")
+
+        dose_3d = np.load(dose_npy_path)
+        print(f"  加载剂量数组形状: {dose_3d.shape}")
+
+        # phantom.voxel_data 的形状为 (ncol, nrow, nsli) = (nx, ny, nz)
+        # extract_dose_from_mcnp 输出形状为 (nz, ny, nx)
+        # 需要转置后对齐
+        phantom_voxels = self.phantom.voxel_data
+        if dose_3d.shape != phantom_voxels.shape:
+            transposed = dose_3d.transpose(2, 1, 0)
+            if transposed.shape == phantom_voxels.shape:
+                dose_3d = transposed
+                print(f"  已转置剂量数组 → {dose_3d.shape}")
+            else:
+                # 形状仍不匹配，尝试插值缩放
+                try:
+                    from scipy.ndimage import zoom
+                    zoom_factors = tuple(
+                        phantom_voxels.shape[i] / dose_3d.shape[i]
+                        for i in range(3)
+                    )
+                    dose_3d = zoom(dose_3d, zoom_factors, order=1)
+                    print(f"  插值缩放剂量数组 → {dose_3d.shape}")
+                except ImportError:
+                    print("  [警告] scipy不可用，无法缩放剂量数组，回退到估算剂量")
+                    return {}
+
+        # 为各器官计算平均剂量（MCNP相对单位）
+        organ_doses_relative = {}
+        for organ_id, organ_info in self.phantom.organs.items():
+            mask = (phantom_voxels == organ_id)
+            if mask.any():
+                organ_doses_relative[organ_info['name']] = float(dose_3d[mask].mean())
+
+        if not organ_doses_relative:
+            print("  [警告] 未能提取任何器官剂量，回退到估算")
+            return {}
+
+        # 以肿瘤靶区器官的平均剂量为参考，归一化到处方剂量
+        tumor_reference_keywords = {
+            'brain': ['brain'],
+            'lung':  ['lung'],
+            'liver': ['liver'],
+        }
+        keywords = tumor_reference_keywords.get(tumor_location, ['brain'])
+        tumor_doses = [
+            v for name, v in organ_doses_relative.items()
+            if any(kw in name.lower() for kw in keywords) and v > 0
+        ]
+
+        if tumor_doses:
+            ref_dose = float(np.mean(tumor_doses))
+        else:
+            # 找最大剂量器官作为参考
+            ref_dose = max(organ_doses_relative.values())
+
+        if ref_dose <= 0:
+            print("  [警告] 参考剂量为零，回退到估算")
+            return {}
+
+        normalization = treatment_dose_gy / ref_dose
+        print(f"  参考器官平均剂量(相对): {ref_dose:.4e}  归一化系数: {normalization:.4e}")
+
+        # 归一化 + RBE → Sv
+        organ_doses_sv = {}
+        for name, rel_dose in organ_doses_relative.items():
+            organ_doses_sv[name] = rel_dose * normalization * bnct_rbe
+
+        total_sv = sum(organ_doses_sv.values())
+        print(f"  提取了 {len(organ_doses_sv)} 个器官剂量（Sv），总和: {total_sv:.4f} Sv")
+
+        return organ_doses_sv
+
     def _generate_mock_organ_doses(self, tumor_location: str, age: int,
                                     height: float = 176.0, weight: float = 73.0) -> Dict[str, float]:
         """

@@ -1253,10 +1253,34 @@ app.post('/api/wholebody/run-assessment', async (req, res) => {
             });
         }
 
+        // 查找MCNP计算生成的最新剂量文件（dose_results/*.npy）
+        const doseResultsDir = path.join(__dirname, 'dose_results');
+        let doseNpyPath = null;
+        if (fs.existsSync(doseResultsDir)) {
+            const doseFiles = fs.readdirSync(doseResultsDir)
+                .filter(f => f.endsWith('.npy'))
+                .map(f => ({
+                    name: f,
+                    fullPath: path.join(doseResultsDir, f),
+                    time: fs.statSync(path.join(doseResultsDir, f)).mtime.getTime()
+                }))
+                .sort((a, b) => b.time - a.time);
+            if (doseFiles.length > 0) {
+                doseNpyPath = doseFiles[0].fullPath;
+                console.log(`[全身评估] 找到MCNP剂量文件: ${doseNpyPath}`);
+            }
+        }
+        if (!doseNpyPath) {
+            console.log('[全身评估] 未找到MCNP剂量文件，将使用估算剂量（请先完成 CT→体模→MCNP计算 流程）');
+        }
+
         // 调用Python脚本
         const pythonScript = path.join(__dirname, 'wholebody_risk_api.py');
-        const pythonPath = 'D:/python.exe'; 
-        const command = `"${pythonPath}" "${pythonScript}" --session-dir "${sessionDir}" --icrp-path "${ICRP_DATA_PATH}"`;
+        const pythonPath = 'D:/python.exe';
+        let command = `"${pythonPath}" "${pythonScript}" --session-dir "${sessionDir}" --icrp-path "${ICRP_DATA_PATH}"`;
+        if (doseNpyPath) {
+            command += ` --dose-npy "${doseNpyPath}"`;
+        }
 
         console.log(`[全身评估] 执行命令: ${command}`);
 
