@@ -75,6 +75,72 @@
             </div>
 
 
+            <!-- 器官轮廓区块 -->
+            <div class="panel-section">
+              <h3>🫀 器官轮廓</h3>
+
+              <!-- 上传 mask 文件 -->
+              <button @click="$refs.contourInput.click()" class="btn btn-secondary" style="width:100%;margin-bottom:6px;">
+                <span class="icon">📂</span> 上传器官 Mask (.nii/.nii.gz)
+              </button>
+              <input
+                ref="contourInput"
+                type="file"
+                multiple
+                accept=".nii,.nii.gz"
+                style="display:none"
+                @change="handleContourMaskUpload"
+              />
+
+              <!-- 已加载的器官列表 -->
+              <div v-if="contourMasks.length > 0" class="contour-list">
+                <div v-for="(mask, idx) in contourMasks" :key="idx" class="contour-item">
+                  <span class="contour-color-dot" :style="{ background: mask.color }"></span>
+                  <span class="contour-organ-name" :title="mask.name">{{ mask.name }}</span>
+                  <button class="btn-icon-sm" @click="contourMasks.splice(idx,1)" title="移除">✕</button>
+                </div>
+              </div>
+
+              <!-- 操作按钮 -->
+              <button
+                v-if="contourMasks.length > 0 && niiPath"
+                @click="generateContourOverlay"
+                :disabled="contourGenerating"
+                class="btn btn-primary"
+                style="width:100%;margin-top:6px;"
+              >
+                {{ contourGenerating ? '⏳ 生成中...' : '🖼️ 生成轮廓叠加' }}
+              </button>
+
+              <button
+                v-if="overlaySlices.axial.length > 0"
+                @click="showContourOverlay = !showContourOverlay"
+                :class="['btn', showContourOverlay ? 'btn-active' : 'btn-secondary']"
+                style="width:100%;margin-top:4px;"
+              >
+                {{ showContourOverlay ? '✅ 已显示轮廓' : '👁 显示轮廓叠加' }}
+              </button>
+
+              <!-- 自动勾画 -->
+              <div style="margin-top:10px;border-top:1px solid #eee;padding-top:8px;">
+                <button
+                  @click="runAutoSegment"
+                  :disabled="!niiPath || autoSegmenting"
+                  class="btn btn-warn"
+                  style="width:100%;"
+                >
+                  {{ autoSegmenting ? '⏳ 自动勾画中...' : '🤖 自动勾画' }}
+                </button>
+                <div v-if="autoSegResult && !autoSegResult.success" class="contour-msg-warn" style="margin-top:6px;">
+                  ⚠ {{ autoSegResult.error }}
+                  <br><code>{{ autoSegResult.install_cmd }}</code>
+                </div>
+                <div v-if="autoSegResult && autoSegResult.success" class="contour-msg-ok" style="margin-top:6px;">
+                  ✓ 已识别 {{ autoSegResult.organs.length }} 个器官，轮廓已自动加载。
+                </div>
+              </div>
+            </div>
+
           </aside>
 
           <!-- 右侧影像显示区 -->
@@ -92,8 +158,17 @@
                   </div>
                 </div>
                 <div class="image-container">
-                  <img 
-                    v-if="slices[view] && slices[view][sliceIndices[view]]"
+                  <!-- 轮廓叠加模式 -->
+                  <img
+                    v-if="showContourOverlay && overlaySlices[view] && overlaySlices[view][sliceIndices[view]]"
+                    :src="getImageUrl(overlaySlices[view][sliceIndices[view]])"
+                    :alt="`${viewNames[view]}轮廓叠加`"
+                    class="medical-image"
+                    @error="handleImageError"
+                  />
+                  <!-- 普通CT模式 -->
+                  <img
+                    v-else-if="slices[view] && slices[view][sliceIndices[view]]"
                     :src="getImageUrl(slices[view][sliceIndices[view]])"
                     :alt="`${viewNames[view]}切片`"
                     class="medical-image"
@@ -975,6 +1050,15 @@ export default {
       currentStep: -1,
       logs: [],
 
+      // 器官轮廓
+      contourMasks: [],          // { name, file, color, visible }
+      overlaySlices: { axial: [], coronal: [], sagittal: [] },
+      showContourOverlay: false,
+      contourGenerating: false,
+      autoSegmenting: false,
+      autoSegResult: null,
+      contourColors: ['#FF0000','#00FF00','#0096FF','#FFFF00','#FF00FF','#00FFFF','#FF8000','#8000FF'],
+
       // UI状态
       message: '',
       messageType: 'info',
@@ -1124,8 +1208,100 @@ export default {
     },
 
     toggleFullscreen(_view) {
-      // 实现全屏功能
       this.showMessage('全屏功能开发中...', 'info');
+    },
+
+    // ========== 器官轮廓 ==========
+    handleContourMaskUpload(e) {
+      const files = Array.from(e.target.files);
+      const existing = new Set(this.contourMasks.map(m => m.name));
+      files.forEach(file => {
+        const name = file.name.replace(/\.nii(\.gz)?$/, '');
+        if (!existing.has(name)) {
+          const idx = this.contourMasks.length;
+          this.contourMasks.push({
+            name,
+            file,
+            color: this.contourColors[idx % this.contourColors.length],
+            visible: true
+          });
+          existing.add(name);
+        }
+      });
+      e.target.value = '';
+    },
+
+    async generateContourOverlay() {
+      if (!this.niiPath || this.contourMasks.length === 0) return;
+      this.contourGenerating = true;
+      try {
+        // 区分：手动上传的文件 vs 自动勾画产生的服务器路径
+        const serverPaths = this.contourMasks.filter(m => m.serverPath).map(m => m.serverPath);
+        const uploadFiles  = this.contourMasks.filter(m => m.file);
+
+        if (serverPaths.length > 0) {
+          // 自动勾画模式：直接传路径给后端
+          const resp = await axios.post(`${API_BASE}/generate-contour-slices-by-path`, {
+            ctPath: this.niiPath,
+            maskPaths: serverPaths,
+            organNames: this.contourMasks.filter(m => m.serverPath).map(m => m.name).join(',')
+          });
+          if (!resp.data.success) throw new Error(resp.data.message || '生成失败');
+          this.overlaySlices.axial    = resp.data.axial    || [];
+          this.overlaySlices.coronal  = resp.data.coronal  || [];
+          this.overlaySlices.sagittal = resp.data.sagittal || [];
+          this.showContourOverlay = true;
+          this.showMessage('器官轮廓叠加生成成功！', 'success');
+          return;
+        }
+
+        const formData = new FormData();
+        formData.append('ctPath', this.niiPath);
+        formData.append('organNames', uploadFiles.map(m => m.name).join(','));
+        uploadFiles.forEach(m => formData.append('masks', m.file));
+
+        const resp = await axios.post(`${API_BASE}/generate-contour-slices`, formData);
+        if (!resp.data.success) throw new Error(resp.data.message || '生成失败');
+
+        this.overlaySlices.axial    = resp.data.axial    || [];
+        this.overlaySlices.coronal  = resp.data.coronal  || [];
+        this.overlaySlices.sagittal = resp.data.sagittal || [];
+        this.showContourOverlay = true;
+        this.showMessage('器官轮廓叠加生成成功！', 'success');
+      } catch (err) {
+        this.showMessage('轮廓生成失败: ' + err.message, 'error');
+      } finally {
+        this.contourGenerating = false;
+      }
+    },
+
+    async runAutoSegment() {
+      if (!this.niiPath) return;
+      this.autoSegmenting = true;
+      this.autoSegResult = null;
+      try {
+        const resp = await axios.post(`${API_BASE}/auto-segment`, { ctPath: this.niiPath });
+        this.autoSegResult = resp.data;
+        if (resp.data.success) {
+          // 将自动勾画结果加入轮廓列表
+          this.contourMasks = [];
+          resp.data.organs.forEach((name, idx) => {
+            this.contourMasks.push({
+              name,
+              file: null,           // mask 文件已在服务器端，路径在 maskFiles
+              serverPath: resp.data.mask_files[idx],
+              color: this.contourColors[idx % this.contourColors.length],
+              visible: true
+            });
+          });
+          this.showMessage(`自动勾画完成，识别 ${resp.data.organs.length} 个器官`, 'success');
+        }
+      } catch (err) {
+        this.autoSegResult = { success: false, error: err.message };
+        this.showMessage('自动勾画失败: ' + err.message, 'error');
+      } finally {
+        this.autoSegmenting = false;
+      }
     },
 
     // ========== MCNP计算 ==========
@@ -3181,6 +3357,54 @@ export default {
   margin-bottom: 0.6rem;
   display: flex;
   gap: 1.5rem;
+}
+
+/* 器官轮廓 */
+.contour-list { margin: 6px 0; }
+.contour-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px;
+  border-radius: 4px;
+  font-size: 0.82rem;
+}
+.contour-item:hover { background: #f5f5f5; }
+.contour-color-dot {
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.contour-organ-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #333;
+}
+.btn-icon-sm {
+  border: none; background: transparent;
+  cursor: pointer; color: #999; font-size: 0.8rem; padding: 0 2px;
+}
+.btn-icon-sm:hover { color: #F44336; }
+.btn-warn {
+  background: #FF9800; color: #fff;
+  border: none; border-radius: 6px;
+  padding: 0.45rem 0.8rem; cursor: pointer; font-size: 0.85rem;
+}
+.btn-warn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-active {
+  background: #4CAF50; color: #fff;
+  border: none; border-radius: 6px;
+  padding: 0.45rem 0.8rem; cursor: pointer; font-size: 0.85rem;
+}
+.contour-msg-warn {
+  font-size: 0.78rem; color: #E65100;
+  background: #fff3e0; border-radius: 4px; padding: 4px 6px;
+}
+.contour-msg-ok {
+  font-size: 0.78rem; color: #2E7D32;
+  background: #e8f5e9; border-radius: 4px; padding: 4px 6px;
 }
 
 .legend-good { color: #4CAF50; }

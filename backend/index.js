@@ -1720,6 +1720,181 @@ app.post('/api/icrp-comparison', async (req, res) => {
 
 console.log('[ICRP对比] API端点已加载: POST /api/icrp-comparison');
 
+// ==================== 器官轮廓叠加 ====================
+
+// multer: 接收上传的器官 mask (.nii / .nii.gz)
+const uploadContourMasks = multer({
+    storage: multer.diskStorage({
+        destination: (req, file, cb) => {
+            const dir = path.join(__dirname, 'contour_masks');
+            fs.ensureDirSync(dir);
+            cb(null, dir);
+        },
+        filename: (req, file, cb) => cb(null, file.originalname)
+    })
+});
+
+/**
+ * POST /generate-contour-slices
+ * body (multipart):
+ *   ctPath       - 已上传到服务器的 CT .nii 文件绝对路径
+ *   organNames   - 逗号分隔的器官名称（可选）
+ *   files        - 一或多个器官 mask 文件 (.nii / .nii.gz)
+ *
+ * 返回: { success, views: { axial, coronal, sagittal } (切片数), urlBase }
+ */
+app.post('/generate-contour-slices', uploadContourMasks.array('masks', 20), async (req, res) => {
+    try {
+        const { ctPath, organNames } = req.body;
+        if (!ctPath) throw new Error('缺少 ctPath 参数');
+        if (!req.files || req.files.length === 0) throw new Error('没有上传器官 mask 文件');
+
+        // 解压 .nii.gz → .nii
+        const maskDir = path.join(__dirname, 'contour_masks');
+        const niiPaths = [];
+        for (const file of req.files) {
+            const filePath = file.path;
+            if (filePath.endsWith('.gz')) {
+                const unzipped = filePath.slice(0, -3);
+                await new Promise((resolve, reject) => {
+                    const input = require('fs').createReadStream(filePath);
+                    const output = require('fs').createWriteStream(unzipped);
+                    const gunzip = zlib.createGunzip();
+                    input.pipe(gunzip).pipe(output).on('finish', resolve).on('error', reject);
+                });
+                niiPaths.push(unzipped);
+            } else {
+                niiPaths.push(filePath);
+            }
+        }
+
+        const outDir = path.join(__dirname, 'contour_slices');
+        await fs.ensureDir(outDir);
+
+        const scriptPath = path.join(__dirname, 'contour_overlay.py');
+        const masksArg = niiPaths.join(',');
+        const namesArg = organNames || '';
+        const cmd = `"${PYTHON_PATH}" "${scriptPath}" --ct "${ctPath}" --masks "${masksArg}" --names "${namesArg}" --outdir "${outDir}"`;
+        console.log('[轮廓叠加] 执行:', cmd);
+
+        const { stdout, stderr } = await execAsync(cmd, { timeout: 300000 });
+        if (stderr) console.warn('[轮廓叠加] stderr:', stderr);
+
+        // 解析 Python 输出的 JSON（最后一行）
+        const lines = stdout.trim().split('\n');
+        const jsonLine = lines.reverse().find(l => l.startsWith('{'));
+        if (!jsonLine) throw new Error('Python 脚本未返回 JSON');
+        const pyResult = JSON.parse(jsonLine);
+        if (!pyResult.success) throw new Error(pyResult.error || '轮廓生成失败');
+
+        // 构建前端可访问的 URL 列表
+        const buildUrls = async (view) => {
+            const viewDir = path.join(outDir, view);
+            const files = (await fs.readdir(viewDir)).sort()
+                .filter(f => f.endsWith('.png'));
+            return files.map(f => `/contour_slices/${view}/${f}`);
+        };
+
+        const [axial, coronal, sagittal] = await Promise.all([
+            buildUrls('axial'), buildUrls('coronal'), buildUrls('sagittal')
+        ]);
+
+        res.json({ success: true, axial, coronal, sagittal });
+
+    } catch (err) {
+        console.error('[轮廓叠加] 失败:', err.message);
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+/**
+ * POST /generate-contour-slices-by-path
+ * body (JSON): { ctPath, maskPaths: [...], organNames }
+ * 用于自动勾画后直接传服务器端路径，无需上传文件
+ */
+app.post('/generate-contour-slices-by-path', async (req, res) => {
+    try {
+        const { ctPath, maskPaths, organNames } = req.body;
+        if (!ctPath) throw new Error('缺少 ctPath');
+        if (!maskPaths || maskPaths.length === 0) throw new Error('缺少 maskPaths');
+
+        const outDir = path.join(__dirname, 'contour_slices');
+        await fs.ensureDir(outDir);
+
+        const scriptPath = path.join(__dirname, 'contour_overlay.py');
+        const masksArg = maskPaths.join(',');
+        const namesArg = organNames || '';
+        const cmd = `"${PYTHON_PATH}" "${scriptPath}" --ct "${ctPath}" --masks "${masksArg}" --names "${namesArg}" --outdir "${outDir}"`;
+        console.log('[轮廓叠加(路径模式)] 执行:', cmd);
+
+        const { stdout, stderr } = await execAsync(cmd, { timeout: 300000 });
+        if (stderr) console.warn('[轮廓叠加(路径模式)] stderr:', stderr);
+
+        const lines = stdout.trim().split('\n');
+        const jsonLine = lines.reverse().find(l => l.startsWith('{'));
+        if (!jsonLine) throw new Error('Python 脚本未返回 JSON');
+        const pyResult = JSON.parse(jsonLine);
+        if (!pyResult.success) throw new Error(pyResult.error || '轮廓生成失败');
+
+        const buildUrls = async (view) => {
+            const viewDir = path.join(outDir, view);
+            const files = (await fs.readdir(viewDir)).sort().filter(f => f.endsWith('.png'));
+            return files.map(f => `/contour_slices/${view}/${f}`);
+        };
+        const [axial, coronal, sagittal] = await Promise.all([
+            buildUrls('axial'), buildUrls('coronal'), buildUrls('sagittal')
+        ]);
+        res.json({ success: true, axial, coronal, sagittal });
+
+    } catch (err) {
+        console.error('[轮廓叠加(路径模式)] 失败:', err.message);
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// 静态托管轮廓叠加图
+app.use('/contour_slices', express.static(path.join(__dirname, 'contour_slices')));
+
+// ==================== 自动勾画 ====================
+
+/**
+ * POST /auto-segment
+ * body (JSON): { ctPath }
+ * 返回: { success, organs: [...], maskFiles: [...] }
+ *       或 { success: false, error, install_cmd }
+ */
+app.post('/auto-segment', async (req, res) => {
+    try {
+        const { ctPath } = req.body;
+        if (!ctPath) throw new Error('缺少 ctPath 参数');
+
+        const outDir = path.join(__dirname, 'auto_seg_output');
+        await fs.ensureDir(outDir);
+
+        const scriptPath = path.join(__dirname, 'auto_segment.py');
+        const cmd = `"${PYTHON_PATH}" "${scriptPath}" --ct "${ctPath}" --outdir "${outDir}" --fast`;
+        console.log('[自动勾画] 执行:', cmd);
+
+        const { stdout, stderr } = await execAsync(cmd, { timeout: 600000 });
+        if (stderr) console.warn('[自动勾画] stderr:', stderr);
+
+        const lines = stdout.trim().split('\n');
+        const jsonLine = lines.reverse().find(l => l.startsWith('{'));
+        if (!jsonLine) throw new Error('Python 脚本未返回 JSON');
+        const result = JSON.parse(jsonLine);
+
+        res.json(result);
+
+    } catch (err) {
+        console.error('[自动勾画] 失败:', err.message);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+console.log('[轮廓功能] API端点已加载:');
+console.log('  - POST /generate-contour-slices');
+console.log('  - POST /auto-segment');
+
 app.listen(PORT, () => {
     log(`服务器已启动: http://localhost:${PORT}`);
 });
