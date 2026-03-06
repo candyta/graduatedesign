@@ -2,10 +2,14 @@
 # -*- coding: utf-8 -*-
 import nibabel as nib
 import matplotlib.pyplot as plt
+import numpy as np
 import os
 import sys
+from scipy.ndimage import zoom as ndimage_zoom
+
 print("[PYTHON] nii_preview.py 启动")
 print("[PYTHON] 参数：", sys.argv)
+
 def generate_slices(nii_path, output_dir):
     img = nib.load(nii_path)
     data = img.get_fdata()
@@ -19,10 +23,9 @@ def generate_slices(nii_path, output_dir):
     print(f"[PYTHON] 体素间距: sp_x={sp_x:.3f}mm, sp_y={sp_y:.3f}mm, sp_z={sp_z:.3f}mm")
 
     # nibabel读取NIfTI后数组形状为(X, Y, Z)
-    # 轴位(Axial)沿Z轴切→shape[2], 冠状(Coronal)沿Y轴切→shape[1], 矢状(Sagittal)沿X轴切→shape[0]
     views = {
-        'axial': data.shape[2],
-        'coronal': data.shape[1],
+        'axial':    data.shape[2],
+        'coronal':  data.shape[1],
         'sagittal': data.shape[0]
     }
 
@@ -32,28 +35,27 @@ def generate_slices(nii_path, output_dir):
 
         for i in range(max_slice):
             if view_name == 'axial':
-                # XY平面: 列方向=X(sp_x), 行方向=Y(sp_y)
-                slice_data = data[:, :, i].T    # shape: (Y, X)
-                aspect = sp_y / sp_x
+                slice_data = data[:, :, i].T    # (Y, X)
+                # XY平面通常各向同性，若不同则重采样
+                zoom_factors = (sp_y / sp_x, 1.0) if abs(sp_y - sp_x) > 0.01 else None
             elif view_name == 'coronal':
-                # XZ平面: 列方向=X(sp_x), 行方向=Z(sp_z)
-                slice_data = data[:, i, :].T    # shape: (Z, X)
-                aspect = sp_z / sp_x
-            else:
-                # YZ平面: 列方向=Y(sp_y), 行方向=Z(sp_z)
-                slice_data = data[i, :, :].T    # shape: (Z, Y)
-                aspect = sp_z / sp_y
+                slice_data = data[:, i, :].T    # (Z, X)
+                # Z方向需按 sp_z/sp_x 倍插值，使每个输出像素对应相同物理尺寸
+                zoom_factors = (sp_z / sp_x, 1.0) if abs(sp_z - sp_x) > 0.01 else None
+            else:  # sagittal
+                slice_data = data[i, :, :].T    # (Z, Y)
+                zoom_factors = (sp_z / sp_y, 1.0) if abs(sp_z - sp_y) > 0.01 else None
 
-            # 根据物理尺寸设置图像大小，保持正确的宽高比
+            # 用双线性插值重采样到物理等比尺寸，消除像素块感
+            if zoom_factors is not None:
+                slice_data = ndimage_zoom(slice_data, zoom_factors, order=1)
+
             rows, cols = slice_data.shape
-            phys_w = cols   # 列数（相对单位）
-            phys_h = rows * aspect   # 行数 × 行列间距比
-
             fig_w = 6.0
-            fig_h = fig_w * phys_h / phys_w if phys_w > 0 else 6.0
+            fig_h = fig_w * rows / cols if cols > 0 else 6.0
 
             plt.figure(figsize=(fig_w, fig_h))
-            plt.imshow(slice_data, cmap='gray', origin='lower', aspect=aspect)
+            plt.imshow(slice_data, cmap='gray', origin='lower', aspect='equal')
             plt.axis('off')
             output_path = os.path.join(view_dir, f'{view_name}_{i:03d}.png')
             plt.savefig(output_path, bbox_inches='tight', pad_inches=0)
