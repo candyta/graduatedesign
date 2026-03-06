@@ -180,7 +180,7 @@ def _draw_phantom_organ_contours(out_rgba: np.ndarray,
         color = color_lut[oid]
 
         organ_bin = (organ_slice == oid) & body_mask_slice
-        if np.sum(organ_bin) < 30:      # 过小的区域（噪声/边界碎片）跳过
+        if np.sum(organ_bin) < 5:       # 过小的区域（噪声/边界碎片）跳过
             continue
 
         # ── 半透明填充 ───────────────────────────────────────────────────
