@@ -65,6 +65,16 @@ def generate_slices(nii_path, output_dir):
             if needs_zoom:
                 slice_data = ndimage_zoom(slice_data, zoom_factors, order=1)
 
+            # 归一化输出尺寸：确保最长边 >= OUTPUT_SIZE，防止浏览器粗糙放大导致像素块
+            OUTPUT_SIZE = 512
+            h, w = slice_data.shape
+            max_dim = max(h, w)
+            if max_dim < OUTPUT_SIZE:
+                scale = OUTPUT_SIZE / max_dim
+                new_h = max(1, round(h * scale))
+                new_w = max(1, round(w * scale))
+                slice_data = ndimage_zoom(slice_data, (new_h / h, new_w / w), order=1)
+
             # 转为uint8，垂直翻转（origin='lower'），用PIL直接保存原生分辨率
             pixel_array = to_uint8(slice_data)[::-1]   # 上下翻转
             pil_img = Image.fromarray(pixel_array, mode='L')
