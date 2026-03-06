@@ -717,7 +717,7 @@
                 <span class="legend-good">● 偏差 ≤5%（优秀）</span>
                 <span class="legend-ok">● 偏差 5~15%（良好）</span>
                 <span class="legend-warn">● 偏差 >15%（注意）</span>
-                <span class="legend-disc">　★ 体素数&lt;500：离散化误差较大，属正常现象</span>
+                <span class="legend-disc"> ★ 体素数&lt;500：离散化误差较大，属正常现象</span>
               </div>
               <div class="icrp-disc-note">
                 <strong>关于大偏差的说明：</strong>
