@@ -1,11 +1,11 @@
 # nii_preview.py
 # -*- coding: utf-8 -*-
 import nibabel as nib
-import matplotlib.pyplot as plt
 import numpy as np
 import os
 import sys
 from scipy.ndimage import zoom as ndimage_zoom
+from PIL import Image
 
 print("[PYTHON] nii_preview.py 启动")
 print("[PYTHON] 参数：", sys.argv)
@@ -29,37 +29,48 @@ def generate_slices(nii_path, output_dir):
         'sagittal': data.shape[0]
     }
 
+    # 全局归一化：基于整个数据集的1~99百分位，保证各切片亮度一致
+    flat = data.ravel()
+    global_min = float(np.percentile(flat, 1))
+    global_max = float(np.percentile(flat, 99))
+    if global_max <= global_min:
+        global_max = global_min + 1.0
+
+    def to_uint8(arr):
+        """将浮点切片归一化到0-255 uint8。"""
+        clipped = np.clip(arr, global_min, global_max)
+        normed = (clipped - global_min) / (global_max - global_min) * 255.0
+        return normed.astype(np.uint8)
+
     for view_name, max_slice in views.items():
         view_dir = os.path.join(output_dir, view_name)
         os.makedirs(view_dir, exist_ok=True)
 
         for i in range(max_slice):
             if view_name == 'axial':
-                slice_data = data[:, :, i].T    # (Y, X)
-                # XY平面通常各向同性，若不同则重采样
-                zoom_factors = (sp_y / sp_x, 1.0) if abs(sp_y - sp_x) > 0.01 else None
+                # XY平面 → shape (Y, X)，行方向=Y(sp_y)，列方向=X(sp_x)
+                slice_data = data[:, :, i].T
+                zoom_factors = (sp_y / sp_x, 1.0)
             elif view_name == 'coronal':
-                slice_data = data[:, i, :].T    # (Z, X)
-                # Z方向需按 sp_z/sp_x 倍插值，使每个输出像素对应相同物理尺寸
-                zoom_factors = (sp_z / sp_x, 1.0) if abs(sp_z - sp_x) > 0.01 else None
+                # XZ平面 → shape (Z, X)，行方向=Z(sp_z)，列方向=X(sp_x)
+                slice_data = data[:, i, :].T
+                zoom_factors = (sp_z / sp_x, 1.0)
             else:  # sagittal
-                slice_data = data[i, :, :].T    # (Z, Y)
-                zoom_factors = (sp_z / sp_y, 1.0) if abs(sp_z - sp_y) > 0.01 else None
+                # YZ平面 → shape (Z, Y)，行方向=Z(sp_z)，列方向=Y(sp_y)
+                slice_data = data[i, :, :].T
+                zoom_factors = (sp_z / sp_y, 1.0)
 
-            # 用双线性插值重采样到物理等比尺寸，消除像素块感
-            if zoom_factors is not None:
+            # 双线性插值重采样到物理等比尺寸（仅在两方向间距差异 >1% 时插值）
+            needs_zoom = any(abs(z - 1.0) > 0.01 for z in zoom_factors)
+            if needs_zoom:
                 slice_data = ndimage_zoom(slice_data, zoom_factors, order=1)
 
-            rows, cols = slice_data.shape
-            fig_w = 6.0
-            fig_h = fig_w * rows / cols if cols > 0 else 6.0
+            # 转为uint8，垂直翻转（origin='lower'），用PIL直接保存原生分辨率
+            pixel_array = to_uint8(slice_data)[::-1]   # 上下翻转
+            pil_img = Image.fromarray(pixel_array, mode='L')
 
-            plt.figure(figsize=(fig_w, fig_h))
-            plt.imshow(slice_data, cmap='gray', origin='lower', aspect='equal')
-            plt.axis('off')
             output_path = os.path.join(view_dir, f'{view_name}_{i:03d}.png')
-            plt.savefig(output_path, bbox_inches='tight', pad_inches=0)
-            plt.close()
+            pil_img.save(output_path)
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
