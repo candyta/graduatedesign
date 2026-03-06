@@ -162,41 +162,6 @@ if __name__ == '__main__':
     parser.add_argument('--outdir',     required=True)
     args = parser.parse_args()
 
-    if args.masks_file:
-        with open(args.masks_file, 'r', encoding='utf-8') as f:
-            mask_paths = [l.strip() for l in f if l.strip()]
-    else:
-        mask_paths = [p.strip() for p in args.masks.split(',') if p.strip()]
-
-    if args.names_file:
-        with open(args.names_file, 'r', encoding='utf-8') as f:
-            mask_names = [l.strip() for l in f if l.strip()]
-    elif args.names:
-        mask_names = [n.strip() for n in args.names.split(',') if n.strip()]
-    else:
-        mask_names = [f'Organ{i+1}' for i in range(len(mask_paths))]
-
-    generate_overlays(args.ct, mask_paths, mask_names, args.outdir)
-
-
-    result = {
-        'success': True,
-        'outdir': output_dir,
-        'views': {v: cfg['n'] for v, cfg in VIEW_CONFIG.items()}
-    }
-    print(json.dumps(result, ensure_ascii=False))
-
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--ct',         required=True)
-    parser.add_argument('--masks',      default='',  help='逗号分隔的mask NIfTI路径（少量mask时使用）')
-    parser.add_argument('--masks-file', default='',  help='每行一条mask路径的文本文件（避免命令行过长）')
-    parser.add_argument('--names',      default='',  help='逗号分隔的器官名称（与masks顺序对应）')
-    parser.add_argument('--names-file', default='',  help='每行一个器官名称的文本文件')
-    parser.add_argument('--outdir',     required=True)
-    args = parser.parse_args()
-
     # 支持文件方式传入（避免Windows命令行8191字符限制）
     if args.masks_file:
         with open(args.masks_file, 'r', encoding='utf-8') as f:
@@ -213,4 +178,5 @@ if __name__ == '__main__':
         mask_names = [f'Organ{i+1}' for i in range(len(mask_paths))]
 
     generate_overlays(args.ct, mask_paths, mask_names, args.outdir)
+
 
