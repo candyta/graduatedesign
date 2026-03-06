@@ -272,8 +272,10 @@ class BNCTRiskAssessmentPipeline:
             
             # 生成模拟的器官剂量数据
             self.organ_doses = self._generate_mock_organ_doses(
-                tumor_location, 
-                age
+                tumor_location,
+                age,
+                height,
+                weight
             )
             
             results['steps_completed'].append('mcnp_skipped')
@@ -334,14 +336,25 @@ class BNCTRiskAssessmentPipeline:
         
         return results
     
-    def _generate_mock_organ_doses(self, tumor_location: str, age: int) -> Dict[str, float]:
+    def _generate_mock_organ_doses(self, tumor_location: str, age: int,
+                                    height: float = 176.0, weight: float = 73.0) -> Dict[str, float]:
         """
         生成模拟的器官剂量数据（用于测试）
-        
-        基于论文中的典型剂量分布
+
+        基于论文中的典型剂量分布，并根据患者体型进行物理衰减修正：
+        体型较大的患者对周边器官产生更多组织衰减，导致更低的远端器官剂量；
+        体型较小的患者组织厚度更少，远端器官受到更高剂量。
+
+        Parameters:
+        -----------
+        height : float
+            患者身高（cm），ICRP AM标准参考值 176 cm
+        weight : float
+            患者体重（kg），ICRP AM标准参考值 73 kg
         """
         print("\n生成模拟器官剂量...")
-        
+        print(f"  患者体型: {height:.1f} cm / {weight:.1f} kg")
+
         # 基础剂量（Sv）- 根据肿瘤位置调整
         base_doses = {
             'brain': {
@@ -386,7 +399,7 @@ class BNCTRiskAssessmentPipeline:
         }
         
         doses = base_doses.get(tumor_location, base_doses['brain'])
-        
+
         # 年龄调整（年轻患者剂量稍高，因为治疗可能更激进）
         if age < 15:
             age_factor = 1.2
@@ -394,11 +407,36 @@ class BNCTRiskAssessmentPipeline:
             age_factor = 1.1
         else:
             age_factor = 1.0
-        
-        adjusted_doses = {k: v * age_factor for k, v in doses.items()}
-        
+
+        # 体型修正：基于患者实际体重与ICRP标准体模的偏差
+        # ICRP 110 AM标准参考: 176 cm / 73 kg（女性AF: 163 cm / 60 kg）
+        # 物理依据：体型较大 → 组织对中子的衰减更强 → 远端器官剂量更低
+        # 修正指数 0.30 为保守估计（仅反映宏观衰减趋势）
+        REF_WEIGHT = 73.0   # kg, ICRP AM参考体重
+        REF_HEIGHT = 176.0  # cm, ICRP AM参考身高
+        # 等效体型指数 = 归一化BMI，反映实际与标准体模的体型比值
+        patient_bmi_ratio = (weight / height**2) / (REF_WEIGHT / REF_HEIGHT**2)
+        anatomy_factor = patient_bmi_ratio ** (-0.30)  # 体型越大剂量越低
+
+        # 肿瘤靶区附近器官受束流直接照射，受体型影响小（修正系数减半）
+        tumor_adjacent = {
+            'brain': {'Brain', 'Skin, head', 'Bone marrow, head'},
+            'lung':  {'Lung, left', 'Lung, right', 'Heart wall'},
+            'liver': {'Liver', 'Stomach wall', 'Pancreas'},
+        }.get(tumor_location, set())
+
+        adjusted_doses = {}
+        for organ, dose in doses.items():
+            if organ in tumor_adjacent:
+                organ_anatomy_factor = 1.0 + (anatomy_factor - 1.0) * 0.5
+            else:
+                organ_anatomy_factor = anatomy_factor
+            adjusted_doses[organ] = dose * age_factor * organ_anatomy_factor
+
+        print(f"  年龄调整系数: {age_factor:.3f}")
+        print(f"  体型修正系数: {anatomy_factor:.3f}  (患者 {weight:.1f}kg/{height:.1f}cm vs 参考 {REF_WEIGHT}kg/{REF_HEIGHT}cm)")
         print(f"✓ 生成了 {len(adjusted_doses)} 个器官的剂量数据")
-        
+
         return adjusted_doses
     
     def _make_json_serializable(self, obj):
