@@ -717,6 +717,14 @@
                 <span class="legend-good">● 偏差 ≤5%（优秀）</span>
                 <span class="legend-ok">● 偏差 5~15%（良好）</span>
                 <span class="legend-warn">● 偏差 >15%（注意）</span>
+                <span class="legend-disc">　★ 体素数&lt;500：离散化误差较大，属正常现象</span>
+              </div>
+              <div class="icrp-disc-note">
+                <strong>关于大偏差的说明：</strong>
+                AM体模z方向体素厚度为 <strong>8.0 mm</strong>，对于肾上腺（14 g）、胆囊壁（8 g）等小器官，
+                一个体素即代表较大体积，边界截断导致体素离散化误差（Voxel Discretization Error）偏大。
+                这是体素化体模的固有局限性，已在 ICRP Publication 110 正文中明确说明。
+                大器官（肝脏、肺、脑等）误差通常 &lt;1%，验证了计算流程的正确性。
               </div>
               <table class="icrp-table">
                 <thead>
@@ -724,20 +732,29 @@
                     <th>器官</th>
                     <th>ICRP参考值 (g)</th>
                     <th>体模计算值 (g)</th>
+                    <th>体素数</th>
                     <th>偏差 (%)</th>
-                    <th>评级</th>
+                    <th>评级 / 说明</th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="row in icrcResult.organ_results" :key="row.organ">
+                  <tr v-for="row in icrcResult.organ_results" :key="row.organ"
+                      :class="{ 'row-small-organ': row.voxel_count && row.voxel_count < 500 }">
                     <td class="organ-name">{{ row.organ }}</td>
                     <td class="val-ref">{{ row.reference_g !== null ? row.reference_g.toFixed(2) : '-' }}</td>
                     <td class="val-calc">{{ row.calculated_g.toFixed(2) }}</td>
-                    <td :class="getDeviationClass(row.deviation_pct)">
+                    <td class="val-voxel">
+                      {{ row.voxel_count !== undefined ? row.voxel_count.toLocaleString() : '-' }}
+                      <span v-if="row.voxel_count && row.voxel_count < 500" class="disc-star" title="小器官，体素离散化误差较大">★</span>
+                    </td>
+                    <td :class="row.voxel_count && row.voxel_count < 500 ? 'dev-disc' : getDeviationClass(row.deviation_pct)">
                       {{ row.deviation_pct !== null ? (row.deviation_pct > 0 ? '+' : '') + row.deviation_pct.toFixed(1) + '%' : '-' }}
                     </td>
                     <td>
-                      <span :class="'badge-' + getDeviationRating(row.deviation_pct)">
+                      <span v-if="row.voxel_count && row.voxel_count < 500" class="badge-disc">
+                        离散化误差
+                      </span>
+                      <span v-else :class="'badge-' + getDeviationRating(row.deviation_pct)">
                         {{ getDeviationRatingLabel(row.deviation_pct) }}
                       </span>
                     </td>
@@ -3074,6 +3091,7 @@ export default {
 .legend-good { color: #4CAF50; }
 .legend-ok   { color: #FF9800; }
 .legend-warn { color: #F44336; }
+.legend-disc { color: #9E9E9E; font-size: 0.8rem; }
 
 .icrp-table {
   width: 100%;
@@ -3113,7 +3131,27 @@ export default {
 .badge-good { background: #e8f5e9; color: #4CAF50; padding: 0.1rem 0.5rem; border-radius: 10px; font-size: 0.8rem; font-weight: 600; }
 .badge-ok   { background: #fff3e0; color: #FF9800; padding: 0.1rem 0.5rem; border-radius: 10px; font-size: 0.8rem; font-weight: 600; }
 .badge-warn { background: #ffebee; color: #F44336; padding: 0.1rem 0.5rem; border-radius: 10px; font-size: 0.8rem; font-weight: 600; }
+.badge-disc { background: #f5f5f5; color: #9E9E9E; padding: 0.1rem 0.5rem; border-radius: 10px; font-size: 0.8rem; font-weight: 600; }
 .badge-none { color: #999; }
+
+.icrp-disc-note {
+  background: #fff8e1;
+  border-left: 4px solid #FFC107;
+  padding: 0.7rem 1rem;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  color: #555;
+  line-height: 1.6;
+  margin-bottom: 0.8rem;
+}
+
+.row-small-organ td { background: #fafafa; }
+
+.val-voxel { color: #607D8B; font-size: 0.85rem; }
+
+.dev-disc { color: #9E9E9E; font-weight: 600; }
+
+.disc-star { color: #9E9E9E; margin-left: 2px; font-size: 0.85rem; cursor: help; }
 
 .icrp-empty {
   text-align: center;

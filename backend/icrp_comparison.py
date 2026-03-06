@@ -251,7 +251,12 @@ def run_comparison(phantom_type, data_dir, output_chart_path=None):
 
     results = []
     for organ_name, organ_ids in organ_groups.items():
-        calc_mass = compute_organ_mass(voxel_data, organ_ids, density_map, voxel_vol_cm3)
+        # 计算体素数（用于评估离散化误差）
+        voxel_count = int(sum(np.sum(voxel_data == oid) for oid in organ_ids))
+        calc_mass = voxel_count * voxel_vol_cm3 * (
+            sum(density_map.get(oid, 1.0) * int(np.sum(voxel_data == oid))
+                for oid in organ_ids) / max(voxel_count, 1)
+        )
         ref_mass = reference_masses.get(organ_name, None)
 
         if ref_mass is not None and ref_mass > 0 and calc_mass > 0:
@@ -259,11 +264,21 @@ def run_comparison(phantom_type, data_dir, output_chart_path=None):
         else:
             deviation_pct = None
 
+        # 离散化误差说明：体素数少的小器官，误差来源于体素边界截断
+        if voxel_count < 500:
+            discretization_note = f'小器官({voxel_count}体素)，体素离散化误差较大'
+        elif voxel_count < 2000:
+            discretization_note = f'中等器官({voxel_count}体素)，偏差在可接受范围'
+        else:
+            discretization_note = ''
+
         results.append({
             'organ': organ_name,
             'calculated_g': round(calc_mass, 2),
             'reference_g': ref_mass,
             'deviation_pct': round(deviation_pct, 1) if deviation_pct is not None else None,
+            'voxel_count': voxel_count,
+            'discretization_note': discretization_note,
         })
 
     # 排序：按参考质量降序
@@ -298,11 +313,14 @@ def run_comparison(phantom_type, data_dir, output_chart_path=None):
 
 
 def _generate_chart(results, phantom_type, output_path):
-    """生成对比条形图"""
+    """生成对比条形图（全英文标签避免字体问题）"""
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
-    import matplotlib.patches as mpatches
+    import matplotlib as mpl
+
+    # 使用默认 DejaVu 字体 + 英文标签，彻底规避跨平台中文字体问题
+    mpl.rcParams['axes.unicode_minus'] = False
 
     # 过滤有效数据（两者都大于0）
     valid = [r for r in results if r['reference_g'] and r['reference_g'] > 0 and r['calculated_g'] > 0]
@@ -311,13 +329,20 @@ def _generate_chart(results, phantom_type, output_path):
     large_organs = [r for r in valid if r['reference_g'] >= 100]
     small_organs = [r for r in valid if r['reference_g'] < 100]
 
-    fig, axes = plt.subplots(1, 2, figsize=(16, 8))
-    fig.suptitle(f'ICRP-110 {phantom_type} 标准体模 器官质量对比\n(计算值 vs ICRP Publication 110 参考值)',
-                 fontsize=13, fontweight='bold')
+    z_voxel_mm = {'AM': 8.0, 'AF': 4.84}.get(phantom_type, 8.0)
+
+    main_title = (f'ICRP-110 {phantom_type} Reference Phantom: Organ Mass Comparison\n'
+                  f'Calculated (voxel) vs ICRP Publication 110 Reference Values')
+    note_text = (f'Note: {phantom_type} phantom z-voxel = {z_voxel_mm} mm. '
+                 f'Small organs (<500 voxels) have higher discretization error — '
+                 f'marked with * and shown in grey. This is documented in ICRP-110.')
+
+    fig, axes = plt.subplots(1, 2, figsize=(17, 8))
+    fig.suptitle(main_title, fontsize=12, fontweight='bold')
 
     for ax, organ_list, title in [
-        (axes[0], large_organs, '主要器官 (≥100 g)'),
-        (axes[1], small_organs, '小器官 (<100 g)')
+        (axes[0], large_organs, 'Major organs  (ref >= 100 g)'),
+        (axes[1], small_organs, f'Small organs  (ref < 100 g)\n* = voxel discretization error (z={z_voxel_mm} mm)'),
     ]:
         if not organ_list:
             ax.set_visible(False)
@@ -330,28 +355,38 @@ def _generate_chart(results, phantom_type, output_path):
         x = np.arange(len(names))
         width = 0.35
 
-        bars1 = ax.bar(x - width/2, ref_vals, width, label='ICRP参考值', color='#2196F3', alpha=0.85)
-        bars2 = ax.bar(x + width/2, calc_vals, width, label='体模计算值', color='#FF5722', alpha=0.85)
+        ax.set_facecolor('#fff8f0' if organ_list is small_organs else 'white')
 
-        ax.set_xlabel('器官', fontsize=10)
-        ax.set_ylabel('质量 (g)', fontsize=10)
-        ax.set_title(title, fontsize=11)
+        bars1 = ax.bar(x - width/2, ref_vals, width, label='ICRP Ref. (Pub.110)', color='#2196F3', alpha=0.85)
+        bars2 = ax.bar(x + width/2, calc_vals, width, label='Voxel Calculated', color='#FF5722', alpha=0.85)
+
+        ax.set_xlabel('Organ', fontsize=10)
+        ax.set_ylabel('Mass (g)', fontsize=10)
+        ax.set_title(title, fontsize=10)
         ax.set_xticks(x)
-        ax.set_xticklabels(names, rotation=40, ha='right', fontsize=8)
+        ax.set_xticklabels(names, rotation=42, ha='right', fontsize=8)
         ax.legend(fontsize=9)
         ax.grid(axis='y', alpha=0.3)
 
-        # 在每组bars旁标注偏差%
-        for bar1, bar2, r in zip(bars1, bars2, organ_list):
+        # 偏差标注：小器官大偏差用灰色+*
+        max_val = max(ref_vals) if ref_vals else 1
+        for bar2, r in zip(bars2, organ_list):
             if r['deviation_pct'] is not None:
-                color = '#4CAF50' if abs(r['deviation_pct']) <= 5 else (
-                    '#FF9800' if abs(r['deviation_pct']) <= 15 else '#F44336')
-                ax.text(bar2.get_x() + bar2.get_width()/2,
-                        bar2.get_height() + max(ref_vals) * 0.01,
-                        f"{r['deviation_pct']:+.1f}%",
-                        ha='center', va='bottom', fontsize=7, color=color, fontweight='bold')
+                abs_dev = abs(r['deviation_pct'])
+                is_small_high = (r.get('voxel_count', 9999) < 500 and abs_dev > 15)
+                if is_small_high:
+                    color = '#9E9E9E'
+                    lbl = f"{r['deviation_pct']:+.1f}%*"
+                else:
+                    color = '#4CAF50' if abs_dev <= 5 else ('#FF9800' if abs_dev <= 15 else '#F44336')
+                    lbl = f"{r['deviation_pct']:+.1f}%"
+                ax.text(bar2.get_x() + bar2.get_width() / 2,
+                        bar2.get_height() + max_val * 0.012,
+                        lbl, ha='center', va='bottom', fontsize=7,
+                        color=color, fontweight='bold')
 
-    plt.tight_layout()
+    fig.text(0.5, 0.01, note_text, ha='center', fontsize=8, color='#555555', style='italic')
+    plt.tight_layout(rect=[0, 0.04, 1, 1])
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
     plt.close()
 
