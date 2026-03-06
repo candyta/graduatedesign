@@ -1057,7 +1057,8 @@ export default {
       contourGenerating: false,
       autoSegmenting: false,
       autoSegResult: null,
-      contourColors: ['#FF0000','#00FF00','#0096FF','#FFFF00','#FF00FF','#00FFFF','#FF8000','#8000FF'],
+      // 与 contour_overlay.py COLORS 顺序一致
+      contourColors: ['#E6C832','#DC6464','#3C3CDC','#64C850','#C850C8','#32C8C8','#DC8232','#9650DC','#F05050','#50DCA0','#C8C850','#5096DC'],
 
       // UI状态
       message: '',
