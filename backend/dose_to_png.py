@@ -19,7 +19,7 @@ import numpy as np
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
 from pathlib import Path
-from scipy.ndimage import gaussian_filter, binary_erosion
+from scipy.ndimage import gaussian_filter, binary_erosion, binary_closing
 
 # ─── 器官勾画参数（全身体模，与局部CT contour_overlay.py 风格一致）────────
 ORGAN_FILL_ALPHA   = 0.30   # 器官填充透明度（低于局部CT的0.45，避免遮挡剂量信息）
@@ -644,6 +644,9 @@ def process_dose_3d(npy_path, output_dir, ref_nii_path,
     print("\n[步骤4] 构建体内mask")
     if is_wholebody_phantom:
         body_mask_3d = (ref_array != 0)
+        # 闭运算填充盆骨与大腿之间的体素间隙，消除冠状/矢状视图中的横向缝线
+        from numpy import ones
+        body_mask_3d = binary_closing(body_mask_3d, structure=ones((3, 3, 3), dtype=bool))
     else:
         raw_hu = ref_array.astype(np.float32)
         body_mask_3d = (raw_hu > -900)
