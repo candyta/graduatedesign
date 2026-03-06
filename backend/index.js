@@ -524,7 +524,7 @@ app.post('/generate-wholebody-dose-map', async (req, res) => {
 // ==================== 重新应用器官轮廓过滤 ====================
 app.post('/reapply-dose-organs', async (req, res) => {
     try {
-        const { hiddenOrgans } = req.body;
+        const { visibleOrgans } = req.body;
         const dosePngDir = DIRS.DOSE_PNG;
         const doseResultsDir = path.join(__dirname, 'dose_results');
 
@@ -564,10 +564,11 @@ app.post('/reapply-dose-organs', async (req, res) => {
         const outputDir = path.join(dosePngDir, 'wholebody');
         fs.ensureDirSync(outputDir);
 
-        const hiddenOrgansArg = hiddenOrgans && hiddenOrgans.trim()
-            ? ` "--hidden-organs=${hiddenOrgans.trim()}"`
+        // visibleOrgans 为空字符串表示全消（不画任何轮廓）
+        const visibleOrgansArg = (visibleOrgans !== undefined)
+            ? ` "--visible-organs=${(visibleOrgans || '').trim()}"`
             : '';
-        const command = `"${PYTHON_PATH}" "${doseScript}" "${doseNpyPath}" "${outputDir}" "${refNiiPath}"${hiddenOrgansArg}`;
+        const command = `"${PYTHON_PATH}" "${doseScript}" "${doseNpyPath}" "${outputDir}" "${refNiiPath}"${visibleOrgansArg}`;
         console.log(`[reapply-dose-organs] ${command}`);
 
         const { stdout, stderr } = await execAsync(command, {

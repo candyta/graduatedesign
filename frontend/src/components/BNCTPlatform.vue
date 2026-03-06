@@ -1574,11 +1574,11 @@ export default {
     async reapplyDoseOrgans() {
       this.doseOrganApplying = true;
       try {
-        const hiddenOrgans = this.doseOrganList
-          .filter(o => !o.visible)
+        const visibleOrgans = this.doseOrganList
+          .filter(o => o.visible)
           .map(o => o.keyword)
           .join(',');
-        const response = await axios.post(`${API_BASE}/reapply-dose-organs`, { hiddenOrgans });
+        const response = await axios.post(`${API_BASE}/reapply-dose-organs`, { visibleOrgans });
         if (response.data.success) {
           this.slices.doseAxial    = response.data.doseAxial    || [];
           this.slices.doseCoronal  = response.data.doseCoronal  || [];

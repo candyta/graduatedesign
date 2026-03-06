@@ -72,28 +72,22 @@ _ORGAN_NAME_COLOR_KEYWORDS = {
 _ORGAN_COLOR_LUT = None
 
 
-def _build_organ_color_lut(max_id: int = 1024, hidden_keywords=None) -> dict:
+def _build_organ_color_lut(max_id: int = 1024, hidden_keywords=None,
+                           visible_keywords=None) -> dict:
     """
     构建 organ_id → (R, G, B) 颜色查找表，用于全身体模器官勾画。
 
-    策略：
-    1. 优先从 ICRP-110 材质文件读取器官名称，按关键词分配临床颜色；
-       密度 ≥ 1.4 g/cm³（骨骼）的器官跳过，避免视觉混乱。
-    2. 材质文件不可用时，根据解剖灰度 LUT 自动判断：
-       - 骨骼（灰度 ≥ 160）跳过
-       - 气腔（灰度 ≤ 30） → 统一深蓝色
-       - 软组织 → 按 ID 循环分配 ORGAN_PALETTE 颜色
-
-    Parameters:
-    -----------
-    hidden_keywords : iterable of str, optional
-        需要隐藏的器官关键词列表（如 ['liver', 'lung']），匹配器官名称时跳过该器官。
+    visible_keywords 优先级高于 hidden_keywords：
+      - visible_keywords 为列表时，只画名称包含其中关键词的器官。
+      - hidden_keywords 为列表时，跳过名称包含其中关键词的器官。
     """
     global _ORGAN_COLOR_LUT
-    hidden_kw = frozenset(k.strip().lower() for k in (hidden_keywords or []) if k.strip())
+    hidden_kw  = frozenset(k.strip().lower() for k in (hidden_keywords  or []) if k.strip())
+    visible_kw = frozenset(k.strip().lower() for k in (visible_keywords or []) if k.strip()) \
+                 if visible_keywords is not None else None
 
     # 无过滤时使用全局缓存
-    if not hidden_kw:
+    if not hidden_kw and visible_kw is None:
         if _ORGAN_COLOR_LUT is not None:
             return _ORGAN_COLOR_LUT
 
@@ -114,8 +108,12 @@ def _build_organ_color_lut(max_id: int = 1024, hidden_keywords=None) -> dict:
                     if density < 0.35:    # 气腔 → 跳过
                         continue
                     name_lower = name.lower()
-                    # 隐藏器官：关键词匹配则跳过
-                    if hidden_kw and any(kw in name_lower for kw in hidden_kw):
+                    # visible_keywords 模式：只保留匹配的器官
+                    if visible_kw is not None:
+                        if not any(kw in name_lower for kw in visible_kw):
+                            continue
+                    # hidden_keywords 模式：跳过匹配的器官
+                    elif hidden_kw and any(kw in name_lower for kw in hidden_kw):
                         continue
                     color = None
                     for keyword, c in _ORGAN_NAME_COLOR_KEYWORDS.items():
@@ -425,7 +423,8 @@ def save_overlay_slices(dose_data, ct_data, output_dir, view_name,
                         dose_alpha=0.85, slice_interval=1, colormap='jet',
                         figsize=None, body_mask=None,
                         pixel_spacing_hw=(1.0, 1.0),
-                        organ_data=None, hidden_organ_keywords=None):
+                        organ_data=None, hidden_organ_keywords=None,
+                        visible_organ_keywords=None):
     """
     保存全身剂量分布切片（参考BNCT文献的彩色全身热力图风格）。
 
@@ -447,7 +446,12 @@ def save_overlay_slices(dose_data, ct_data, output_dir, view_name,
     # 构建器官颜色查找表（仅在全身体模模式下一次性构建）
     organ_color_lut = {}
     if organ_data is not None:
-        organ_color_lut = _build_organ_color_lut(hidden_keywords=hidden_organ_keywords)
+        if visible_organ_keywords is not None:
+            # visible_organ_keywords 模式：只画指定可见器官；空列表=全消
+            organ_color_lut = _build_organ_color_lut(
+                visible_keywords=visible_organ_keywords) if visible_organ_keywords else {}
+        else:
+            organ_color_lut = _build_organ_color_lut(hidden_keywords=hidden_organ_keywords)
 
     # colormap LUT
     try:
@@ -550,7 +554,7 @@ def save_overlay_slices(dose_data, ct_data, output_dir, view_name,
 
 def process_dose_3d(npy_path, output_dir, ref_nii_path,
                    slice_interval=1, dose_threshold=0.001,
-                   hidden_organ_keywords=None):
+                   hidden_organ_keywords=None, visible_organ_keywords=None):
     """
     处理3D剂量分布并生成三视图切片
 
@@ -755,7 +759,8 @@ def process_dose_3d(npy_path, output_dir, ref_nii_path,
         body_mask=body_mask_3d,
         pixel_spacing_hw=(sp_y, sp_x),
         organ_data=organ_3d,
-        hidden_organ_keywords=hidden_organ_keywords
+        hidden_organ_keywords=hidden_organ_keywords,
+        visible_organ_keywords=visible_organ_keywords
     )
 
     # 冠状面 (Coronal)
@@ -776,7 +781,8 @@ def process_dose_3d(npy_path, output_dir, ref_nii_path,
         body_mask=body_mask_coronal,
         pixel_spacing_hw=(sp_z, sp_x),
         organ_data=organ_coronal,
-        hidden_organ_keywords=hidden_organ_keywords
+        hidden_organ_keywords=hidden_organ_keywords,
+        visible_organ_keywords=visible_organ_keywords
     )
 
     # 矢状面 (Sagittal)
@@ -797,7 +803,8 @@ def process_dose_3d(npy_path, output_dir, ref_nii_path,
         body_mask=body_mask_sagittal,
         pixel_spacing_hw=(sp_z, sp_y),
         organ_data=organ_sagittal,
-        hidden_organ_keywords=hidden_organ_keywords
+        hidden_organ_keywords=hidden_organ_keywords,
+        visible_organ_keywords=visible_organ_keywords
     )
 
     # ==================== 8. 生成汇总信息 ====================
@@ -839,11 +846,15 @@ def main():
     slice_interval = int(sys.argv[4]) if len(sys.argv) > 4 and not sys.argv[4].startswith('--') else 1
 
     hidden_organ_keywords = None
+    visible_organ_keywords = None  # None=不限制；[]或列表=只画指定器官
     for arg in sys.argv[4:]:
         if arg.startswith('--hidden-organs='):
             val = arg.split('=', 1)[1]
             hidden_organ_keywords = [k.strip() for k in val.split(',') if k.strip()]
-            break
+        elif arg.startswith('--visible-organs='):
+            val = arg.split('=', 1)[1]
+            # 空字符串表示全消（不画任何轮廓）
+            visible_organ_keywords = [k.strip() for k in val.split(',') if k.strip()]
 
     try:
         result = process_dose_3d(
@@ -851,7 +862,8 @@ def main():
             output_dir,
             ref_nii_path,
             slice_interval=slice_interval,
-            hidden_organ_keywords=hidden_organ_keywords
+            hidden_organ_keywords=hidden_organ_keywords,
+            visible_organ_keywords=visible_organ_keywords
         )
 
         print("\n文件已生成:")
