@@ -1194,6 +1194,7 @@ export default {
             height: 170,
             weight: 70,
             tumorLocation: tumorLocation,
+            exposureTime: this.riskParams.exposureTime || 30,
             niiPath: this.niiPath || null
           }
         );

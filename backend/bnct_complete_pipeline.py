@@ -90,7 +90,8 @@ class BNCTRiskAssessmentPipeline:
                                ct_path: Optional[str] = None,
                                tumor_mask_path: Optional[str] = None,
                                skip_mcnp: bool = True,
-                               dose_npy_path: Optional[str] = None) -> Dict:
+                               dose_npy_path: Optional[str] = None,
+                               treatment_dose_gy: float = 14.0) -> Dict:
         """
         运行完整的风险评估流程
 
@@ -274,7 +275,8 @@ class BNCTRiskAssessmentPipeline:
             print(f"✓ 使用MCNP真实剂量数据: {dose_npy_path}")
             self.organ_doses = self._extract_organ_doses_from_mcnp(
                 dose_npy_path,
-                tumor_location
+                tumor_location,
+                treatment_dose_gy=treatment_dose_gy
             )
             results['steps_completed'].append('mcnp_dose_real')
             results['dose_source'] = 'mcnp_real'

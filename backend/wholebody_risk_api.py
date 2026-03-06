@@ -73,8 +73,12 @@ def run_assessment(session_dir: str, icrp_data_path: str, dose_npy_path: str = N
             'weight': patient_data['weight'],
             'tumor_location': patient_data.get('tumor_location', 'brain')
         }
-        
+
+        # 计算处方剂量：标准照射30分钟对应14 Gy，线性缩放
+        exposure_time = float(patient_data.get('exposure_time', 30))
+        treatment_dose_gy = 14.0 * (exposure_time / 30.0)
         print(f"患者参数: {patient_params}")
+        print(f"辐照时间: {exposure_time} 分钟 → 处方剂量: {treatment_dose_gy:.2f} Gy")
         
         # 初始化评估管道
         update_status(session_dir, 'initializing', 20, '初始化评估系统...')
@@ -106,7 +110,8 @@ def run_assessment(session_dir: str, icrp_data_path: str, dose_npy_path: str = N
             ct_path=ct_path,
             tumor_mask_path=tumor_mask_path,
             skip_mcnp=True,
-            dose_npy_path=dose_npy_path
+            dose_npy_path=dose_npy_path,
+            treatment_dose_gy=treatment_dose_gy
         )
         
         update_status(session_dir, 'generating_viz', 80, '生成可视化数据...')

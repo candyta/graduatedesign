@@ -1080,6 +1080,7 @@ app.post('/api/wholebody/create-session', async (req, res) => {
             height,
             weight,
             tumorLocation,
+            exposureTime,
             niiPath
         } = req.body;
 
@@ -1105,6 +1106,7 @@ app.post('/api/wholebody/create-session', async (req, res) => {
             height: parseFloat(height) || 170,
             weight: parseFloat(weight) || 70,
             tumor_location: tumorLocation || 'brain',
+            exposure_time: parseFloat(exposureTime) || 30,
             ct_path: niiPath || null,
             timestamp: new Date().toISOString()
         };
