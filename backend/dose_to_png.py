@@ -482,7 +482,8 @@ def process_dose_3d(npy_path, output_dir, ref_nii_path,
 
     if body_zero_count > 0 and np.any(has_dose):
         dose_array_filled = fill_zero_dose_by_distance(
-            dose_array_resampled, body_mask_3d
+            dose_array_resampled, body_mask_3d,
+            n_iterations=50, sigma=8.0
         )
         new_zero = np.sum(body_mask_3d & (dose_array_filled <= 0))
         print(f"  填充后体内零值: {new_zero}")
@@ -494,7 +495,7 @@ def process_dose_3d(npy_path, output_dir, ref_nii_path,
 
     # ==================== 6. 对数归一化 ====================
     print("\n[步骤6] 对数归一化（参考文献色标: 跨7个数量级）")
-    dose_normalized = log_normalize(dose_array_filled, body_mask_3d, log_orders=3)
+    dose_normalized = log_normalize(dose_array_filled, body_mask_3d, log_orders=7)
 
     body_vals = dose_normalized[body_mask_3d]
     if len(body_vals) > 0:
