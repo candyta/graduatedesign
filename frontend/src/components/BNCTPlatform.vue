@@ -710,6 +710,7 @@ export default {
 
       // 风险评估
       patientCtFile: null,
+      detectedRegion: '',   // CT自动识别的解剖区域 (chest/brain/abdomen等)
       riskParams: {
         age: 50,
         gender: 'male',
@@ -927,6 +928,7 @@ export default {
         this.mcnpSteps[0].result = `体模构建完成: ${response.data.message || '成功'}`;
         this.mcnpSteps[1].disabled = false;
         this.phantomBuilt = true;
+        this.detectedRegion = response.data.anatomicalRegion || '';
 
         this.addLog('全身体模构建成功', 'success');
         this.showMessage('全身体模构建成功，可以开始MCNP计算或直接进行风险评估', 'success');
@@ -1174,6 +1176,16 @@ export default {
 
       try {
         // 1. 直接用已有体模参数创建评估会话（无需重新上传CT）
+        // 将CT自动识别的解剖区域映射为BEIR VII归一化参考器官
+        const regionToTumor = {
+          brain: 'brain',
+          nasopharynx: 'brain',
+          chest: 'lung',
+          abdomen: 'liver',
+          liver: 'liver',
+          pelvis: 'bladder',
+        };
+        const tumorLocation = regionToTumor[this.detectedRegion] || 'lung';
         const sessionResponse = await axios.post(
           `${API_BASE}/api/wholebody/create-session`,
           {
@@ -1181,7 +1193,7 @@ export default {
             gender: 'male',
             height: 170,
             weight: 70,
-            tumorLocation: 'brain',
+            tumorLocation: tumorLocation,
             niiPath: this.niiPath || null
           }
         );

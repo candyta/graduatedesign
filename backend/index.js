@@ -310,13 +310,23 @@ app.post('/build-wholebody-phantom', async (req, res) => {
 
         console.log('全身体模构建成功');
 
+        // 从fusion_metadata.json读取自动识别的解剖区域
+        let anatomicalRegion = '';
+        const metadataPath = path.join(outputDir, 'fusion_metadata.json');
+        if (fs.existsSync(metadataPath)) {
+            const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
+            anatomicalRegion = (metadata.registration && metadata.registration.anatomical_region) || '';
+        }
+        console.log(`检测到的解剖区域: ${anatomicalRegion}`);
+
         res.json({
             success: true,
             message: '全身体模构建完成',
             phantomDir: outputDir,
             mcnpInputFile: mcnpInputFile,
             mcnpInputFileInI: targetFilePath,
-            mcnpFileName: targetFileName
+            mcnpFileName: targetFileName,
+            anatomicalRegion: anatomicalRegion
         });
 
     } catch (err) {
