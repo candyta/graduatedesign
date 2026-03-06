@@ -429,11 +429,25 @@ class BNCTRiskAssessmentPipeline:
             if any(kw in name.lower() for kw in keywords) and v > 0
         ]
 
+        max_dose = max(organ_doses_relative.values())
         if tumor_doses:
-            ref_dose = float(np.mean(tumor_doses))
+            ref_dose_candidate = float(np.mean(tumor_doses))
+            # Sanity check: if the target organ receives <5% of the max organ dose,
+            # the beam is not aimed at it (CT region vs. tumor_location mismatch).
+            # A normalization based on a near-zero reference would produce
+            # a factor of ~1e7, inflating every organ dose by millions of Sv.
+            # Fall back to the max-dose organ so the normalization stays physical.
+            if max_dose > 0 and ref_dose_candidate < 0.05 * max_dose:
+                print(f"  [警告] 肿瘤参考器官({keywords})剂量({ref_dose_candidate:.2e})"
+                      f" 仅为最高剂量({max_dose:.2e})的"
+                      f"{ref_dose_candidate / max_dose * 100:.2f}%")
+                print(f"  [回退] CT区域与肿瘤部位不匹配，改用最高剂量器官归一化")
+                ref_dose = max_dose
+            else:
+                ref_dose = ref_dose_candidate
         else:
             # 找最大剂量器官作为参考
-            ref_dose = max(organ_doses_relative.values())
+            ref_dose = max_dose
 
         if ref_dose <= 0:
             print("  [警告] 参考剂量为零，回退到估算")
