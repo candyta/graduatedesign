@@ -251,18 +251,37 @@ def run_comparison(phantom_type, data_dir, output_chart_path=None):
 
     results = []
     for organ_name, organ_ids in organ_groups.items():
-        # 计算体素数（用于评估离散化误差）
+        # 计算体素数与加权平均密度
         voxel_count = int(sum(np.sum(voxel_data == oid) for oid in organ_ids))
-        calc_mass = voxel_count * voxel_vol_cm3 * (
+        weighted_density = (
             sum(density_map.get(oid, 1.0) * int(np.sum(voxel_data == oid))
                 for oid in organ_ids) / max(voxel_count, 1)
         )
+
+        # 体积 (cm³) = 体素数 × 体素体积
+        calc_volume_cm3 = voxel_count * voxel_vol_cm3
+        # 质量 (g) = 体积 × 加权平均密度
+        calc_mass = calc_volume_cm3 * weighted_density
+
         ref_mass = reference_masses.get(organ_name, None)
 
+        # 参考体积 = 参考质量 / 加权平均密度（与ICRP体模所用密度一致）
+        if ref_mass is not None and weighted_density > 0:
+            ref_volume_cm3 = ref_mass / weighted_density
+        else:
+            ref_volume_cm3 = None
+
+        # 质量偏差
         if ref_mass is not None and ref_mass > 0 and calc_mass > 0:
             deviation_pct = (calc_mass - ref_mass) / ref_mass * 100.0
         else:
             deviation_pct = None
+
+        # 体积偏差
+        if ref_volume_cm3 is not None and ref_volume_cm3 > 0 and calc_volume_cm3 > 0:
+            volume_deviation_pct = (calc_volume_cm3 - ref_volume_cm3) / ref_volume_cm3 * 100.0
+        else:
+            volume_deviation_pct = None
 
         # 离散化误差说明：体素数少的小器官，误差来源于体素边界截断
         if voxel_count < 500:
@@ -277,6 +296,9 @@ def run_comparison(phantom_type, data_dir, output_chart_path=None):
             'calculated_g': round(calc_mass, 2),
             'reference_g': ref_mass,
             'deviation_pct': round(deviation_pct, 1) if deviation_pct is not None else None,
+            'calculated_volume_cm3': round(calc_volume_cm3, 2),
+            'reference_volume_cm3': round(ref_volume_cm3, 2) if ref_volume_cm3 is not None else None,
+            'volume_deviation_pct': round(volume_deviation_pct, 1) if volume_deviation_pct is not None else None,
             'voxel_count': voxel_count,
             'discretization_note': discretization_note,
         })

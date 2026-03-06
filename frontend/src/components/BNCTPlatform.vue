@@ -642,7 +642,7 @@
           <div class="icrp-compare-header">
             <h2>📋 ICRP-110 标准体模 vs 参考数据对比</h2>
             <p class="icrp-desc">
-              使用ICRP Publication 110标准参考体模，从体素数据计算各器官质量，
+              使用ICRP Publication 110标准参考体模，从体素数据计算各器官<strong>质量</strong>与<strong>体积</strong>，
               与ICRP报告中发布的参考值进行定量对比验证。
             </p>
           </div>
@@ -712,7 +712,7 @@
 
             <!-- 数据表格 -->
             <div class="icrp-table-section">
-              <h3>器官质量对比数据表</h3>
+              <h3>器官质量 &amp; 体积对比数据表</h3>
               <div class="table-legend">
                 <span class="legend-good">● 偏差 ≤5%（优秀）</span>
                 <span class="legend-ok">● 偏差 5~15%（良好）</span>
@@ -725,30 +725,46 @@
                 一个体素即代表较大体积，边界截断导致体素离散化误差（Voxel Discretization Error）偏大。
                 这是体素化体模的固有局限性，已在 ICRP Publication 110 正文中明确说明。
                 大器官（肝脏、肺、脑等）误差通常 &lt;1%，验证了计算流程的正确性。
+                <br><strong>参考体积</strong> = ICRP参考质量 / 体模组织密度（与体素数据一致的密度值）。
               </div>
               <table class="icrp-table">
                 <thead>
                   <tr>
-                    <th>器官</th>
-                    <th>ICRP参考值 (g)</th>
-                    <th>体模计算值 (g)</th>
-                    <th>体素数</th>
-                    <th>偏差 (%)</th>
-                    <th>评级 / 说明</th>
+                    <th rowspan="2" style="vertical-align:middle;">器官</th>
+                    <th colspan="3" class="th-group-mass">质量对比</th>
+                    <th colspan="3" class="th-group-volume">体积对比</th>
+                    <th rowspan="2" style="vertical-align:middle;">体素数</th>
+                    <th rowspan="2" style="vertical-align:middle;">评级 / 说明</th>
+                  </tr>
+                  <tr>
+                    <th class="th-sub th-sub-mass">ICRP参考 (g)</th>
+                    <th class="th-sub th-sub-mass">体模计算 (g)</th>
+                    <th class="th-sub th-sub-mass">偏差 (%)</th>
+                    <th class="th-sub th-sub-vol">ICRP参考 (cm³)</th>
+                    <th class="th-sub th-sub-vol">体模计算 (cm³)</th>
+                    <th class="th-sub th-sub-vol">偏差 (%)</th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr v-for="row in icrcResult.organ_results" :key="row.organ"
                       :class="{ 'row-small-organ': row.voxel_count && row.voxel_count < 500 }">
                     <td class="organ-name">{{ row.organ }}</td>
+                    <!-- 质量列 -->
                     <td class="val-ref">{{ row.reference_g !== null ? row.reference_g.toFixed(2) : '-' }}</td>
                     <td class="val-calc">{{ row.calculated_g.toFixed(2) }}</td>
+                    <td :class="row.voxel_count && row.voxel_count < 500 ? 'dev-disc' : getDeviationClass(row.deviation_pct)">
+                      {{ row.deviation_pct !== null ? (row.deviation_pct > 0 ? '+' : '') + row.deviation_pct.toFixed(1) + '%' : '-' }}
+                    </td>
+                    <!-- 体积列 -->
+                    <td class="val-ref">{{ row.reference_volume_cm3 !== null && row.reference_volume_cm3 !== undefined ? row.reference_volume_cm3.toFixed(2) : '-' }}</td>
+                    <td class="val-calc">{{ row.calculated_volume_cm3 !== undefined ? row.calculated_volume_cm3.toFixed(2) : '-' }}</td>
+                    <td :class="row.voxel_count && row.voxel_count < 500 ? 'dev-disc' : getDeviationClass(row.volume_deviation_pct)">
+                      {{ row.volume_deviation_pct !== null && row.volume_deviation_pct !== undefined ? (row.volume_deviation_pct > 0 ? '+' : '') + row.volume_deviation_pct.toFixed(1) + '%' : '-' }}
+                    </td>
+                    <!-- 体素数 & 评级 -->
                     <td class="val-voxel">
                       {{ row.voxel_count !== undefined ? row.voxel_count.toLocaleString() : '-' }}
                       <span v-if="row.voxel_count && row.voxel_count < 500" class="disc-star" title="小器官，体素离散化误差较大">★</span>
-                    </td>
-                    <td :class="row.voxel_count && row.voxel_count < 500 ? 'dev-disc' : getDeviationClass(row.deviation_pct)">
-                      {{ row.deviation_pct !== null ? (row.deviation_pct > 0 ? '+' : '') + row.deviation_pct.toFixed(1) + '%' : '-' }}
                     </td>
                     <td>
                       <span v-if="row.voxel_count && row.voxel_count < 500" class="badge-disc">
@@ -3109,6 +3125,26 @@ export default {
   text-align: center;
   font-size: 0.9rem;
 }
+
+/* 双行表头：质量列组 */
+.th-group-mass {
+  background: #3F51B5;
+  border-right: 2px solid #fff;
+}
+
+/* 双行表头：体积列组 */
+.th-group-volume {
+  background: #00796B;
+  border-right: 2px solid #fff;
+}
+
+/* 第二行子列标题 */
+.th-sub {
+  font-size: 0.8rem;
+  padding: 0.4rem 0.6rem;
+}
+.th-sub-mass { background: #7986CB; }
+.th-sub-vol  { background: #4DB6AC; }
 
 .icrp-table td {
   padding: 0.55rem 1rem;
