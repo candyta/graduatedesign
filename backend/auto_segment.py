@@ -12,6 +12,21 @@ stdout: JSON 格式结果
 """
 import sys, os, json, argparse
 
+# ── Windows PATH 修复 ──────────────────────────────────────────────────────────
+# torch 启动时会遍历 PATH 并对每个目录调用 os.add_dll_directory()。
+# 若 PATH 中存在格式有误的条目（如 "D:bin" 缺少反斜杠）会抛 WinError 87。
+# 在此 patch os.add_dll_directory，跳过无效路径，避免 torch 初始化失败。
+if sys.platform == 'win32':
+    _orig_add_dll = os.add_dll_directory
+
+    def _safe_add_dll(path):
+        try:
+            return _orig_add_dll(path)
+        except OSError:
+            pass  # 跳过格式有误的 PATH 条目
+
+    os.add_dll_directory = _safe_add_dll
+
 
 def main():
     parser = argparse.ArgumentParser()
