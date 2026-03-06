@@ -19,7 +19,181 @@ import numpy as np
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
 from pathlib import Path
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import gaussian_filter, binary_erosion
+
+# ─── 器官勾画参数（全身体模，与局部CT contour_overlay.py 风格一致）────────
+ORGAN_FILL_ALPHA   = 0.30   # 器官填充透明度（低于局部CT的0.45，避免遮挡剂量信息）
+ORGAN_BORDER_ALPHA = 0.88   # 器官边框不透明度
+
+# 颜色循环列表（12种，与前端 contourColors 顺序一致）
+ORGAN_PALETTE = [
+    (230, 200,  50),   # 金黄  - 肝脏
+    (220, 100, 100),   # 粉红  - 心脏
+    ( 60,  60, 220),   # 深蓝  - 肺
+    (100, 200,  80),   # 草绿  - 脾脏
+    (200,  80, 200),   # 紫    - 肾
+    ( 50, 200, 200),   # 青    - 胰腺
+    (220, 130,  50),   # 橙    - 胃
+    (150,  80, 220),   # 蓝紫  - 膀胱
+    (240,  80,  80),   # 红    - 食管
+    ( 80, 220, 160),   # 薄荷绿 - 结肠
+    (200, 200,  80),   # 亮黄
+    ( 80, 150, 220),   # 天蓝
+]
+
+# 器官名称关键词 → 固定颜色（提升临床识别度）
+_ORGAN_NAME_COLOR_KEYWORDS = {
+    'liver':       (230, 200,  50),
+    'heart':       (220, 100, 100),
+    'lung':        ( 60,  60, 220),
+    'spleen':      (100, 200,  80),
+    'kidney':      (200,  80, 200),
+    'pancreas':    ( 50, 200, 200),
+    'stomach':     (220, 130,  50),
+    'bladder':     (150,  80, 220),
+    'brain':       (240, 200, 160),
+    'cerebellum':  (240, 200, 160),
+    'cerebrum':    (240, 200, 160),
+    'esophagus':   (240,  80,  80),
+    'colon':       ( 80, 220, 160),
+    'intestine':   ( 80, 150, 220),
+    'thyroid':     (200, 200,  80),
+    'thymus':      (220, 160, 220),
+    'prostate':    ( 80, 150, 220),
+    'testes':      (200, 160,  80),
+    'ovary':       (220, 120, 160),
+    'uterus':      (240, 160, 180),
+    'adrenal':     (100, 200, 200),
+    'gallbladder': (160, 220,  80),
+    'spinal cord': (200, 160,  80),
+}
+
+# 缓存
+_ORGAN_COLOR_LUT = None
+
+
+def _build_organ_color_lut(max_id: int = 1024) -> dict:
+    """
+    构建 organ_id → (R, G, B) 颜色查找表，用于全身体模器官勾画。
+
+    策略：
+    1. 优先从 ICRP-110 材质文件读取器官名称，按关键词分配临床颜色；
+       密度 ≥ 1.4 g/cm³（骨骼）的器官跳过，避免视觉混乱。
+    2. 材质文件不可用时，根据解剖灰度 LUT 自动判断：
+       - 骨骼（灰度 ≥ 160）跳过
+       - 气腔（灰度 ≤ 30） → 统一深蓝色
+       - 软组织 → 按 ID 循环分配 ORGAN_PALETTE 颜色
+    """
+    global _ORGAN_COLOR_LUT
+    if _ORGAN_COLOR_LUT is not None:
+        return _ORGAN_COLOR_LUT
+
+    color_lut = {}
+
+    # ── 1. 尝试从 ICRP-110 材质文件加载 ────────────────────────────────
+    loaded = False
+    try:
+        from icrp110_material_map import ICRP110Materials
+        for pt in ['AM', 'AF']:
+            try:
+                mat = ICRP110Materials(pt)
+                for organ_id, (tissue_num, density, name) in mat.organs.items():
+                    if organ_id <= 0 or organ_id >= max_id:
+                        continue
+                    if density >= 1.4:    # 骨骼/高密度 → 跳过
+                        continue
+                    if density < 0.35:    # 气腔 → 跳过
+                        continue
+                    name_lower = name.lower()
+                    color = None
+                    for keyword, c in _ORGAN_NAME_COLOR_KEYWORDS.items():
+                        if keyword in name_lower:
+                            color = c
+                            break
+                    if color is None:
+                        color = ORGAN_PALETTE[organ_id % len(ORGAN_PALETTE)]
+                    color_lut[organ_id] = color
+                print(f"  [器官勾画] 从 ICRP-110 {pt} 加载 {len(color_lut)} 种软组织器官颜色")
+                loaded = True
+                break
+            except FileNotFoundError:
+                continue
+    except Exception:
+        pass
+
+    # ── 2. 回落方案：基于解剖灰度 LUT 自动判断 ──────────────────────────
+    if not loaded:
+        gray_lut = _get_phantom_gray_lut()
+        for oid in range(1, max_id):
+            g = int(gray_lut[oid])
+            if g == 0:          # 体外空气
+                continue
+            if g >= 160:        # 骨骼（高密度）→ 跳过
+                continue
+            if g <= 30:         # 肺/气腔（低密度）→ 统一蓝色
+                color_lut[oid] = (60, 60, 220)
+                continue
+            # 软组织：按 ID 循环分配颜色
+            color_lut[oid] = ORGAN_PALETTE[oid % len(ORGAN_PALETTE)]
+        print(f"  [器官勾画] 使用回落方案，共 {len(color_lut)} 种软组织器官")
+
+    _ORGAN_COLOR_LUT = color_lut
+    return color_lut
+
+
+def _draw_phantom_organ_contours(out_rgba: np.ndarray,
+                                  organ_slice: np.ndarray,
+                                  body_mask_slice: np.ndarray,
+                                  color_lut: dict) -> np.ndarray:
+    """
+    在已合成的 RGBA 切片上叠加全身体模器官轮廓（半透明填充 + 亮色边框）。
+
+    Parameters
+    ----------
+    out_rgba : np.ndarray  shape (H, W, 4) uint8
+    organ_slice : np.ndarray  shape (H, W) int，器官 ID
+    body_mask_slice : np.ndarray  shape (H, W) bool，体内 mask
+    color_lut : dict  {organ_id: (R, G, B)}
+
+    Returns
+    -------
+    out_rgba : np.ndarray  shape (H, W, 4) uint8（原地修改）
+    """
+    rgb = out_rgba[:, :, :3].astype(np.float32)
+
+    unique_ids = np.unique(organ_slice)
+    for raw_oid in unique_ids:
+        oid = int(raw_oid)
+        if oid not in color_lut:
+            continue
+        color = color_lut[oid]
+
+        organ_bin = (organ_slice == oid) & body_mask_slice
+        if np.sum(organ_bin) < 30:      # 过小的区域（噪声/边界碎片）跳过
+            continue
+
+        # ── 半透明填充 ───────────────────────────────────────────────────
+        rgb[organ_bin, 0] = (rgb[organ_bin, 0] * (1 - ORGAN_FILL_ALPHA)
+                             + color[0] * ORGAN_FILL_ALPHA)
+        rgb[organ_bin, 1] = (rgb[organ_bin, 1] * (1 - ORGAN_FILL_ALPHA)
+                             + color[1] * ORGAN_FILL_ALPHA)
+        rgb[organ_bin, 2] = (rgb[organ_bin, 2] * (1 - ORGAN_FILL_ALPHA)
+                             + color[2] * ORGAN_FILL_ALPHA)
+
+        # ── 亮色边框 ─────────────────────────────────────────────────────
+        border = organ_bin & ~binary_erosion(organ_bin)
+        if border.any():
+            bc = tuple(min(255, int(c * 1.3 + 50)) for c in color)
+            rgb[border, 0] = (rgb[border, 0] * (1 - ORGAN_BORDER_ALPHA)
+                              + bc[0] * ORGAN_BORDER_ALPHA)
+            rgb[border, 1] = (rgb[border, 1] * (1 - ORGAN_BORDER_ALPHA)
+                              + bc[1] * ORGAN_BORDER_ALPHA)
+            rgb[border, 2] = (rgb[border, 2] * (1 - ORGAN_BORDER_ALPHA)
+                              + bc[2] * ORGAN_BORDER_ALPHA)
+
+    out_rgba[:, :, :3] = np.clip(rgb, 0, 255).astype(np.uint8)
+    return out_rgba
+
 
 # ─── 体模解剖灰度 LUT（缓存）────────────────────────────────────────────
 _PHANTOM_GRAY_LUT = None
@@ -257,6 +431,11 @@ def save_overlay_slices(dose_data, ct_data, output_dir, view_name,
     print(f"  总切片数: {num_slices}, 切片尺寸: {w}×{h}")
     print(f"  色图: {colormap}, 剂量alpha: {dose_alpha}")
 
+    # 构建器官颜色查找表（仅在全身体模模式下一次性构建）
+    organ_color_lut = {}
+    if organ_data is not None:
+        organ_color_lut = _build_organ_color_lut()
+
     # colormap LUT
     try:
         cmap_fn = plt.colormaps[colormap]
@@ -329,6 +508,11 @@ def save_overlay_slices(dose_data, ct_data, output_dir, view_name,
                 out_rgba[in_body, 3] = int(dose_alpha * 255)
 
         # 体外 → 全透明 (已经是0)
+
+        # ── 叠加器官勾画轮廓（仅全身体模模式）─────────────────────────────
+        if organ_data is not None and organ_color_lut:
+            organ_sl = organ_data[i]
+            _draw_phantom_organ_contours(out_rgba, organ_sl, in_body, organ_color_lut)
 
         # 垂直翻转，使图像符合医学影像惯例（与nii_preview.py的origin='lower'一致）
         out_rgba = out_rgba[::-1]
