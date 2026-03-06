@@ -635,6 +635,130 @@
           </div>
         </div>
       </div>
+
+      <!-- Tab 6: ICRP标准体模对比 -->
+      <div v-show="activeTab === 'icrp-compare'" class="tab-content">
+        <div class="icrp-compare-workspace">
+          <div class="icrp-compare-header">
+            <h2>📋 ICRP-110 标准体模 vs 参考数据对比</h2>
+            <p class="icrp-desc">
+              使用ICRP Publication 110标准参考体模，从体素数据计算各器官质量，
+              与ICRP报告中发布的参考值进行定量对比验证。
+            </p>
+          </div>
+
+          <div class="icrp-compare-controls">
+            <div class="control-row">
+              <label class="ctrl-label">体模类型：</label>
+              <div class="btn-group">
+                <button
+                  :class="['btn-phantom', { active: icrcPhantomType === 'AM' }]"
+                  @click="icrcPhantomType = 'AM'"
+                >AM（成人男性）</button>
+                <button
+                  :class="['btn-phantom', { active: icrcPhantomType === 'AF' }]"
+                  @click="icrcPhantomType = 'AF'"
+                >AF（成人女性）</button>
+              </div>
+              <button
+                @click="runIcrcComparison"
+                :disabled="icrcLoading"
+                class="btn btn-primary run-btn"
+              >
+                <span v-if="icrcLoading" class="spinner-sm"></span>
+                {{ icrcLoading ? '计算中（约1-3分钟）...' : '▶ 运行对比' }}
+              </button>
+            </div>
+            <div v-if="icrcLoading" class="icrp-progress-note">
+              正在加载体素数据并计算器官质量，请耐心等待...
+            </div>
+          </div>
+
+          <!-- 结果区域 -->
+          <div v-if="icrcResult" class="icrp-results">
+            <!-- 摘要卡片 -->
+            <div class="icrp-summary-cards">
+              <div class="summary-card">
+                <div class="card-label">体模类型</div>
+                <div class="card-value">{{ icrcResult.phantom_type }}</div>
+              </div>
+              <div class="summary-card">
+                <div class="card-label">参考身高</div>
+                <div class="card-value">{{ icrcResult.phantom_height_cm }} cm</div>
+              </div>
+              <div class="summary-card">
+                <div class="card-label">参考体重</div>
+                <div class="card-value">{{ icrcResult.phantom_mass_kg }} kg</div>
+              </div>
+              <div class="summary-card">
+                <div class="card-label">总体素数</div>
+                <div class="card-value">{{ (icrcResult.total_voxels / 1e6).toFixed(2) }} M</div>
+              </div>
+              <div class="summary-card">
+                <div class="card-label">对比器官数</div>
+                <div class="card-value">{{ icrcResult.organs_compared }}</div>
+              </div>
+              <div class="summary-card">
+                <div class="card-label">体素尺寸</div>
+                <div class="card-value">{{ icrcResult.voxel_size_mm ? icrcResult.voxel_size_mm.join('×') : '-' }} mm</div>
+              </div>
+            </div>
+
+            <!-- 对比图表 -->
+            <div v-if="icrcChartUrl" class="icrp-chart-section">
+              <h3>器官质量对比图</h3>
+              <img :src="icrcChartUrl" alt="ICRP对比图" class="icrp-chart-img" />
+            </div>
+
+            <!-- 数据表格 -->
+            <div class="icrp-table-section">
+              <h3>器官质量对比数据表</h3>
+              <div class="table-legend">
+                <span class="legend-good">● 偏差 ≤5%（优秀）</span>
+                <span class="legend-ok">● 偏差 5~15%（良好）</span>
+                <span class="legend-warn">● 偏差 >15%（注意）</span>
+              </div>
+              <table class="icrp-table">
+                <thead>
+                  <tr>
+                    <th>器官</th>
+                    <th>ICRP参考值 (g)</th>
+                    <th>体模计算值 (g)</th>
+                    <th>偏差 (%)</th>
+                    <th>评级</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="row in icrcResult.organ_results" :key="row.organ">
+                    <td class="organ-name">{{ row.organ }}</td>
+                    <td class="val-ref">{{ row.reference_g !== null ? row.reference_g.toFixed(2) : '-' }}</td>
+                    <td class="val-calc">{{ row.calculated_g.toFixed(2) }}</td>
+                    <td :class="getDeviationClass(row.deviation_pct)">
+                      {{ row.deviation_pct !== null ? (row.deviation_pct > 0 ? '+' : '') + row.deviation_pct.toFixed(1) + '%' : '-' }}
+                    </td>
+                    <td>
+                      <span :class="'badge-' + getDeviationRating(row.deviation_pct)">
+                        {{ getDeviationRatingLabel(row.deviation_pct) }}
+                      </span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- 空状态 -->
+          <div v-else-if="!icrcLoading" class="icrp-empty">
+            <p>📊</p>
+            <p>选择体模类型后点击"运行对比"，将自动加载ICRP-110体素数据并与参考值对比</p>
+          </div>
+
+          <!-- 错误 -->
+          <div v-if="icrcError" class="icrp-error">
+            <p>错误：{{ icrcError }}</p>
+          </div>
+        </div>
+      </div>
     </main>
 
     <!-- 消息提示 -->
@@ -672,7 +796,8 @@ export default {
         { id: 'mcnp', name: 'MCNP计算', icon: '⚛️' },
         { id: 'dose', name: '剂量分析', icon: '📊' },
         { id: 'dvh', name: 'DVH分析', icon: '📈' },
-        { id: 'risk', name: '风险评估', icon: '🏥' }
+        { id: 'risk', name: '风险评估', icon: '🏥' },
+        { id: 'icrp-compare', name: 'ICRP对比', icon: '📋' }
       ],
 
       // 影像数据
@@ -707,6 +832,13 @@ export default {
       organFiles: [],
       dvhImage: '',
       dvhStats: null,
+
+      // ICRP对比
+      icrcPhantomType: 'AM',
+      icrcLoading: false,
+      icrcResult: null,
+      icrcChartUrl: '',
+      icrcError: '',
 
       // 风险评估
       patientCtFile: null,
@@ -1288,6 +1420,57 @@ export default {
       a.download = 'secondary_cancer_risk_report.json';
       a.click();
       URL.revokeObjectURL(url);
+    },
+
+    // ========== ICRP 标准体模对比 ==========
+
+    async runIcrcComparison() {
+      this.icrcLoading = true;
+      this.icrcResult = null;
+      this.icrcChartUrl = '';
+      this.icrcError = '';
+      try {
+        const response = await axios.post(`${API_BASE}/api/icrp-comparison`, {
+          phantom_type: this.icrcPhantomType
+        }, { timeout: 600000 });
+
+        if (response.data.success) {
+          this.icrcResult = response.data.data;
+          this.icrcChartUrl = response.data.chart_url
+            ? `${API_BASE}${response.data.chart_url}`
+            : '';
+        } else {
+          this.icrcError = response.data.message || '对比计算失败';
+        }
+      } catch (err) {
+        this.icrcError = err.response?.data?.error || err.message || '请求失败';
+      } finally {
+        this.icrcLoading = false;
+      }
+    },
+
+    getDeviationClass(pct) {
+      if (pct === null) return '';
+      const abs = Math.abs(pct);
+      if (abs <= 5) return 'dev-good';
+      if (abs <= 15) return 'dev-ok';
+      return 'dev-warn';
+    },
+
+    getDeviationRating(pct) {
+      if (pct === null) return 'none';
+      const abs = Math.abs(pct);
+      if (abs <= 5) return 'good';
+      if (abs <= 15) return 'ok';
+      return 'warn';
+    },
+
+    getDeviationRatingLabel(pct) {
+      if (pct === null) return '-';
+      const abs = Math.abs(pct);
+      if (abs <= 5) return '优秀';
+      if (abs <= 15) return '良好';
+      return '注意';
     },
 
   }
@@ -2742,5 +2925,213 @@ export default {
     flex-direction: column;
     height: auto;
   }
+}
+
+/* ===== ICRP 对比页样式 ===== */
+.icrp-compare-workspace {
+  padding: 1.5rem;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.icrp-compare-header h2 {
+  font-size: 1.4rem;
+  margin-bottom: 0.5rem;
+  color: #2c3e50;
+}
+
+.icrp-desc {
+  color: #666;
+  font-size: 0.95rem;
+  margin-bottom: 1.5rem;
+  line-height: 1.6;
+}
+
+.icrp-compare-controls {
+  background: #f8f9fa;
+  border-radius: 8px;
+  padding: 1rem 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.control-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.ctrl-label {
+  font-weight: 600;
+  color: #444;
+  white-space: nowrap;
+}
+
+.btn-group {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.btn-phantom {
+  padding: 0.4rem 1rem;
+  border: 2px solid #667eea;
+  background: white;
+  color: #667eea;
+  border-radius: 20px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: all 0.2s;
+}
+
+.btn-phantom.active {
+  background: #667eea;
+  color: white;
+}
+
+.btn-phantom:hover:not(.active) {
+  background: #f0f0ff;
+}
+
+.run-btn {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.icrp-progress-note {
+  margin-top: 0.5rem;
+  color: #888;
+  font-size: 0.85rem;
+  font-style: italic;
+}
+
+.spinner-sm {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255,255,255,0.4);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  display: inline-block;
+}
+
+.icrp-summary-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.summary-card {
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 0.8rem 1.2rem;
+  min-width: 140px;
+  text-align: center;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+.card-label {
+  font-size: 0.78rem;
+  color: #888;
+  margin-bottom: 0.3rem;
+}
+
+.card-value {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #2c3e50;
+}
+
+.icrp-chart-section {
+  margin-bottom: 2rem;
+}
+
+.icrp-chart-section h3,
+.icrp-table-section h3 {
+  font-size: 1.1rem;
+  color: #2c3e50;
+  margin-bottom: 0.8rem;
+  border-left: 4px solid #667eea;
+  padding-left: 0.6rem;
+}
+
+.icrp-chart-img {
+  max-width: 100%;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+
+.table-legend {
+  font-size: 0.82rem;
+  margin-bottom: 0.6rem;
+  display: flex;
+  gap: 1.5rem;
+}
+
+.legend-good { color: #4CAF50; }
+.legend-ok   { color: #FF9800; }
+.legend-warn { color: #F44336; }
+
+.icrp-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: white;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+}
+
+.icrp-table th {
+  background: #667eea;
+  color: white;
+  padding: 0.7rem 1rem;
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+.icrp-table td {
+  padding: 0.55rem 1rem;
+  border-bottom: 1px solid #f0f0f0;
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+.icrp-table tr:last-child td { border-bottom: none; }
+.icrp-table tr:hover td { background: #f8f9ff; }
+
+.organ-name { text-align: left; font-weight: 500; }
+.val-ref    { color: #2196F3; font-weight: 600; }
+.val-calc   { color: #FF5722; font-weight: 600; }
+
+.dev-good { color: #4CAF50; font-weight: 700; }
+.dev-ok   { color: #FF9800; font-weight: 700; }
+.dev-warn { color: #F44336; font-weight: 700; }
+
+.badge-good { background: #e8f5e9; color: #4CAF50; padding: 0.1rem 0.5rem; border-radius: 10px; font-size: 0.8rem; font-weight: 600; }
+.badge-ok   { background: #fff3e0; color: #FF9800; padding: 0.1rem 0.5rem; border-radius: 10px; font-size: 0.8rem; font-weight: 600; }
+.badge-warn { background: #ffebee; color: #F44336; padding: 0.1rem 0.5rem; border-radius: 10px; font-size: 0.8rem; font-weight: 600; }
+.badge-none { color: #999; }
+
+.icrp-empty {
+  text-align: center;
+  padding: 4rem;
+  color: #aaa;
+  font-size: 1.1rem;
+}
+
+.icrp-empty p:first-child {
+  font-size: 3rem;
+  margin-bottom: 0.5rem;
+}
+
+.icrp-error {
+  background: #ffebee;
+  color: #c62828;
+  padding: 1rem;
+  border-radius: 8px;
+  margin-top: 1rem;
 }
 </style>

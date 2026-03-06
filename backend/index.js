@@ -1653,6 +1653,73 @@ console.log(`  - GET  /api/wholebody/visualization/:sessionId`);
 console.log(`  - GET  /api/wholebody/report/:sessionId`);
 console.log(`  - GET  /api/wholebody/sessions`);
 console.log(`  ICRP数据路径: ${ICRP_DATA_PATH}`);
+
+// ==================== ICRP 标准体模对比 ====================
+
+const ICRP_COMPARISON_OUTPUT_DIR = path.join(__dirname, 'icrp_comparison_output');
+fs.ensureDirSync(ICRP_COMPARISON_OUTPUT_DIR);
+app.use('/icrp_comparison_output', express.static(ICRP_COMPARISON_OUTPUT_DIR));
+
+/**
+ * POST /api/icrp-comparison
+ * 用ICRP-110标准体模计算器官质量，与ICRP报告参考值对比
+ * Body: { phantom_type: 'AM' | 'AF' }
+ */
+app.post('/api/icrp-comparison', async (req, res) => {
+    const { phantom_type = 'AM' } = req.body;
+    if (!['AM', 'AF'].includes(phantom_type.toUpperCase())) {
+        return res.status(400).json({ success: false, message: '体模类型必须为 AM 或 AF' });
+    }
+
+    const pt = phantom_type.toUpperCase();
+    const timestamp = Date.now();
+    const chartFile = path.join(ICRP_COMPARISON_OUTPUT_DIR, `comparison_${pt}_${timestamp}.png`);
+    const jsonFile = path.join(ICRP_COMPARISON_OUTPUT_DIR, `comparison_${pt}_${timestamp}.json`);
+
+    // 动态获取ICRP数据路径：优先使用与index.js同级的解压目录，否则回退到Windows路径
+    const localDataDir = path.join(__dirname, '..', 'P110 data V1.2');
+    const icrcDataDir = fs.existsSync(localDataDir) ? localDataDir : ICRP_DATA_PATH;
+
+    const pythonScript = path.join(__dirname, 'icrp_comparison.py');
+    const pythonPath = PYTHON_PATH;
+
+    const command = `"${pythonPath}" "${pythonScript}" --phantom ${pt} --data-dir "${icrcDataDir}" --chart "${chartFile}" --json-output "${jsonFile}"`;
+
+    log(`[ICRP对比] 开始对比 ${pt} 体模...`);
+    log(`[ICRP对比] 命令: ${command}`);
+
+    try {
+        const { stdout, stderr } = await execAsync(command, { timeout: 600000 });
+        if (stdout) log(`[ICRP对比] stdout: ${stdout}`);
+        if (stderr) log(`[ICRP对比] stderr: ${stderr}`);
+
+        if (!fs.existsSync(jsonFile)) {
+            throw new Error('Python脚本未生成结果JSON文件');
+        }
+
+        const result = JSON.parse(fs.readFileSync(jsonFile, 'utf-8'));
+        const chartUrl = fs.existsSync(chartFile)
+            ? `/icrp_comparison_output/${path.basename(chartFile)}`
+            : null;
+
+        res.json({
+            success: true,
+            phantom_type: pt,
+            chart_url: chartUrl,
+            data: result,
+        });
+    } catch (err) {
+        log(`[ICRP对比] 失败: ${err.message}`, 'error');
+        res.status(500).json({
+            success: false,
+            message: 'ICRP对比计算失败',
+            error: err.message,
+        });
+    }
+});
+
+console.log('[ICRP对比] API端点已加载: POST /api/icrp-comparison');
+
 app.listen(PORT, () => {
     log(`服务器已启动: http://localhost:${PORT}`);
 });
