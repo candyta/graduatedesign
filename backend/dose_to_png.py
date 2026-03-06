@@ -836,10 +836,10 @@ def main():
     npy_path = sys.argv[1]
     output_dir = sys.argv[2]
     ref_nii_path = sys.argv[3]
-    slice_interval = int(sys.argv[4]) if len(sys.argv) > 4 else 1
+    slice_interval = int(sys.argv[4]) if len(sys.argv) > 4 and not sys.argv[4].startswith('--') else 1
 
     hidden_organ_keywords = None
-    for arg in sys.argv[5:]:
+    for arg in sys.argv[4:]:
         if arg.startswith('--hidden-organs='):
             val = arg.split('=', 1)[1]
             hidden_organ_keywords = [k.strip() for k in val.split(',') if k.strip()]
