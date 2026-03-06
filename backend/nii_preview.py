@@ -60,10 +60,11 @@ def generate_slices(nii_path, output_dir):
                 slice_data = data[i, :, :].T
                 zoom_factors = (sp_z / sp_y, 1.0)
 
-            # 双线性插值重采样到物理等比尺寸（仅在两方向间距差异 >1% 时插值）
+            # 三次样条插值重采样到物理等比尺寸（仅在两方向间距差异 >1% 时插值）
+            # order=3 比 order=1 更光滑，消除冠状/矢状面体素拉伸时的台阶锯齿
             needs_zoom = any(abs(z - 1.0) > 0.01 for z in zoom_factors)
             if needs_zoom:
-                slice_data = ndimage_zoom(slice_data, zoom_factors, order=1)
+                slice_data = ndimage_zoom(slice_data, zoom_factors, order=3)
 
             # 归一化输出尺寸：确保最长边 >= OUTPUT_SIZE，防止浏览器粗糙放大导致像素块
             OUTPUT_SIZE = 512
@@ -73,7 +74,7 @@ def generate_slices(nii_path, output_dir):
                 scale = OUTPUT_SIZE / max_dim
                 new_h = max(1, round(h * scale))
                 new_w = max(1, round(w * scale))
-                slice_data = ndimage_zoom(slice_data, (new_h / h, new_w / w), order=1)
+                slice_data = ndimage_zoom(slice_data, (new_h / h, new_w / w), order=3)
 
             # 转为uint8，垂直翻转（origin='lower'），用PIL直接保存原生分辨率
             pixel_array = to_uint8(slice_data)[::-1]   # 上下翻转
