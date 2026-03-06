@@ -1581,11 +1581,6 @@ export default {
       return 'lar-high';
     },
 
-    getRiskLevelLabel(level) {
-      const map = { negligible: '可忽略', low: '低风险', moderate: '中风险', high: '高风险' };
-      return map[level] || level || '-';
-    },
-
   }
 };
 </script>
