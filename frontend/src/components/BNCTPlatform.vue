@@ -310,16 +310,48 @@
         </div>
       </div>
 
-      <!-- 显示设置 -->
+      <!-- 器官轮廓显示 -->
       <div v-if="hasDoseData" class="panel-section">
-        <h3>🎨 显示设置</h3>
-        <div class="control-info">
-          <p style="color: #666; font-size: 12px; padding: 8px; background: #f0f4ff; border-radius: 4px;">
-            💡 显示的是MCNP计算后全身体模上的剂量分布。<br>
-            体模外部区域（空气）无剂量显示。<br>
-            如需调整显示参数，请重新生成剂量分布图。
-          </p>
+        <h3>🫀 器官轮廓</h3>
+        <div class="dose-organ-list">
+          <div
+            v-for="(organ, idx) in doseOrganList"
+            :key="organ.keyword"
+            class="dose-organ-item"
+            @click="organ.visible = !organ.visible; doseOrgansDirty = true"
+          >
+            <input
+              type="checkbox"
+              :checked="organ.visible"
+              @change.stop="organ.visible = $event.target.checked; doseOrgansDirty = true"
+              @click.stop
+              class="organ-checkbox"
+            />
+            <span class="contour-color-dot" :style="{ background: organ.color, opacity: organ.visible ? 1 : 0.35 }"></span>
+            <span class="contour-organ-name" :style="{ color: organ.visible ? '#333' : '#aaa' }">{{ organ.name }}</span>
+          </div>
         </div>
+        <div style="display:flex;gap:6px;margin-top:8px;">
+          <button
+            @click="doseOrganList.forEach(o => o.visible = true); doseOrgansDirty = true"
+            class="btn btn-secondary"
+            style="flex:1;font-size:0.78rem;padding:4px 0;"
+          >全选</button>
+          <button
+            @click="doseOrganList.forEach(o => o.visible = false); doseOrgansDirty = true"
+            class="btn btn-secondary"
+            style="flex:1;font-size:0.78rem;padding:4px 0;"
+          >全消</button>
+        </div>
+        <button
+          v-if="doseOrgansDirty"
+          @click="reapplyDoseOrgans"
+          :disabled="doseOrganApplying"
+          class="btn btn-primary"
+          style="width:100%;margin-top:8px;"
+        >
+          {{ doseOrganApplying ? '⏳ 重新生成中...' : '✅ 应用轮廓设置' }}
+        </button>
       </div>
 
       <!-- 剂量统计信息 -->
@@ -339,11 +371,6 @@
             <span class="stat-value">{{ doseStats.coverage.toFixed(1) }}%</span>
           </div>
         </div>
-      </div>
-
-      <!-- 导出功能 -->
-      <div v-if="hasDoseData" class="panel-section">
-        <h3>💾 导出</h3>
       </div>
     </aside>
 
@@ -1080,6 +1107,29 @@ export default {
       // 剂量统计信息
       doseStats: null,         // { max, mean, coverage }
 
+      // 器官轮廓显示（全身体模剂量视图）
+      doseOrganList: [
+        { keyword: 'brain',       name: '脑',     color: '#F0C8A0', visible: true },
+        { keyword: 'liver',       name: '肝脏',   color: '#E6C832', visible: true },
+        { keyword: 'heart',       name: '心脏',   color: '#DC6464', visible: true },
+        { keyword: 'lung',        name: '肺',     color: '#3C3CDC', visible: true },
+        { keyword: 'kidney',      name: '肾脏',   color: '#C850C8', visible: true },
+        { keyword: 'spleen',      name: '脾脏',   color: '#64C850', visible: true },
+        { keyword: 'bladder',     name: '膀胱',   color: '#9650DC', visible: true },
+        { keyword: 'stomach',     name: '胃',     color: '#DC8232', visible: true },
+        { keyword: 'pancreas',    name: '胰腺',   color: '#32C8C8', visible: true },
+        { keyword: 'colon',       name: '结肠',   color: '#50DCA0', visible: true },
+        { keyword: 'intestine',   name: '小肠',   color: '#5096DC', visible: true },
+        { keyword: 'thyroid',     name: '甲状腺', color: '#C8C850', visible: true },
+        { keyword: 'esophagus',   name: '食管',   color: '#F05050', visible: true },
+        { keyword: 'adrenal',     name: '肾上腺', color: '#64C8C8', visible: true },
+        { keyword: 'gallbladder', name: '胆囊',   color: '#A0DC50', visible: true },
+        { keyword: 'thymus',      name: '胸腺',   color: '#DCA0DC', visible: true },
+        { keyword: 'prostate',    name: '前列腺', color: '#5096DC', visible: true },
+      ],
+      doseOrgansDirty: false,
+      doseOrganApplying: false,
+
       // 体模构建参数
       phantomBuilt: false,
     };
@@ -1519,6 +1569,30 @@ export default {
 
     removeDoseFile(index) {
       this.doseFiles.splice(index, 1);
+    },
+
+    async reapplyDoseOrgans() {
+      this.doseOrganApplying = true;
+      try {
+        const hiddenOrgans = this.doseOrganList
+          .filter(o => !o.visible)
+          .map(o => o.keyword)
+          .join(',');
+        const response = await axios.post(`${API_BASE}/reapply-dose-organs`, { hiddenOrgans });
+        if (response.data.success) {
+          this.slices.doseAxial    = response.data.doseAxial    || [];
+          this.slices.doseCoronal  = response.data.doseCoronal  || [];
+          this.slices.doseSagittal = response.data.doseSagittal || [];
+          this.doseOrgansDirty = false;
+          this.showMessage('器官轮廓已更新', 'success');
+        } else {
+          throw new Error(response.data.message || '更新失败');
+        }
+      } catch (err) {
+        this.showMessage('轮廓更新失败: ' + (err.response?.data?.message || err.message), 'error');
+      } finally {
+        this.doseOrganApplying = false;
+      }
     },
 
     // ========== DVH分析 ==========
@@ -3363,6 +3437,32 @@ export default {
   margin-bottom: 0.6rem;
   display: flex;
   gap: 1.5rem;
+}
+
+/* 剂量页器官轮廓列表 */
+.dose-organ-list {
+  max-height: 280px;
+  overflow-y: auto;
+  margin: 6px 0;
+  border: 1px solid #e8e8e8;
+  border-radius: 4px;
+  padding: 2px 0;
+}
+.dose-organ-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 0.82rem;
+  transition: background 0.15s;
+}
+.dose-organ-item:hover { background: #f0f4ff; }
+.organ-checkbox {
+  width: 14px; height: 14px;
+  cursor: pointer;
+  flex-shrink: 0;
 }
 
 /* 器官轮廓 */

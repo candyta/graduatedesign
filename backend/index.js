@@ -445,7 +445,11 @@ app.post('/generate-wholebody-dose-map', async (req, res) => {
         const outputDir = path.join(dosePngDir, 'wholebody');
         fs.ensureDirSync(outputDir);
 
-        const command = `"${PYTHON_PATH}" "${doseScript}" "${doseNpyPath}" "${outputDir}" "${refNiiPath}"`;
+        const { hiddenOrgans } = req.body;
+        const hiddenOrgansArg = hiddenOrgans && hiddenOrgans.trim()
+            ? ` "--hidden-organs=${hiddenOrgans.trim()}"`
+            : '';
+        const command = `"${PYTHON_PATH}" "${doseScript}" "${doseNpyPath}" "${outputDir}" "${refNiiPath}"${hiddenOrgansArg}`;
         console.log(`执行命令: ${command}`);
 
         const { stdout, stderr } = await execAsync(command, {
@@ -514,6 +518,81 @@ app.post('/generate-wholebody-dose-map', async (req, res) => {
                 'Python脚本': '手动运行 dose_to_png.py 查看详细错误'
             }
         });
+    }
+});
+
+// ==================== 重新应用器官轮廓过滤 ====================
+app.post('/reapply-dose-organs', async (req, res) => {
+    try {
+        const { hiddenOrgans } = req.body;
+        const dosePngDir = DIRS.DOSE_PNG;
+        const doseResultsDir = path.join(__dirname, 'dose_results');
+
+        // 查找剂量文件（与 generate-wholebody-dose-map 相同逻辑）
+        let doseNpyPath = null;
+        if (fs.existsSync(doseResultsDir)) {
+            const doseFiles = fs.readdirSync(doseResultsDir).filter(f => f.endsWith('.npy'));
+            if (doseFiles.length > 0) {
+                const sorted = doseFiles.map(f => ({
+                    name: f, time: fs.statSync(path.join(doseResultsDir, f)).mtime.getTime()
+                })).sort((a, b) => b.time - a.time);
+                doseNpyPath = path.join(doseResultsDir, sorted[0].name);
+            }
+        }
+        if (!doseNpyPath && fs.existsSync(dosePngDir)) {
+            const doseFiles = fs.readdirSync(dosePngDir).filter(f => f.endsWith('.npy'));
+            if (doseFiles.length > 0) doseNpyPath = path.join(dosePngDir, doseFiles[0]);
+        }
+        if (!doseNpyPath) throw new Error('未找到剂量数据文件(.npy)');
+
+        // 查找参考NIfTI（优先fused_phantom）
+        let refNiiPath = null;
+        const fusedPhantomPath = path.join(__dirname, 'wholebody_phantom', 'fused_phantom.nii.gz');
+        if (fs.existsSync(fusedPhantomPath)) refNiiPath = fusedPhantomPath;
+        if (!refNiiPath) {
+            const sessionInfoPath = path.join(DIRS.OUTPUT, 'session_info.json');
+            if (fs.existsSync(sessionInfoPath)) {
+                try {
+                    const info = fs.readJsonSync(sessionInfoPath);
+                    if (info.ct_nii_path && fs.existsSync(info.ct_nii_path)) refNiiPath = info.ct_nii_path;
+                } catch (_) {}
+            }
+        }
+        if (!refNiiPath) throw new Error('未找到参考NIfTI文件');
+
+        const doseScript = path.join(__dirname, 'dose_to_png.py');
+        const outputDir = path.join(dosePngDir, 'wholebody');
+        fs.ensureDirSync(outputDir);
+
+        const hiddenOrgansArg = hiddenOrgans && hiddenOrgans.trim()
+            ? ` "--hidden-organs=${hiddenOrgans.trim()}"`
+            : '';
+        const command = `"${PYTHON_PATH}" "${doseScript}" "${doseNpyPath}" "${outputDir}" "${refNiiPath}"${hiddenOrgansArg}`;
+        console.log(`[reapply-dose-organs] ${command}`);
+
+        const { stdout, stderr } = await execAsync(command, {
+            maxBuffer: 10 * 1024 * 1024,
+            env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
+        });
+        console.log('Python stdout:', stdout);
+        if (stderr) console.error('Python stderr:', stderr);
+
+        const result = { doseAxial: [], doseCoronal: [], doseSagittal: [] };
+        for (const view of ['axial', 'coronal', 'sagittal']) {
+            const viewDir = path.join(outputDir, view);
+            if (fs.existsSync(viewDir)) {
+                const files = await fs.readdir(viewDir);
+                result[`dose${view.charAt(0).toUpperCase() + view.slice(1)}`] = files
+                    .sort().map(f => `/dosepng/wholebody/${view}/${f}`);
+            }
+        }
+
+        const totalSlices = result.doseAxial.length + result.doseCoronal.length + result.doseSagittal.length;
+        res.json({ success: true, totalSlices, ...result });
+
+    } catch (err) {
+        console.error('[reapply-dose-organs] 失败:', err.message);
+        res.status(500).json({ success: false, message: err.message });
     }
 });
 
