@@ -59,28 +59,49 @@ def main():
         print(json.dumps(result, ensure_ascii=False))
         sys.exit(1)
 
+    # 临床关键器官（用于轮廓显示），按重要性排序
+    KEY_ORGANS = [
+        'liver', 'spleen', 'kidney_left', 'kidney_right',
+        'lung_upper_lobe_left', 'lung_lower_lobe_left',
+        'lung_upper_lobe_right', 'lung_lower_lobe_right', 'lung_middle_lobe_right',
+        'heart', 'pancreas', 'stomach', 'colon', 'small_bowel',
+        'urinary_bladder', 'prostate', 'brain',
+        'spinal_cord', 'trachea', 'esophagus',
+        'aorta', 'inferior_vena_cava',
+        'thyroid_gland', 'gallbladder',
+        'adrenal_gland_left', 'adrenal_gland_right',
+    ]
+
     # ── 运行分割 ──────────────────────────────────────────────
     os.makedirs(args.outdir, exist_ok=True)
     try:
         input_img = nib.load(args.ct)
         totalsegmentator(input_img, args.outdir, fast=args.fast, quiet=True)
 
-        # 收集输出 mask 文件
-        masks = sorted([
+        # 收集输出 mask 文件（全部）
+        all_masks = sorted([
             f for f in os.listdir(args.outdir)
             if f.endswith('.nii') or f.endswith('.nii.gz')
         ])
-        organ_names = [
+        all_names = [
             os.path.basename(m).replace('.nii.gz', '').replace('.nii', '')
-            for m in masks
+            for m in all_masks
         ]
-        mask_full_paths = [os.path.join(args.outdir, m) for m in masks]
+
+        # 优先展示关键器官，其余追加（关键器官放前面保证颜色分配优先）
+        name_to_file = {n: os.path.join(args.outdir, m)
+                        for n, m in zip(all_names, all_masks)}
+        key_present   = [k for k in KEY_ORGANS if k in name_to_file]
+        other_present = [n for n in all_names  if n not in KEY_ORGANS]
+        ordered_names = key_present + other_present
+        ordered_files = [name_to_file[n] for n in ordered_names]
 
         result = {
             'success': True,
             'outdir': args.outdir,
-            'organs': organ_names,
-            'mask_files': mask_full_paths
+            'organs':     ordered_names,
+            'mask_files': ordered_files,
+            'key_organs': key_present,      # 建议默认显示的器官列表
         }
         print(json.dumps(result, ensure_ascii=False))
 

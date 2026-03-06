@@ -1283,18 +1283,23 @@ export default {
         const resp = await axios.post(`${API_BASE}/auto-segment`, { ctPath: this.niiPath });
         this.autoSegResult = resp.data;
         if (resp.data.success) {
-          // 将自动勾画结果加入轮廓列表
-          this.contourMasks = [];
-          resp.data.organs.forEach((name, idx) => {
-            this.contourMasks.push({
-              name,
-              file: null,           // mask 文件已在服务器端，路径在 maskFiles
-              serverPath: resp.data.mask_files[idx],
-              color: this.contourColors[idx % this.contourColors.length],
-              visible: true
-            });
-          });
-          this.showMessage(`自动勾画完成，识别 ${resp.data.organs.length} 个器官`, 'success');
+          // 优先使用 key_organs（临床关键器官），避免加载 100+ 个全部器官
+          const keySet = new Set(resp.data.key_organs || []);
+          const displayNames = resp.data.key_organs && resp.data.key_organs.length > 0
+            ? resp.data.organs.filter(n => keySet.has(n))   // 只取关键器官
+            : resp.data.organs.slice(0, 20);                // 兜底：最多20个
+
+          const nameToPath = {};
+          resp.data.organs.forEach((n, i) => { nameToPath[n] = resp.data.mask_files[i]; });
+
+          this.contourMasks = displayNames.map((name, idx) => ({
+            name,
+            file: null,
+            serverPath: nameToPath[name],
+            color: this.contourColors[idx % this.contourColors.length],
+            visible: true
+          }));
+          this.showMessage(`自动勾画完成，识别 ${resp.data.organs.length} 个器官，显示 ${displayNames.length} 个关键器官轮廓`, 'success');
         }
       } catch (err) {
         this.autoSegResult = { success: false, error: err.message };

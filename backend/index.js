@@ -1735,13 +1735,41 @@ const uploadContourMasks = multer({
 });
 
 /**
+ * 公共辅助：调用 contour_overlay.py，用临时文件传路径（避免 Windows 命令行 8191 字符限制）。
+ * @param {string}   ctPath     CT NIfTI 文件路径
+ * @param {string[]} maskPaths  mask 文件路径数组
+ * @param {string[]} organNames 器官名称数组
+ * @param {string}   outDir     输出目录
+ */
+async function runContourOverlay(ctPath, maskPaths, organNames, outDir) {
+    const tmpMasks = path.join(outDir, '_masks.txt');
+    const tmpNames = path.join(outDir, '_names.txt');
+    await fs.writeFile(tmpMasks, maskPaths.join('\n'), 'utf8');
+    await fs.writeFile(tmpNames, organNames.join('\n'), 'utf8');
+
+    const scriptPath = path.join(__dirname, 'contour_overlay.py');
+    const cmd = `"${PYTHON_PATH}" "${scriptPath}" --ct "${ctPath}" --masks-file "${tmpMasks}" --names-file "${tmpNames}" --outdir "${outDir}"`;
+    console.log(`[轮廓叠加] 调用脚本，共 ${maskPaths.length} 个 mask`);
+
+    const { stdout, stderr } = await execAsync(cmd, { timeout: 600000 });
+    if (stderr) console.warn('[轮廓叠加] stderr:', stderr);
+
+    const lines = stdout.trim().split('\n');
+    const jsonLine = lines.reverse().find(l => l.startsWith('{'));
+    if (!jsonLine) throw new Error('contour_overlay.py 未返回 JSON');
+    const result = JSON.parse(jsonLine);
+    if (!result.success) throw new Error(result.error || '轮廓生成失败');
+
+    // 清理临时文件
+    await fs.remove(tmpMasks).catch(() => {});
+    await fs.remove(tmpNames).catch(() => {});
+
+    return result;
+}
+
+/**
  * POST /generate-contour-slices
- * body (multipart):
- *   ctPath       - 已上传到服务器的 CT .nii 文件绝对路径
- *   organNames   - 逗号分隔的器官名称（可选）
- *   files        - 一或多个器官 mask 文件 (.nii / .nii.gz)
- *
- * 返回: { success, views: { axial, coronal, sagittal } (切片数), urlBase }
+ * 接收上传的器官 mask 文件（手动上传模式）
  */
 app.post('/generate-contour-slices', uploadContourMasks.array('masks', 20), async (req, res) => {
     try {
@@ -1750,7 +1778,6 @@ app.post('/generate-contour-slices', uploadContourMasks.array('masks', 20), asyn
         if (!req.files || req.files.length === 0) throw new Error('没有上传器官 mask 文件');
 
         // 解压 .nii.gz → .nii
-        const maskDir = path.join(__dirname, 'contour_masks');
         const niiPaths = [];
         for (const file of req.files) {
             const filePath = file.path;
@@ -1768,37 +1795,22 @@ app.post('/generate-contour-slices', uploadContourMasks.array('masks', 20), asyn
             }
         }
 
+        const names = organNames
+            ? organNames.split(',').map(n => n.trim())
+            : niiPaths.map((_, i) => `Organ${i + 1}`);
+
         const outDir = path.join(__dirname, 'contour_slices');
         await fs.ensureDir(outDir);
+        await runContourOverlay(ctPath, niiPaths, names, outDir);
 
-        const scriptPath = path.join(__dirname, 'contour_overlay.py');
-        const masksArg = niiPaths.join(',');
-        const namesArg = organNames || '';
-        const cmd = `"${PYTHON_PATH}" "${scriptPath}" --ct "${ctPath}" --masks "${masksArg}" --names "${namesArg}" --outdir "${outDir}"`;
-        console.log('[轮廓叠加] 执行:', cmd);
-
-        const { stdout, stderr } = await execAsync(cmd, { timeout: 300000 });
-        if (stderr) console.warn('[轮廓叠加] stderr:', stderr);
-
-        // 解析 Python 输出的 JSON（最后一行）
-        const lines = stdout.trim().split('\n');
-        const jsonLine = lines.reverse().find(l => l.startsWith('{'));
-        if (!jsonLine) throw new Error('Python 脚本未返回 JSON');
-        const pyResult = JSON.parse(jsonLine);
-        if (!pyResult.success) throw new Error(pyResult.error || '轮廓生成失败');
-
-        // 构建前端可访问的 URL 列表
         const buildUrls = async (view) => {
             const viewDir = path.join(outDir, view);
-            const files = (await fs.readdir(viewDir)).sort()
-                .filter(f => f.endsWith('.png'));
+            const files = (await fs.readdir(viewDir)).sort().filter(f => f.endsWith('.png'));
             return files.map(f => `/contour_slices/${view}/${f}`);
         };
-
         const [axial, coronal, sagittal] = await Promise.all([
             buildUrls('axial'), buildUrls('coronal'), buildUrls('sagittal')
         ]);
-
         res.json({ success: true, axial, coronal, sagittal });
 
     } catch (err) {
@@ -1809,8 +1821,7 @@ app.post('/generate-contour-slices', uploadContourMasks.array('masks', 20), asyn
 
 /**
  * POST /generate-contour-slices-by-path
- * body (JSON): { ctPath, maskPaths: [...], organNames }
- * 用于自动勾画后直接传服务器端路径，无需上传文件
+ * 直接传服务器端路径（自动勾画后使用）
  */
 app.post('/generate-contour-slices-by-path', async (req, res) => {
     try {
@@ -1818,23 +1829,13 @@ app.post('/generate-contour-slices-by-path', async (req, res) => {
         if (!ctPath) throw new Error('缺少 ctPath');
         if (!maskPaths || maskPaths.length === 0) throw new Error('缺少 maskPaths');
 
+        const names = organNames
+            ? organNames.split(',').map(n => n.trim())
+            : maskPaths.map((_, i) => `Organ${i + 1}`);
+
         const outDir = path.join(__dirname, 'contour_slices');
         await fs.ensureDir(outDir);
-
-        const scriptPath = path.join(__dirname, 'contour_overlay.py');
-        const masksArg = maskPaths.join(',');
-        const namesArg = organNames || '';
-        const cmd = `"${PYTHON_PATH}" "${scriptPath}" --ct "${ctPath}" --masks "${masksArg}" --names "${namesArg}" --outdir "${outDir}"`;
-        console.log('[轮廓叠加(路径模式)] 执行:', cmd);
-
-        const { stdout, stderr } = await execAsync(cmd, { timeout: 300000 });
-        if (stderr) console.warn('[轮廓叠加(路径模式)] stderr:', stderr);
-
-        const lines = stdout.trim().split('\n');
-        const jsonLine = lines.reverse().find(l => l.startsWith('{'));
-        if (!jsonLine) throw new Error('Python 脚本未返回 JSON');
-        const pyResult = JSON.parse(jsonLine);
-        if (!pyResult.success) throw new Error(pyResult.error || '轮廓生成失败');
+        await runContourOverlay(ctPath, maskPaths, names, outDir);
 
         const buildUrls = async (view) => {
             const viewDir = path.join(outDir, view);
