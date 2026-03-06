@@ -269,8 +269,8 @@ def save_overlay_slices(dose_data, ct_data, output_dir, view_name,
     # 剂量叠加参数：使用动态 alpha，剂量高→颜色主导，剂量低→解剖清晰可见
     # MIN_DOSE_ALPHA: 零剂量时的最小透明度（解剖背景始终可见）
     # MAX_DOSE_ALPHA: 满剂量时的最大透明度
-    MIN_DOSE_ALPHA = 0.15   # 低剂量区域：85%解剖背景，15%剂量颜色
-    MAX_DOSE_ALPHA = 0.72   # 高剂量区域：28%解剖背景，72%剂量颜色
+    MIN_DOSE_ALPHA = 0.30   # 低剂量区域（全身远端）：70%解剖背景，30%蓝色剂量
+    MAX_DOSE_ALPHA = 0.72   # 高剂量区域（源照射区）：28%解剖背景，72%剂量颜色
 
     saved_count = 0
     for i in range(0, num_slices, slice_interval):
@@ -501,6 +501,17 @@ def process_dose_3d(npy_path, output_dir, ref_nii_path,
         print(f"  体内归一化值范围: {body_vals.min():.4f} ~ {body_vals.max():.4f}")
         print(f"  体内均值: {body_vals.mean():.4f}")
 
+    # 6.1 视觉增强：为体内所有体素设置最小显示值，让全身出现剂量颜色分布
+    # 填充后远端体素剂量极小（~1e-16），log归一化后截断为0，远端区域无颜色
+    # 设置最小显示值（对应 jet 蓝色端），保持骨骼/肺等解剖结构可见
+    BODY_DISPLAY_FLOOR = 0.04   # jet 蓝端（全身远端呈深蓝色）
+    dose_display = dose_normalized.copy()
+    below_floor = body_mask_3d & (dose_display < BODY_DISPLAY_FLOOR)
+    floor_count = int(np.sum(below_floor))
+    dose_display[below_floor] = BODY_DISPLAY_FLOOR
+    print(f"  [全身显示] 设置最小显示值 {BODY_DISPLAY_FLOOR}: 影响 {floor_count:,} 体素 "
+          f"({floor_count / max(1, int(body_mask_3d.sum())) * 100:.1f}%)")
+
     # ==================== 7. 生成三视图 ====================
     print("\n[步骤7] 生成三视图切片")
 
@@ -529,7 +540,7 @@ def process_dose_3d(npy_path, output_dir, ref_nii_path,
     # 轴位面 (Axial)
     print("\n  生成轴位面 (Axial)...")
     views['axial'] = {
-        'dose': dose_normalized,
+        'dose': dose_display,
         'ct': ct_normalized
     }
     axial_count = save_overlay_slices(
@@ -549,7 +560,7 @@ def process_dose_3d(npy_path, output_dir, ref_nii_path,
     body_mask_coronal = np.transpose(body_mask_3d, (1, 0, 2))
     organ_coronal = np.transpose(organ_3d, (1, 0, 2)) if organ_3d is not None else None
     views['coronal'] = {
-        'dose': np.transpose(dose_normalized, (1, 0, 2)),
+        'dose': np.transpose(dose_display, (1, 0, 2)),
         'ct': np.transpose(ct_normalized, (1, 0, 2))
     }
     coronal_count = save_overlay_slices(
@@ -569,7 +580,7 @@ def process_dose_3d(npy_path, output_dir, ref_nii_path,
     body_mask_sagittal = np.transpose(body_mask_3d, (2, 0, 1))
     organ_sagittal = np.transpose(organ_3d, (2, 0, 1)) if organ_3d is not None else None
     views['sagittal'] = {
-        'dose': np.transpose(dose_normalized, (2, 0, 1)),
+        'dose': np.transpose(dose_display, (2, 0, 1)),
         'ct': np.transpose(ct_normalized, (2, 0, 1))
     }
     sagittal_count = save_overlay_slices(
