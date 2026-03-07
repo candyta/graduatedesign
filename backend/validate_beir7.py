@@ -18,8 +18,11 @@ BEIR VII 风险模型验证脚本
 """
 
 import sys
+import io
 import math
 import json as json_mod
+# 强制 stdout 使用 UTF-8，避免中文在 Windows/部分 Linux 下乱码
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 sys.path.insert(0, '/home/user/graduatedesign/backend')
 from beir7_risk_engine import BEIRVII_RiskEngine
 

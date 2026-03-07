@@ -1812,7 +1812,7 @@ app.get('/api/beir7-validation', async (req, res) => {
         const script = path.join(__dirname, 'validate_beir7.py');
         const { stdout, stderr } = await new Promise((resolve, reject) => {
             const { exec } = require('child_process');
-            exec(`"${pythonPath}" "${script}" --json`, { timeout: 30000 }, (err, stdout, stderr) => {
+            exec(`"${pythonPath}" "${script}" --json`, { timeout: 30000, encoding: 'utf8', env: { ...process.env, PYTHONIOENCODING: 'utf-8' } }, (err, stdout, stderr) => {
                 if (err) reject(err);
                 else resolve({ stdout, stderr });
             });
