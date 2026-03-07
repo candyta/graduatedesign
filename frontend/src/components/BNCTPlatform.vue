@@ -981,10 +981,17 @@
                 <div class="bv-card-label">EAR 公式</div>
                 <div class="bv-card-sub">{{ bvResult.summary.ear_formula_ok ? '全部通过' : '存在错误' }}</div>
               </div>
-              <div class="bv-card card-pass">
-                <div class="bv-card-icon">✓</div>
-                <div class="bv-card-label">已修复问题</div>
-                <div class="bv-card-sub">{{ bvResult.summary.fixes_applied }} 项</div>
+              <div class="bv-card"
+                   :class="bvResult.cases_summary && bvResult.cases_summary.all_spots_pass ? 'card-pass' : 'card-fail'">
+                <div class="bv-card-icon">
+                  {{ bvResult.cases_summary && bvResult.cases_summary.all_spots_pass ? '✓' : '✗' }}
+                </div>
+                <div class="bv-card-label">案例验证</div>
+                <div class="bv-card-sub">
+                  {{ bvResult.cases_summary
+                     ? bvResult.cases_summary.total_spot_checks + ' 项全通过'
+                     : '—' }}
+                </div>
               </div>
               <div class="bv-card card-info">
                 <div class="bv-card-icon">📖</div>
@@ -993,17 +1000,20 @@
               </div>
             </div>
 
-            <!-- 问题说明 -->
-            <div class="bv-issues">
-              <h3>修复项目</h3>
-              <div v-for="issue in bvResult.issues" :key="issue.id"
-                   :class="['bv-issue', issue.severity === 'fixed' ? 'issue-fixed' : 'issue-info']">
-                <div class="issue-badge">{{ issue.severity === 'fixed' ? '✓ 已修复' : 'ℹ 说明' }}</div>
-                <div class="issue-body">
-                  <div class="issue-title">{{ issue.title }}</div>
-                  <div class="issue-desc">{{ issue.description }}</div>
-                  <div class="issue-impact"><strong>影响：</strong>{{ issue.impact }}</div>
-                </div>
+            <!-- 验证逻辑说明 -->
+            <div class="bv-flow-banner">
+              <div class="bvf-tier bvf-tier1">
+                <div class="bvf-num">第一层</div>
+                <div class="bvf-title">基础参数验证（组件级）</div>
+                <div class="bvf-desc">逐项验证 ERR/EAR 公式、β 参数、年龄调整因子、器官权重，确保每个基础组件与 BEIR VII 原文完全一致</div>
+                <div class="bvf-items">① ERR公式 &nbsp;② EAR公式 &nbsp;③ 年龄因子 &nbsp;④ 器官权重</div>
+              </div>
+              <div class="bvf-arrow">→</div>
+              <div class="bvf-tier bvf-tier2">
+                <div class="bvf-num">第二层</div>
+                <div class="bvf-title">综合案例验证（集成级）</div>
+                <div class="bvf-desc">在5个真实临床场景中运行完整计算流程，每个器官与标准解析值逐一对比，并与文献参考结果核验</div>
+                <div class="bvf-items">⑤ 5案例 × 逐器官公式对比 + 文献参考 + 趋势一致性验证</div>
               </div>
             </div>
 
@@ -1090,36 +1100,9 @@
               </table>
             </div>
 
-            <!-- LAR 修复前后对比 -->
-            <div class="bv-section">
-              <h3>5. LAR 修复前后对比 &nbsp;<small>30岁男性，D = 0.1 Sv</small></h3>
-              <table class="bv-table">
-                <thead>
-                  <tr>
-                    <th>器官</th>
-                    <th>修复前 0.5/0.5 (%)</th>
-                    <th>修复后 BEIR VII (%)</th>
-                    <th>差异</th>
-                    <th>权重</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="r in bvResult.lar_comparison" :key="r.organ">
-                    <td>{{ r.organ }}</td>
-                    <td>{{ r.lar_old_pct.toFixed(6) }}</td>
-                    <td>{{ r.lar_new_pct.toFixed(6) }}</td>
-                    <td :class="Math.abs(r.diff_pct) > 20 ? 'cell-warn' : Math.abs(r.diff_pct) > 5 ? 'cell-mod' : 'cell-pass'">
-                      {{ r.diff_pct > 0 ? '+' : '' }}{{ r.diff_pct }}%
-                    </td>
-                    <td>{{ r.weights_applied }}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-
-            <!-- 临床案例验证 -->
+            <!-- 综合案例验证 -->
             <div class="bv-section bv-cases-section">
-              <h3>6. 临床案例验证 &nbsp;<small>5个文献来源案例，验证不同年龄/性别/剂量场景下的LAR计算</small></h3>
+              <h3>5. 综合案例验证 &nbsp;<small>5个文献来源案例，验证不同年龄/性别/剂量场景下的完整 LAR 计算流程</small></h3>
               <div class="bv-cases-grid">
                 <div v-for="c in bvResult.cases" :key="c.id" class="bv-case-card">
                   <div class="bv-case-header">
@@ -1272,7 +1255,7 @@
 
             <!-- 案例综合验证结论 -->
             <div v-if="bvResult.cases_summary" class="bv-section bv-cases-conclusion">
-              <h3>6c. 案例综合验证结论</h3>
+              <h3>5c. 案例综合验证结论</h3>
 
               <!-- 逐案例总览表 -->
               <table class="bv-table cases-sum-table">
@@ -1361,7 +1344,7 @@
 
             <!-- 参数合理性总览 -->
             <div class="bv-section bv-param-review">
-              <h3>7. 参数合理性总览
+              <h3>6. 参数合理性总览
                 <small>逐项对照 BEIR VII 及权威文献，证明程序设置有据可查</small>
               </h3>
 
@@ -2390,9 +2373,10 @@ export default {
 }
 
 .logo-section h1 {
-  font-size: 1.8rem;
+  font-size: 1.35rem;
   color: #667eea;
   margin: 0;
+  white-space: nowrap;
 }
 
 .version {
@@ -2405,18 +2389,19 @@ export default {
 
 .nav-tabs {
   display: flex;
-  gap: 0.5rem;
+  gap: 0.35rem;
 }
 
 .nav-tab {
-  padding: 0.8rem 1.5rem;
+  padding: 0.55rem 1rem;
   border: none;
   background: #f5f5f5;
   cursor: pointer;
   border-radius: 8px;
   transition: all 0.3s;
-  font-size: 1rem;
+  font-size: 0.88rem;
   font-weight: 500;
+  white-space: nowrap;
 }
 
 .nav-tab:hover {
@@ -4212,6 +4197,35 @@ export default {
 .bv-card-icon { font-size: 1.8rem; margin-bottom: 0.3rem; }
 .bv-card-label { font-weight: 600; font-size: 0.95rem; }
 .bv-card-sub { font-size: 0.82rem; color: #666; margin-top: 0.2rem; }
+
+/* ── 两层验证结构说明横幅 ── */
+.bv-flow-banner {
+  display: flex; align-items: stretch; gap: 0;
+  margin-bottom: 1.5rem;
+  border-radius: 10px; overflow: hidden;
+  border: 1px solid #c5cae9;
+}
+.bvf-tier {
+  flex: 1; padding: 0.85rem 1.1rem;
+}
+.bvf-tier1 { background: #e8eaf6; border-right: 1px solid #c5cae9; }
+.bvf-tier2 { background: #e3f2fd; }
+.bvf-num {
+  font-size: 0.72rem; font-weight: 700; letter-spacing: 0.05em;
+  color: #5c6bc0; text-transform: uppercase; margin-bottom: 0.2rem;
+}
+.bvf-tier2 .bvf-num { color: #1565c0; }
+.bvf-title {
+  font-size: 0.92rem; font-weight: 700; color: #222; margin-bottom: 0.3rem;
+}
+.bvf-desc  { font-size: 0.8rem; color: #555; line-height: 1.5; margin-bottom: 0.35rem; }
+.bvf-items { font-size: 0.78rem; color: #5c6bc0; font-weight: 600; }
+.bvf-tier2 .bvf-items { color: #1565c0; }
+.bvf-arrow {
+  display: flex; align-items: center; justify-content: center;
+  padding: 0 0.7rem; font-size: 1.4rem; color: #888;
+  background: #ede7f6;
+}
 
 .bv-issues { margin-bottom: 1.5rem; }
 .bv-issues h3 { font-size: 1rem; margin-bottom: 0.6rem; }
