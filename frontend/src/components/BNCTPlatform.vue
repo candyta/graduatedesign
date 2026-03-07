@@ -1098,9 +1098,99 @@
               </table>
             </div>
 
-            <!-- 综合案例验证 -->
+            <!-- 综合案例验证（含结论总览 + 逐案例展开） -->
             <div class="bv-section bv-cases-section">
               <h3>5. 综合案例验证 &nbsp;<small>5个文献来源案例，验证不同年龄/性别/剂量场景下的完整 LAR 计算流程</small></h3>
+
+              <!-- 逐案例总览表（结论先行） -->
+              <div v-if="bvResult.cases_summary">
+                <!-- 总览表 -->
+                <table class="bv-table cases-sum-table" style="margin-bottom:0.8rem">
+                  <thead>
+                    <tr>
+                      <th>案例</th>
+                      <th>参数（性别·年龄·剂量）</th>
+                      <th>程序计算总LAR (%)</th>
+                      <th>公式验证项数</th>
+                      <th>公式验证</th>
+                      <th>标准参考结果</th>
+                      <th>结论</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="s in bvResult.cases_summary.spot_check_summary" :key="s.case_id">
+                      <td><strong>案例 {{ s.case_id }}</strong><br><small>{{ s.case_name.slice(0,12) }}…</small></td>
+                      <td>
+                        {{ s.params.gender === 'male' ? '男' : '女' }}
+                        · {{ s.params.age }}岁
+                        · {{ s.params.dose_sv }}Sv
+                      </td>
+                      <td class="case-lar-val"><strong>{{ s.total_lar.toFixed(5) }}</strong></td>
+                      <td style="text-align:center">{{ s.spot_count }}</td>
+                      <td>
+                        <span :class="['spot-verdict', s.all_pass ? 'sv-pass' : 'sv-fail']">
+                          {{ s.all_pass ? `✓ 全部通过` : '✗ 有偏差' }}
+                        </span>
+                      </td>
+                      <td class="csum-ref-col">
+                        <template v-if="s.case_id === 1">
+                          BEIR VII Table 12-3（美国）≈ 0.82%<br>
+                          <small>差异：中国 vs 美国基线率，属本土化调整</small>
+                        </template>
+                        <template v-else>
+                          {{ bvResult.cases[s.case_id - 1].ref_comparison.expected_lar_vs_case1 }}
+                        </template>
+                      </td>
+                      <td>
+                        <span :class="['spot-verdict', s.all_pass ? 'sv-pass' : 'sv-fail']">
+                          {{ s.all_pass ? '✓ 合理' : '⚠ 检查' }}
+                        </span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <!-- 趋势一致性验证 -->
+                <div class="trend-box" style="margin-bottom:0.8rem">
+                  <div class="trend-title">
+                    LAR 大小趋势验证
+                    <span :class="['spot-verdict', bvResult.cases_summary.trend_check.trend_pass ? 'sv-pass' : 'sv-fail']">
+                      {{ bvResult.cases_summary.trend_check.trend_pass ? '✓ 通过' : '✗ 不符合' }}
+                    </span>
+                  </div>
+                  <div class="trend-desc">
+                    <strong>预期顺序（年龄越小·剂量越大 → LAR 越高）：</strong><br>
+                    案例3（10岁女，0.3Sv）&gt;&gt; 案例2（25岁女，0.2Sv）&gt;
+                    案例4（45岁男，0.5Sv）&gt; 案例1（30岁男，0.1Sv）&gt;&gt; 案例5（60岁女，0.05Sv）
+                  </div>
+                  <div class="trend-actual">
+                    <strong>实际计算顺序（从高到低）：</strong>
+                    <span v-for="(id, idx) in bvResult.cases_summary.trend_check.actual_order_by_lar" :key="id">
+                      案例{{ id }}（{{ bvResult.cases[id - 1].total_lar_pct.toFixed(4) }}%）
+                      <span v-if="idx < 4"> &gt; </span>
+                    </span>
+                  </div>
+                </div>
+
+                <!-- 总结论框 -->
+                <div :class="['cases-final-verdict',
+                              bvResult.cases_summary.all_spots_pass &&
+                              bvResult.cases_summary.trend_check.trend_pass
+                                ? 'cfv-pass' : 'cfv-warn']"
+                     style="margin-bottom:1.2rem">
+                  <span class="cfv-icon">
+                    {{ bvResult.cases_summary.all_spots_pass && bvResult.cases_summary.trend_check.trend_pass ? '✓' : '⚠' }}
+                  </span>
+                  <span>
+                    共 {{ bvResult.cases_summary.total_spot_checks }} 项公式解析验证全部通过；
+                    5个临床案例的 LAR 大小顺序与年龄–剂量模型预期完全一致；
+                    Case 1 与 BEIR VII Table 12-3 量级吻合（差异来自中国 vs 美国基线发病率，属预期内本土化偏差）。
+                    <strong>程序计算结果合理可信。</strong>
+                  </span>
+                </div>
+              </div>
+
+              <!-- 逐案例折叠卡片 -->
               <div class="bv-cases-grid">
                 <div v-for="c in bvResult.cases" :key="c.id" class="bv-case-card">
                   <!-- 始终可见：案例摘要（可点击展开） -->
@@ -1262,95 +1352,6 @@
                     <p class="bv-case-citation">{{ c.citation }}</p>
                   </div><!-- /bv-case-detail -->
                 </div>
-              </div>
-            </div>
-
-            <!-- 案例综合验证结论 -->
-            <div v-if="bvResult.cases_summary" class="bv-section bv-cases-conclusion">
-              <h3>5c. 案例综合验证结论</h3>
-
-              <!-- 逐案例总览表 -->
-              <table class="bv-table cases-sum-table">
-                <thead>
-                  <tr>
-                    <th>案例</th>
-                    <th>参数（性别·年龄·剂量）</th>
-                    <th>程序计算总LAR (%)</th>
-                    <th>公式验证项数</th>
-                    <th>公式验证</th>
-                    <th>标准参考结果</th>
-                    <th>结论</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="s in bvResult.cases_summary.spot_check_summary" :key="s.case_id">
-                    <td><strong>案例 {{ s.case_id }}</strong><br><small>{{ s.case_name.slice(0,12) }}…</small></td>
-                    <td>
-                      {{ s.params.gender === 'male' ? '男' : '女' }}
-                      · {{ s.params.age }}岁
-                      · {{ s.params.dose_sv }}Sv
-                    </td>
-                    <td class="case-lar-val"><strong>{{ s.total_lar.toFixed(5) }}</strong></td>
-                    <td style="text-align:center">{{ s.spot_count }}</td>
-                    <td>
-                      <span :class="['spot-verdict', s.all_pass ? 'sv-pass' : 'sv-fail']">
-                        {{ s.all_pass ? `✓ 全部通过` : '✗ 有偏差' }}
-                      </span>
-                    </td>
-                    <td class="csum-ref-col">
-                      <template v-if="s.case_id === 1">
-                        BEIR VII Table 12-3（美国）≈ 0.82%<br>
-                        <small>差异：中国 vs 美国基线率，属本土化调整</small>
-                      </template>
-                      <template v-else>
-                        {{ bvResult.cases[s.case_id - 1].ref_comparison.expected_lar_vs_case1 }}
-                      </template>
-                    </td>
-                    <td>
-                      <span :class="['spot-verdict', s.all_pass ? 'sv-pass' : 'sv-fail']">
-                        {{ s.all_pass ? '✓ 合理' : '⚠ 检查' }}
-                      </span>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-
-              <!-- 趋势一致性验证 -->
-              <div class="trend-box">
-                <div class="trend-title">
-                  LAR 大小趋势验证
-                  <span :class="['spot-verdict', bvResult.cases_summary.trend_check.trend_pass ? 'sv-pass' : 'sv-fail']">
-                    {{ bvResult.cases_summary.trend_check.trend_pass ? '✓ 通过' : '✗ 不符合' }}
-                  </span>
-                </div>
-                <div class="trend-desc">
-                  <strong>预期顺序（年龄越小·剂量越大 → LAR 越高）：</strong><br>
-                  案例3（10岁女，0.3Sv）&gt;&gt; 案例2（25岁女，0.2Sv）&gt;
-                  案例4（45岁男，0.5Sv）&gt; 案例1（30岁男，0.1Sv）&gt;&gt; 案例5（60岁女，0.05Sv）
-                </div>
-                <div class="trend-actual">
-                  <strong>实际计算顺序（从高到低）：</strong>
-                  <span v-for="(id, idx) in bvResult.cases_summary.trend_check.actual_order_by_lar" :key="id">
-                    案例{{ id }}（{{ bvResult.cases[id - 1].total_lar_pct.toFixed(4) }}%）
-                    <span v-if="idx < 4"> &gt; </span>
-                  </span>
-                </div>
-              </div>
-
-              <!-- 总结论框 -->
-              <div :class="['cases-final-verdict',
-                            bvResult.cases_summary.all_spots_pass &&
-                            bvResult.cases_summary.trend_check.trend_pass
-                              ? 'cfv-pass' : 'cfv-warn']">
-                <span class="cfv-icon">
-                  {{ bvResult.cases_summary.all_spots_pass && bvResult.cases_summary.trend_check.trend_pass ? '✓' : '⚠' }}
-                </span>
-                <span>
-                  共 {{ bvResult.cases_summary.total_spot_checks }} 项公式解析验证全部通过；
-                  5个临床案例的 LAR 大小顺序与年龄–剂量模型预期完全一致；
-                  Case 1 与 BEIR VII Table 12-3 量级吻合（差异来自中国 vs 美国基线发病率，属预期内本土化偏差）。
-                  <strong>程序计算结果合理可信。</strong>
-                </span>
               </div>
             </div>
 
