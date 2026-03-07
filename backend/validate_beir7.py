@@ -86,10 +86,57 @@ CLINICAL_CASES = [
 
 
 def validate_cases():
-    """运行所有临床案例，返回各案例的逐器官LAR结果"""
+    """运行所有临床案例，返回各案例的逐器官LAR结果及公式验证信息"""
+
+    # ── 每个案例的参考信息（文献量化标准/预期趋势）─────────────
+    # Case 1：BEIR VII Table 12-3（美国人口基线，30岁男性，0.1 Gy）
+    # Case 2-5：基于模型参数的定量趋势预期（年龄/剂量比例关系）
+    CASE_REFERENCES = {
+        1: {
+            'type': 'beir7_table123',
+            'source': 'BEIR VII (2006), Table 12-3，美国人口基线',
+            'total_lar_us_approx': 0.82,   # % 全癌种合计（BEIR VII 美国人口估计）
+            'ci_low': 0.5, 'ci_high': 1.3, # 95% CI 近似范围
+            'note': 'BEIR VII 采用美国基线发病率；本程序使用中国肿瘤登记数据。'
+                    '中国胃癌发病率高于美国，结直肠/膀胱低于美国，'
+                    '两者总量接近但器官分布不同，数值差异属本土化调整（预期内偏差）。',
+        },
+        2: {
+            'type': 'trend_check',
+            'basis': '相对 Case 1：剂量×2 → ERR/EAR 线性增大2倍；'
+                     '年龄更小（25岁 vs 30岁）→ 剩余寿命更长且年龄调整因子 exp(γ×(-5)/10)>1；'
+                     '女性胃/乳腺/卵巢基线发病率与男性不同。'
+                     '综合预期 LAR 应约为 Case 1 的 2–4 倍。',
+            'expected_lar_vs_case1': '> Case 1（剂量×2 + 性别 + 年龄效应）',
+        },
+        3: {
+            'type': 'trend_check',
+            'basis': '相对 Case 1：剂量×3；年龄10岁 → 剩余寿命最长、年龄调整因子最大。'
+                     '以胃癌为例：exp(-0.41×(10-30)/10)=exp(0.82)≈2.27，即年龄因子比基准年龄高127%。'
+                     '综合预期 LAR 为所有案例中最高，应显著高于 Case 1。',
+            'expected_lar_vs_case1': '>> Case 1（最高：大剂量 + 最年轻 + 最长积分区间）',
+        },
+        4: {
+            'type': 'trend_check',
+            'basis': '相对 Case 1：剂量×5，但年龄45岁 → exp(γ×(45-30)/10)=exp(-0.45)≈0.64，'
+                     '年龄调整因子降低36%；且剩余寿命短于30岁。'
+                     '预期：高剂量效应与年龄衰减部分抵消，总LAR中等偏高。',
+            'expected_lar_vs_case1': '高于 Case 1（大剂量），但因年龄较大而年龄因子有衰减',
+        },
+        5: {
+            'type': 'trend_check',
+            'basis': '相对 Case 1：剂量×0.5；年龄60岁 → exp(γ×(60-30)/10)=exp(-1.23)≈0.29，'
+                     '年龄调整因子极低；剩余寿命最短（约25年）。'
+                     '综合预期 LAR 最低，应显著低于 Case 1。',
+            'expected_lar_vs_case1': '<< Case 1（最低：低剂量 + 最年长 + 最短积分区间）',
+        },
+    }
+
     case_results = []
     for case in CLINICAL_CASES:
         eng = BEIRVII_RiskEngine(case['age'], case['gender'])
+
+        # ── LAR 计算（现有逻辑）──────────────────────────────────
         organ_results = []
         total_lar = 0.0
         for organ in case['organs']:
@@ -111,20 +158,62 @@ def validate_cases():
                     'lar_pct': None,
                     'error': str(e),
                 })
+
+        # ── 公式解析验证（spot-check）────────────────────────────
+        # 对每个器官在照射年龄处独立计算 ERR 解析值：
+        #   D_eff = D / DDREF（当 D < 0.1 Sv 时，与引擎一致）
+        #   ERR = β · D_eff · exp(γ · (e−30)/10)
+        # 与引擎输出逐一比对，误差应 < 1e-9（浮点精度级别）
+        spot_checks = []
+        all_spots_pass = True
+        D     = case['dose_sv']
+        e     = case['age']
+        ddref = eng.DDREF if D < 0.1 else 1.0   # 与 calculate_err 逻辑一致
+        D_eff = D / ddref
+        for organ in case['organs']:
+            params = eng.ERR_PARAMETERS.get(organ, {}).get(case['gender'])
+            if params is None:
+                continue
+            beta  = params['beta']
+            gamma = params['gamma']
+            analytical = beta * D_eff * math.exp(gamma * (e - 30) / 10)
+            program    = eng.calculate_err(organ, D, e)
+            ok = abs(analytical - program) < 1e-9
+            if not ok:
+                all_spots_pass = False
+            ddref_note = f'（D<0.1Sv，已除以DDREF={ddref}，D_eff={round(D_eff,5)}Sv）' if ddref != 1.0 else ''
+            spot_checks.append({
+                'organ':       organ,
+                'formula':     f'β({beta}) × D_eff({round(D_eff,5)}) × exp(γ({gamma})×({e}−30)/10){ddref_note}',
+                'analytical':  round(analytical, 8),
+                'program':     round(program, 8),
+                'pass':        ok,
+                'ddref_applied': ddref != 1.0,
+            })
+
+        ref = CASE_REFERENCES.get(case['id'], {})
+        # 为 Case 1 填入程序实际结果以供对比
+        if ref.get('type') == 'beir7_table123':
+            ref = dict(ref, our_total_pct=round(total_lar, 4))
+
         case_results.append({
-            'id': case['id'],
-            'name': case['name'],
-            'description': case['description'],
-            'reference': case['reference'],
-            'citation': case['citation'],
+            'id':             case['id'],
+            'name':           case['name'],
+            'description':    case['description'],
+            'reference':      case['reference'],
+            'citation':       case['citation'],
             'clinical_context': case['clinical_context'],
             'params': {
-                'age': case['age'],
-                'gender': case['gender'],
+                'age':     case['age'],
+                'gender':  case['gender'],
                 'dose_sv': case['dose_sv'],
             },
-            'organ_results': organ_results,
-            'total_lar_pct': round(total_lar, 6),
+            'organ_results':    organ_results,
+            'total_lar_pct':    round(total_lar, 6),
+            'spot_checks':      spot_checks,
+            'all_spots_pass':   all_spots_pass,
+            'spot_check_count': len(spot_checks),
+            'ref_comparison':   ref,
         })
     return case_results
 
@@ -400,6 +489,49 @@ def run_validation():
         'params_match_beir7': err_all_pass and ear_all_pass,
         'fixes_applied': 2,
         'source': 'BEIR VII Phase 2 (2006), Table 12-2D/E, Chapter 12',
+    }
+
+    # ── 案例公式验证汇总 ─────────────────────────────────────
+    # 检验：每个案例的LAR排序是否符合年龄/剂量模型预期
+    cases = results['cases']
+    totals = {c['id']: c['total_lar_pct'] for c in cases}
+    results['cases_summary'] = {
+        # 逐案例公式 spot-check 汇总
+        'spot_check_summary': [
+            {
+                'case_id':    c['id'],
+                'case_name':  c['name'],
+                'params':     c['params'],
+                'total_lar':  c['total_lar_pct'],
+                'spot_count': c['spot_check_count'],
+                'all_pass':   c['all_spots_pass'],
+            }
+            for c in cases
+        ],
+        # 趋势一致性验证
+        # 预期：Case3(最高) > Case2 > Case4 > Case1 > Case5(最低)
+        # 理由：剂量与年龄综合效应
+        'trend_check': {
+            'expected_order': [3, 2, 4, 1, 5],
+            'expected_reason': (
+                'Case3(10岁女,0.3Sv) >> Case2(25岁女,0.2Sv) > '
+                'Case4(45岁男,0.5Sv) > Case1(30岁男,0.1Sv) > Case5(60岁女,0.05Sv)；'
+                '年龄越小×剂量越大→LAR越高'
+            ),
+            # 按预期顺序排列后，实际LAR应单调递减
+            'actual_order_by_lar': sorted(
+                [c['id'] for c in cases],
+                key=lambda cid: totals[cid],
+                reverse=True
+            ),
+            'trend_pass': (
+                sorted([c['id'] for c in cases],
+                       key=lambda cid: totals[cid], reverse=True)
+                == [3, 2, 4, 1, 5]
+            ),
+        },
+        'all_spots_pass': all(c['all_spots_pass'] for c in cases),
+        'total_spot_checks': sum(c['spot_check_count'] for c in cases),
     }
     return results
 
