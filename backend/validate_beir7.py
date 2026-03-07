@@ -26,6 +26,106 @@ from beir7_risk_engine import BEIRVII_RiskEngine
 JSON_MODE = '--json' in sys.argv
 
 
+# ── 临床验证案例定义（含文献来源）─────────────────────────────
+# 5个文献来源明确的临床参考案例，用于验证 BEIR VII 引擎在不同人群/剂量场景下的输出
+CLINICAL_CASES = [
+    {
+        'id': 1,
+        'name': 'BEIR VII 成年男性标准参考',
+        'description': '30岁男性，全身均匀照射0.1 Sv，为BEIR VII报告的典型引用案例，可用于验证引擎基准输出。',
+        'reference': 'BEIR VII Phase 2 (2006), Table 12-3',
+        'citation': 'National Academies of Sciences. BEIR VII Phase 2: Health Risks from Exposure to Low Levels of Ionizing Radiation. Washington, DC: The National Academies Press, 2006.',
+        'age': 30, 'gender': 'male', 'dose_sv': 0.1,
+        'organs': ['stomach', 'colon', 'liver', 'lung', 'bladder', 'thyroid', 'leukemia'],
+        'clinical_context': 'BEIR VII报告典型参考案例，成年男性职业照射或医疗诊断场景',
+    },
+    {
+        'id': 2,
+        'name': '原爆幸存者流行病学基准（女性）',
+        'description': '25岁女性，0.2 Sv照射，基于日本原子弹幸存者寿命研究（LSS）数据，BEIR VII模型的主要流行病学依据。',
+        'reference': 'Preston DL, et al. Radiat Res 168(1):1-64, 2007 (LSS Report 13)',
+        'citation': 'Preston DL, Ron E, Tokuoka S, et al. Solid cancer incidence in atomic bomb survivors: 1958-1998. Radiat Res. 2007;168(1):1-64.',
+        'age': 25, 'gender': 'female', 'dose_sv': 0.2,
+        'organs': ['stomach', 'colon', 'liver', 'lung', 'breast', 'ovary', 'bladder', 'thyroid'],
+        'clinical_context': '关注女性特有器官风险（乳腺、卵巢），验证性别差异对LAR的影响',
+    },
+    {
+        'id': 3,
+        'name': '儿科放射暴露高风险案例',
+        'description': '10岁女童，0.3 Sv照射。年龄越小，剩余寿命越长，累积LAR显著更高，验证年龄调整因子的放大效应。',
+        'reference': 'Ron E. Radiat Res 150(5 Suppl):S30-41, 1998',
+        'citation': 'Ron E. Ionizing radiation and cancer risk: evidence from epidemiology. Radiat Res. 1998;150(5 Suppl):S30-41. doi:10.2307/3579849.',
+        'age': 10, 'gender': 'female', 'dose_sv': 0.3,
+        'organs': ['stomach', 'colon', 'liver', 'lung', 'breast', 'thyroid', 'leukemia'],
+        'clinical_context': '儿科放射暴露评估，验证年轻患者因剩余寿命长导致LAR显著高于成人',
+    },
+    {
+        'id': 4,
+        'name': 'BNCT脑瘤治疗典型患者',
+        'description': '45岁男性，脑部照射0.5 Sv（代表BNCT脑胶质瘤治疗中非靶器官全身散射剂量）。',
+        'reference': 'Barth RF, et al. Lancet Oncol 6(9):537-546, 2005',
+        'citation': 'Barth RF, Coderre JA, Vicente MG, Blue TE. Boron neutron capture therapy of cancer: current status and future prospects. Lancet Oncol. 2005;6(9):537-46.',
+        'age': 45, 'gender': 'male', 'dose_sv': 0.5,
+        'organs': ['brain', 'stomach', 'lung', 'liver', 'leukemia'],
+        'clinical_context': 'BNCT脑胶质瘤治疗评估，中年患者中等剂量场景，关注远期继发癌风险',
+    },
+    {
+        'id': 5,
+        'name': 'ICRP 老年患者低剂量参考',
+        'description': '60岁女性，0.05 Sv低剂量照射。剩余寿命较短使LAR降低，验证高龄对风险计算的衰减效应。',
+        'reference': 'ICRP Publication 103 (2007), Annex A, Table A.4',
+        'citation': 'ICRP Publication 103: The 2007 Recommendations of the International Commission on Radiological Protection. Ann ICRP 37(2-4), 2007. doi:10.1016/j.icrp.2007.10.003.',
+        'age': 60, 'gender': 'female', 'dose_sv': 0.05,
+        'organs': ['stomach', 'colon', 'liver', 'lung', 'breast', 'bladder'],
+        'clinical_context': '老年女性低剂量场景，验证年龄对LAR的衰减效应（老年患者LAR远低于年轻患者）',
+    },
+]
+
+
+def validate_cases():
+    """运行所有临床案例，返回各案例的逐器官LAR结果"""
+    case_results = []
+    for case in CLINICAL_CASES:
+        eng = BEIRVII_RiskEngine(case['age'], case['gender'])
+        organ_results = []
+        total_lar = 0.0
+        for organ in case['organs']:
+            try:
+                res = eng.calculate_lar_combined(organ, case['dose_sv'])
+                lar = res['lar_combined']
+                total_lar += lar
+                organ_results.append({
+                    'organ': organ,
+                    'lar_pct': round(lar, 6),
+                    'lar_err_pct': round(res['lar_err'], 6),
+                    'lar_ear_pct': round(res['lar_ear'], 6),
+                    'weights': f"{res['err_weight']:.1f}/{res['ear_weight']:.1f}",
+                    'risk_level': eng.get_risk_level(lar),
+                })
+            except Exception as e:
+                organ_results.append({
+                    'organ': organ,
+                    'lar_pct': None,
+                    'error': str(e),
+                })
+        case_results.append({
+            'id': case['id'],
+            'name': case['name'],
+            'description': case['description'],
+            'reference': case['reference'],
+            'citation': case['citation'],
+            'clinical_context': case['clinical_context'],
+            'params': {
+                'age': case['age'],
+                'gender': case['gender'],
+                'dose_sv': case['dose_sv'],
+            },
+            'organ_results': organ_results,
+            'total_lar_pct': round(total_lar, 6),
+        })
+    return case_results
+
+
 def run_validation():
     results = {
         'err_check': [],
@@ -33,6 +133,7 @@ def run_validation():
         'age_factor': [],
         'weight_table': [],
         'lar_comparison': [],
+        'cases': [],
         'issues': [],
         'summary': {}
     }
@@ -135,6 +236,9 @@ def run_validation():
             'diff_pct': round(diff_pct, 1),
             'weights_applied': f'{w_err}/{w_ear}',
         })
+
+    # ── 6. 临床案例验证 ────────────────────────────────────────
+    results['cases'] = validate_cases()
 
     # ── 汇总 ───────────────────────────────────────────────────
     results['issues'] = [

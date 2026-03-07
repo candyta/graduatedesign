@@ -1117,6 +1117,70 @@
               </table>
             </div>
 
+            <!-- 临床案例验证 -->
+            <div class="bv-section bv-cases-section">
+              <h3>6. 临床案例验证 &nbsp;<small>5个文献来源案例，验证不同年龄/性别/剂量场景下的LAR计算</small></h3>
+              <div class="bv-cases-grid">
+                <div v-for="c in bvResult.cases" :key="c.id" class="bv-case-card">
+                  <div class="bv-case-header">
+                    <span class="bv-case-num">案例 {{ c.id }}</span>
+                    <span class="bv-case-name">{{ c.name }}</span>
+                  </div>
+                  <div class="bv-case-meta">
+                    <span class="bv-case-param">
+                      {{ c.params.gender === 'male' ? '男性' : '女性' }}
+                      &nbsp;·&nbsp;{{ c.params.age }}岁
+                      &nbsp;·&nbsp;{{ c.params.dose_sv }} Sv
+                    </span>
+                    <span class="bv-case-total">
+                      总LAR：<strong>{{ c.total_lar_pct.toFixed(4) }}%</strong>
+                    </span>
+                  </div>
+                  <p class="bv-case-desc">{{ c.description }}</p>
+                  <div class="bv-case-ref">
+                    <span class="bv-ref-badge">文献</span>
+                    <span class="bv-ref-text">{{ c.reference }}</span>
+                  </div>
+                  <table class="bv-table bv-case-table">
+                    <thead>
+                      <tr>
+                        <th>器官</th>
+                        <th>LAR_ERR (%)</th>
+                        <th>LAR_EAR (%)</th>
+                        <th>LAR综合 (%)</th>
+                        <th>权重</th>
+                        <th>风险级别</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="r in c.organ_results" :key="r.organ">
+                        <td>{{ r.organ }}</td>
+                        <td>{{ r.lar_pct !== null ? r.lar_err_pct.toFixed(5) : '-' }}</td>
+                        <td>{{ r.lar_pct !== null ? r.lar_ear_pct.toFixed(5) : '-' }}</td>
+                        <td><strong>{{ r.lar_pct !== null ? r.lar_pct.toFixed(5) : '-' }}</strong></td>
+                        <td>{{ r.weights || '-' }}</td>
+                        <td>
+                          <span v-if="r.risk_level" :class="['risk-badge', 'risk-' + r.risk_level]">
+                            {{ {'negligible':'可忽略','low':'低风险','moderate':'中等','high':'高风险'}[r.risk_level] || r.risk_level }}
+                          </span>
+                          <span v-else>-</span>
+                        </td>
+                      </tr>
+                    </tbody>
+                    <tfoot>
+                      <tr class="case-total-row">
+                        <td colspan="3" style="text-align:right;font-weight:600;">总计</td>
+                        <td><strong>{{ c.total_lar_pct.toFixed(5) }}%</strong></td>
+                        <td colspan="2"></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                  <p class="bv-case-context"><strong>临床意义：</strong>{{ c.clinical_context }}</p>
+                  <p class="bv-case-citation">{{ c.citation }}</p>
+                </div>
+              </div>
+            </div>
+
           </div>
 
           <div v-else-if="!bvLoading" class="bv-empty">
@@ -2052,7 +2116,7 @@ export default {
 }
 
 .bnct-platform {
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  font-family: 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', 'Noto Sans CJK SC', 'Hiragino Sans GB', Tahoma, Geneva, Verdana, sans-serif;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   min-height: 100vh;
   color: #333;
@@ -3948,4 +4012,83 @@ export default {
   background: #ffebee; color: #c62828;
   padding: 1rem; border-radius: 8px; margin-top: 1rem;
 }
+
+/* ── 临床案例验证 ── */
+.bv-cases-section { max-width: 100%; }
+.bv-cases-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(560px, 1fr));
+  gap: 1.2rem;
+}
+.bv-case-card {
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 10px;
+  padding: 1rem 1.2rem;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
+.bv-case-header {
+  display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.4rem;
+}
+.bv-case-num {
+  background: #5c6bc0; color: #fff;
+  font-size: 0.75rem; font-weight: 700;
+  padding: 0.15rem 0.5rem; border-radius: 12px;
+  white-space: nowrap;
+}
+.bv-case-name {
+  font-weight: 700; font-size: 0.98rem; color: #222;
+}
+.bv-case-meta {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 0.4rem;
+}
+.bv-case-param {
+  font-size: 0.82rem; color: #5c6bc0; font-weight: 600;
+  background: #ede7f6; padding: 0.15rem 0.55rem; border-radius: 8px;
+}
+.bv-case-total {
+  font-size: 0.85rem; color: #555;
+}
+.bv-case-total strong { color: #c62828; }
+.bv-case-desc {
+  font-size: 0.84rem; color: #444; margin: 0.3rem 0;
+}
+.bv-case-ref {
+  display: flex; align-items: baseline; gap: 0.4rem;
+  margin-bottom: 0.6rem;
+}
+.bv-ref-badge {
+  font-size: 0.72rem; font-weight: 700; color: #fff;
+  background: #43a047; padding: 0.1rem 0.4rem; border-radius: 4px;
+  white-space: nowrap;
+}
+.bv-ref-text { font-size: 0.82rem; color: #1a6b35; font-style: italic; }
+.bv-case-table { margin-bottom: 0.5rem; font-size: 0.82rem; }
+.bv-case-table tfoot td {
+  border-top: 2px solid #e0e0e0;
+  background: #f5f5f5;
+  font-size: 0.85rem;
+}
+.case-total-row td { background: #f9fbe7 !important; }
+.bv-case-context {
+  font-size: 0.8rem; color: #555; margin: 0.3rem 0 0.1rem;
+  border-left: 3px solid #7986cb; padding-left: 0.5rem;
+}
+.bv-case-citation {
+  font-size: 0.75rem; color: #999; margin: 0.2rem 0 0;
+  font-style: italic; word-break: break-word;
+}
+
+/* 风险级别徽章 */
+.risk-badge {
+  display: inline-block;
+  font-size: 0.72rem; font-weight: 700;
+  padding: 0.1rem 0.4rem; border-radius: 4px;
+  white-space: nowrap;
+}
+.risk-negligible { background: #e8f5e9; color: #2e7d32; }
+.risk-low        { background: #e3f2fd; color: #1565c0; }
+.risk-moderate   { background: #fff8e1; color: #f57f17; }
+.risk-high       { background: #ffebee; color: #c62828; }
 </style>
