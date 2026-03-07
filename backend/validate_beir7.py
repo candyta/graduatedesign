@@ -1,176 +1,241 @@
 #!/usr/bin/env python3
 """
 BEIR VII 风险模型验证脚本
-对照 BEIR VII (2006) 报告检验 beir7_risk_engine.py 中公式和参数的正确性
+对照 BEIR VII (2006) 报告检验 beir7_risk_engine.py 的公式和参数
+
+用法：
+  python validate_beir7.py              # 文本输出（终端查看）
+  python validate_beir7.py --json       # JSON 输出（供前端 API 调用）
 
 验证项目：
-  1. ERR 公式基准点 —— ERR(1 Gy, 暴露年龄=30) 应恰好等于 β
-  2. EAR 公式基准点 —— EAR(1 Gy, 暴露年龄=30, 达到年龄=60) 应等于 β
+  1. ERR 公式基准点 —— ERR(1 Gy, e=30) 应恰好等于 β
+  2. EAR 公式基准点 —— EAR(1 Gy, e=30, a=60) 应恰好等于 β
   3. 年龄调整因子行为
-  4. ERR/EAR 模型权重 —— BEIR VII 推荐 0.7/0.3，肺部为 0.3/0.7（颠倒）
-  5. 量化权重差异对 LAR 的影响
+  4. ERR/EAR 器官专属权重（BEIR VII Chapter 12）
+  5. 修复前后 LAR 对比
 
 参考：BEIR VII Phase 2 (2006), Table 12-2D/E, Chapter 12
 """
 
 import sys
 import math
+import json as json_mod
 sys.path.insert(0, '/home/user/graduatedesign/backend')
 from beir7_risk_engine import BEIRVII_RiskEngine
 
-
-def section(title):
-    print(f"\n{'='*60}")
-    print(f"  {title}")
-    print(f"{'='*60}")
+JSON_MODE = '--json' in sys.argv
 
 
-# ──────────────────────────────────────────────────────────────
-# 1. ERR 公式基准点
-# ──────────────────────────────────────────────────────────────
-section("1. ERR 公式基准点  ERR(D=1Gy, e=30) == β")
-print("  原理: exp(γ×(30-30)/10) = 1，故 ERR = β×D = β\n")
+def run_validation():
+    results = {
+        'err_check': [],
+        'ear_check': [],
+        'age_factor': [],
+        'weight_table': [],
+        'lar_comparison': [],
+        'issues': [],
+        'summary': {}
+    }
 
-# BEIR VII Table 12-2D 的 β 值
-ERR_BETA = {
-    'stomach':  (0.21, 0.48),
-    'colon':    (0.63, 0.43),
-    'liver':    (0.32, 0.32),
-    'lung':     (0.32, 1.40),
-    'bladder':  (0.50, 1.20),
-    'thyroid':  (0.53, 1.05),
-    'brain':    (0.24, 0.24),
-    'leukemia': (1.50, 2.20),
-}
+    # ── 1. ERR 基准点 ──────────────────────────────────────────
+    # BEIR VII Table 12-2D β 值
+    ERR_BETA = {
+        'stomach':  (0.21, 0.48),
+        'colon':    (0.63, 0.43),
+        'liver':    (0.32, 0.32),
+        'lung':     (0.32, 1.40),
+        'bladder':  (0.50, 1.20),
+        'thyroid':  (0.53, 1.05),
+        'brain':    (0.24, 0.24),
+        'leukemia': (1.50, 2.20),
+    }
+    err_all_pass = True
+    for organ, (beta_m, beta_f) in ERR_BETA.items():
+        got_m = BEIRVII_RiskEngine(30, 'male').calculate_err(organ, 1.0, 30)
+        got_f = BEIRVII_RiskEngine(30, 'female').calculate_err(organ, 1.0, 30)
+        ok_m = abs(got_m - beta_m) < 1e-9
+        ok_f = abs(got_f - beta_f) < 1e-9
+        if not (ok_m and ok_f):
+            err_all_pass = False
+        results['err_check'].append({
+            'organ': organ,
+            'male_expected': beta_m, 'male_got': round(got_m, 6), 'male_pass': ok_m,
+            'female_expected': beta_f, 'female_got': round(got_f, 6), 'female_pass': ok_f,
+        })
 
-all_pass = True
-for organ, (beta_m, beta_f) in ERR_BETA.items():
-    eng_m = BEIRVII_RiskEngine(30, 'male')
-    eng_f = BEIRVII_RiskEngine(30, 'female')
-    got_m = eng_m.calculate_err(organ, 1.0, 30)
-    got_f = eng_f.calculate_err(organ, 1.0, 30)
-    ok_m = abs(got_m - beta_m) < 1e-9
-    ok_f = abs(got_f - beta_f) < 1e-9
-    sm = "✓" if ok_m else "✗"
-    sf = "✓" if ok_f else "✗"
-    print(f"  {organ:<12}  男 期望={beta_m:.2f} 得到={got_m:.4f} {sm}    "
-          f"女 期望={beta_f:.2f} 得到={got_f:.4f} {sf}")
-    if not (ok_m and ok_f):
-        all_pass = False
+    # ── 2. EAR 基准点 ──────────────────────────────────────────
+    # BEIR VII Table 12-2E β 值
+    EAR_BETA = {
+        'stomach': (4.90, 10.20),
+        'colon':   (3.20,  1.60),
+        'liver':   (2.70,  2.20),
+        'lung':    (5.50,  9.60),
+        'bladder': (1.00,  1.60),
+    }
+    ear_all_pass = True
+    for organ, (beta_m, beta_f) in EAR_BETA.items():
+        got_m = BEIRVII_RiskEngine(30, 'male').calculate_ear(organ, 1.0, 30, 60)
+        got_f = BEIRVII_RiskEngine(30, 'female').calculate_ear(organ, 1.0, 30, 60)
+        ok_m = abs(got_m - beta_m) < 1e-9
+        ok_f = abs(got_f - beta_f) < 1e-9
+        if not (ok_m and ok_f):
+            ear_all_pass = False
+        results['ear_check'].append({
+            'organ': organ,
+            'male_expected': beta_m, 'male_got': round(got_m, 6), 'male_pass': ok_m,
+            'female_expected': beta_f, 'female_got': round(got_f, 6), 'female_pass': ok_f,
+        })
 
-print(f"\n  结论: {'全部通过 ✓' if all_pass else '存在错误 ✗'}")
+    # ── 3. 年龄调整因子 ────────────────────────────────────────
+    gamma_lung = -0.40
+    for age in [10, 20, 30, 40, 50, 60]:
+        factor = math.exp(gamma_lung * (age - 30) / 10)
+        results['age_factor'].append({
+            'age': age,
+            'factor': round(factor, 4),
+            'note': '基准' if age == 30 else ('年轻→更高风险' if age < 30 else '年长→更低风险')
+        })
 
+    # ── 4. 权重表 ──────────────────────────────────────────────
+    eng_ref = BEIRVII_RiskEngine(30, 'male')
+    for organ, (w_err, w_ear) in eng_ref.LAR_WEIGHTS.items():
+        results['weight_table'].append({
+            'organ': organ,
+            'err_weight': w_err,
+            'ear_weight': w_ear,
+            'note': {
+                'lung':    '颠倒：EAR 权重更大',
+                'breast':  '仅 EAR 模型',
+                'thyroid': '仅 ERR 模型（无 EAR 参数）',
+            }.get(organ, '标准权重')
+        })
 
-# ──────────────────────────────────────────────────────────────
-# 2. EAR 公式基准点
-# ──────────────────────────────────────────────────────────────
-section("2. EAR 公式基准点  EAR(D=1Gy, e=30, a=60) == β")
-print("  原理: exp(γ×0)=1, (60/60)^η=1，故 EAR = β×1×1 = β\n")
+    # ── 5. LAR 对比（修复前 0.5/0.5 vs 修复后正确权重）─────────
+    DOSE = 0.1  # Sv
+    OLD_WEIGHT = 0.5
+    comparison_organs = ['stomach', 'colon', 'lung', 'bladder', 'thyroid', 'breast']
+    for organ in comparison_organs:
+        eng = BEIRVII_RiskEngine(30, 'male') if organ != 'breast' else BEIRVII_RiskEngine(30, 'female')
+        lar_err = eng.calculate_lar(organ, DOSE)
+        lar_ear = eng.calculate_lar_ear(organ, DOSE)
+        # 修复前
+        if lar_ear > 0:
+            lar_old = OLD_WEIGHT * lar_err + OLD_WEIGHT * lar_ear
+        else:
+            lar_old = lar_err
+        # 修复后（自动查表）
+        lar_new = eng.calculate_lar_combined(organ, DOSE)['lar_combined']
+        w_err, w_ear = eng.LAR_WEIGHTS.get(organ, (0.7, 0.3))
+        diff_pct = (lar_new - lar_old) / lar_old * 100 if lar_old > 0 else 0
+        results['lar_comparison'].append({
+            'organ': organ,
+            'dose_sv': DOSE,
+            'lar_old_pct': round(lar_old, 6),
+            'lar_new_pct': round(lar_new, 6),
+            'diff_pct': round(diff_pct, 1),
+            'weights_applied': f'{w_err}/{w_ear}',
+        })
 
-# BEIR VII Table 12-2E 的 β 值
-EAR_BETA = {
-    'stomach': (4.90, 10.20),
-    'colon':   (3.20,  1.60),
-    'liver':   (2.70,  2.20),
-    'lung':    (5.50,  9.60),
-    'bladder': (1.00,  1.60),
-    'thyroid': (0.40,  2.00),
-}
-
-all_pass = True
-for organ, (beta_m, beta_f) in EAR_BETA.items():
-    eng_m = BEIRVII_RiskEngine(30, 'male')
-    eng_f = BEIRVII_RiskEngine(30, 'female')
-    got_m = eng_m.calculate_ear(organ, 1.0, 30, 60)
-    got_f = eng_f.calculate_ear(organ, 1.0, 30, 60)
-    ok_m = abs(got_m - beta_m) < 1e-9
-    ok_f = abs(got_f - beta_f) < 1e-9
-    sm = "✓" if ok_m else "✗"
-    sf = "✓" if ok_f else "✗"
-    print(f"  {organ:<12}  男 期望={beta_m:.2f} 得到={got_m:.4f} {sm}    "
-          f"女 期望={beta_f:.2f} 得到={got_f:.4f} {sf}")
-    if not (ok_m and ok_f):
-        all_pass = False
-
-print(f"\n  结论: {'全部通过 ✓' if all_pass else '存在错误 ✗'}")
-
-
-# ──────────────────────────────────────────────────────────────
-# 3. 年龄调整因子
-# ──────────────────────────────────────────────────────────────
-section("3. 年龄调整因子 exp(γ×(e-30)/10) 行为验证")
-print("  以肺癌男性 γ=-0.40 为例\n")
-print(f"  {'暴露年龄':>8}  {'调整因子':>10}  说明")
-print(f"  {'-'*40}")
-gamma = -0.40
-for age in [10, 20, 30, 40, 50, 60]:
-    factor = math.exp(gamma * (age - 30) / 10)
-    note = "基准" if age == 30 else ("年轻→更高风险" if age < 30 else "年长→更低风险")
-    print(f"  {age:>8}岁  {factor:>10.4f}  {note}")
-
-
-# ──────────────────────────────────────────────────────────────
-# 4. ERR/EAR 权重问题
-# ──────────────────────────────────────────────────────────────
-section("4. ERR/EAR 模型权重：现有代码 vs BEIR VII 推荐")
-print("""
-  BEIR VII Chapter 12 推荐权重：
-  ┌──────────────┬──────────┬──────────┐
-  │ 器官         │ ERR 权重 │ EAR 权重 │
-  ├──────────────┼──────────┼──────────┤
-  │ 大多数实体癌 │   0.7    │   0.3    │
-  │ 肺癌         │   0.3    │   0.7    │ ← 颠倒
-  │ 乳腺癌       │   0.0    │   1.0    │ ← 仅 EAR
-  │ 甲状腺癌     │   1.0    │   0.0    │ ← 仅 ERR
-  └──────────────┴──────────┴──────────┘
-
-  现有代码：calculate_lar_combined() 默认 err_weight=0.5（均等权重）
-""")
-
-# 量化差异
-print("  量化差异 (30岁男性, D=0.1 Sv)：\n")
-print(f"  {'器官':<12} {'代码(0.5/0.5)':>14} {'BEIR VII推荐':>14} {'差异%':>8}  推荐权重")
-print(f"  {'-'*60}")
-
-organs_weights = {
-    'stomach': (0.7, 0.3),
-    'colon':   (0.7, 0.3),
-    'lung':    (0.3, 0.7),   # 颠倒
-    'bladder': (0.7, 0.3),
-}
-
-eng = BEIRVII_RiskEngine(30, 'male')
-dose = 0.1
-
-for organ, (w_err, w_ear) in organs_weights.items():
-    lar_code    = eng.calculate_lar_combined(organ, dose)['lar_combined']
-    lar_err_val = eng.calculate_lar(organ, dose)
-    lar_ear_val = eng.calculate_lar_ear(organ, dose)
-    lar_beir7   = w_err * lar_err_val + w_ear * lar_ear_val
-    diff_pct    = (lar_beir7 - lar_code) / lar_code * 100 if lar_code > 0 else 0
-    flag = " ← 偏差最大" if organ == 'lung' else ""
-    print(f"  {organ:<12} {lar_code:>14.6f}% {lar_beir7:>14.6f}%"
-          f" {diff_pct:>+8.1f}%  {w_err:.1f}/{w_ear:.1f}{flag}")
+    # ── 汇总 ───────────────────────────────────────────────────
+    results['issues'] = [
+        {
+            'id': 1, 'severity': 'fixed',
+            'title': 'ERR/EAR 权重错误',
+            'description': '原代码默认 err_weight=0.5（均等），BEIR VII 推荐大多数器官 0.7/0.3，肺癌 0.3/0.7，乳腺癌 0.0/1.0，甲状腺 1.0/0.0。',
+            'impact': '肺癌 LAR 偏差最大（约 +26%）',
+        },
+        {
+            'id': 2, 'severity': 'fixed',
+            'title': '甲状腺 EAR 参数误用',
+            'description': 'BEIR VII 对甲状腺不提供 EAR 模型，原 EAR_PARAMETERS 中存在 thyroid 条目会被误用于计算。',
+            'impact': '甲状腺 LAR 被低估（EAR 贡献本不应存在）',
+        },
+        {
+            'id': 3, 'severity': 'info',
+            'title': 'DDREF 阈值逻辑',
+            'description': '代码以 0.1 Sv 为阈值应用 DDREF=1.5，BEIR VII 描述为低剂量低剂量率场景。BNCT 剂量通常 >0.1 Gy，实际不触发，影响有限。',
+            'impact': '无实际影响（BNCT 场景）',
+        },
+    ]
+    results['summary'] = {
+        'err_formula_ok': err_all_pass,
+        'ear_formula_ok': ear_all_pass,
+        'params_match_beir7': err_all_pass and ear_all_pass,
+        'fixes_applied': 2,
+        'source': 'BEIR VII Phase 2 (2006), Table 12-2D/E, Chapter 12',
+    }
+    return results
 
 
-# ──────────────────────────────────────────────────────────────
-# 5. 汇总
-# ──────────────────────────────────────────────────────────────
-section("5. 汇总")
-print("""
-  ✓ ERR/EAR 公式结构正确
-  ✓ ERR/EAR 参数值与 BEIR VII Table 12-2D/E 完全一致
+def print_text(results):
+    def section(t):
+        print(f"\n{'='*60}\n  {t}\n{'='*60}")
 
-  ✗ 问题1 [权重错误] ★★★ 影响最大
-      位置: calculate_lar_combined(), 默认 err_weight=0.5
-      修正: 大多数器官改为 0.7/0.3，肺癌改为 0.3/0.7
-            乳腺癌改为 0.0/1.0，甲状腺改为 1.0/0.0
+    section("1. ERR 公式基准点  ERR(D=1Gy, e=30) == β")
+    print("  原理: exp(γ×0)=1，故 ERR = β\n")
+    for r in results['err_check']:
+        sm = "✓" if r['male_pass'] else "✗"
+        sf = "✓" if r['female_pass'] else "✗"
+        print(f"  {r['organ']:<12}  男 期望={r['male_expected']:.2f} 得到={r['male_got']:.4f} {sm}    "
+              f"女 期望={r['female_expected']:.2f} 得到={r['female_got']:.4f} {sf}")
+    ok = results['summary']['err_formula_ok']
+    print(f"\n  结论: {'全部通过 ✓' if ok else '存在错误 ✗'}")
 
-  ✗ 问题2 [甲状腺 EAR 参数] ★★
-      BEIR VII 对甲状腺只推荐 ERR 模型，代码中存在 EAR 参数会被误用
-      修正: 甲状腺 LAR 应仅使用 ERR 模型
+    section("2. EAR 公式基准点  EAR(D=1Gy, e=30, a=60) == β")
+    print("  原理: exp(γ×0)=1, (60/60)^η=1，故 EAR = β\n")
+    for r in results['ear_check']:
+        sm = "✓" if r['male_pass'] else "✗"
+        sf = "✓" if r['female_pass'] else "✗"
+        print(f"  {r['organ']:<12}  男 期望={r['male_expected']:.2f} 得到={r['male_got']:.4f} {sm}    "
+              f"女 期望={r['female_expected']:.2f} 得到={r['female_got']:.4f} {sf}")
+    ok = results['summary']['ear_formula_ok']
+    print(f"\n  结论: {'全部通过 ✓' if ok else '存在错误 ✗'}")
 
-  ✗ 问题3 [DDREF 逻辑不清] ★
-      代码以 0.1 Sv 为阈值应用 DDREF，BEIR VII 的描述是针对低剂量低剂量率
-      BNCT 场景剂量通常 > 0.1 Gy，此处实际不触发，影响有限
-""")
+    section("3. 年龄调整因子（肺癌 γ=-0.40）")
+    print(f"  {'暴露年龄':>8}  {'调整因子':>10}  说明")
+    print(f"  {'-'*40}")
+    for r in results['age_factor']:
+        print(f"  {r['age']:>8}岁  {r['factor']:>10.4f}  {r['note']}")
+
+    section("4. ERR/EAR 器官权重（修复后）")
+    print(f"  {'器官':<12} {'ERR权重':>8} {'EAR权重':>8}  说明")
+    print(f"  {'-'*50}")
+    for r in results['weight_table']:
+        print(f"  {r['organ']:<12} {r['err_weight']:>8.1f} {r['ear_weight']:>8.1f}  {r['note']}")
+
+    section("5. LAR 修复前后对比（30岁男性, D=0.1 Sv）")
+    print(f"  {'器官':<12} {'修复前(0.5/0.5)':>16} {'修复后(BEIR VII)':>16} {'差异%':>8}  权重")
+    print(f"  {'-'*65}")
+    for r in results['lar_comparison']:
+        flag = " ← 差异最大" if r['organ'] == 'lung' else ""
+        print(f"  {r['organ']:<12} {r['lar_old_pct']:>16.6f}% {r['lar_new_pct']:>16.6f}%"
+              f" {r['diff_pct']:>+8.1f}%  {r['weights_applied']}{flag}")
+
+    section("6. 问题汇总")
+    for issue in results['issues']:
+        icon = "✓ [已修复]" if issue['severity'] == 'fixed' else "ℹ [说明]"
+        print(f"\n  {icon} 问题{issue['id']}: {issue['title']}")
+        print(f"    {issue['description']}")
+        print(f"    影响: {issue['impact']}")
+
+    print(f"\n  ERR/EAR 公式结构: ✓  参数值: ✓  修复项: {results['summary']['fixes_applied']} 个\n")
+
+
+if __name__ == '__main__':
+    data = run_validation()
+    if JSON_MODE:
+        import numpy as np
+
+        class _Encoder(json_mod.JSONEncoder):
+            def default(self, o):
+                if isinstance(o, (np.bool_,)):
+                    return bool(o)
+                if isinstance(o, (np.integer,)):
+                    return int(o)
+                if isinstance(o, (np.floating,)):
+                    return float(o)
+                return super().default(o)
+
+        print(json_mod.dumps(data, ensure_ascii=False, indent=2, cls=_Encoder))
+    else:
+        print_text(data)

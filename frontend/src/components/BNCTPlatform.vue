@@ -952,6 +952,181 @@
           </div>
         </div>
       </div>
+      <!-- Tab: BEIR VII 验证 -->
+      <div v-show="activeTab === 'beir7-validate'" class="tab-content">
+        <div class="bv-workspace">
+          <div class="bv-header">
+            <h2>🔬 BEIR VII 风险模型参数验证</h2>
+            <p class="bv-desc">
+              对照 <strong>BEIR VII Phase 2 (2006)</strong> 报告，逐项验证
+              <code>beir7_risk_engine.py</code> 中的公式、参数与模型权重。
+            </p>
+            <button @click="runBeir7Validation" :disabled="bvLoading" class="btn btn-primary bv-run-btn">
+              <span v-if="bvLoading" class="spinner-sm"></span>
+              {{ bvLoading ? '验证中...' : '▶ 运行验证' }}
+            </button>
+          </div>
+
+          <div v-if="bvResult" class="bv-results">
+
+            <!-- 汇总状态卡片 -->
+            <div class="bv-summary-cards">
+              <div class="bv-card" :class="bvResult.summary.err_formula_ok ? 'card-pass' : 'card-fail'">
+                <div class="bv-card-icon">{{ bvResult.summary.err_formula_ok ? '✓' : '✗' }}</div>
+                <div class="bv-card-label">ERR 公式</div>
+                <div class="bv-card-sub">{{ bvResult.summary.err_formula_ok ? '全部通过' : '存在错误' }}</div>
+              </div>
+              <div class="bv-card" :class="bvResult.summary.ear_formula_ok ? 'card-pass' : 'card-fail'">
+                <div class="bv-card-icon">{{ bvResult.summary.ear_formula_ok ? '✓' : '✗' }}</div>
+                <div class="bv-card-label">EAR 公式</div>
+                <div class="bv-card-sub">{{ bvResult.summary.ear_formula_ok ? '全部通过' : '存在错误' }}</div>
+              </div>
+              <div class="bv-card card-pass">
+                <div class="bv-card-icon">✓</div>
+                <div class="bv-card-label">已修复问题</div>
+                <div class="bv-card-sub">{{ bvResult.summary.fixes_applied }} 项</div>
+              </div>
+              <div class="bv-card card-info">
+                <div class="bv-card-icon">📖</div>
+                <div class="bv-card-label">数据来源</div>
+                <div class="bv-card-sub">BEIR VII Table 12-2D/E</div>
+              </div>
+            </div>
+
+            <!-- 问题说明 -->
+            <div class="bv-issues">
+              <h3>修复项目</h3>
+              <div v-for="issue in bvResult.issues" :key="issue.id"
+                   :class="['bv-issue', issue.severity === 'fixed' ? 'issue-fixed' : 'issue-info']">
+                <div class="issue-badge">{{ issue.severity === 'fixed' ? '✓ 已修复' : 'ℹ 说明' }}</div>
+                <div class="issue-body">
+                  <div class="issue-title">{{ issue.title }}</div>
+                  <div class="issue-desc">{{ issue.description }}</div>
+                  <div class="issue-impact"><strong>影响：</strong>{{ issue.impact }}</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ERR 基准点表 -->
+            <div class="bv-section">
+              <h3>1. ERR 公式基准点验证 &nbsp;<small>ERR(D=1 Gy, e=30) 应 = β（BEIR VII Table 12-2D）</small></h3>
+              <table class="bv-table">
+                <thead>
+                  <tr>
+                    <th>器官</th>
+                    <th>男 期望β</th><th>男 计算值</th><th>男</th>
+                    <th>女 期望β</th><th>女 计算值</th><th>女</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="r in bvResult.err_check" :key="r.organ">
+                    <td>{{ r.organ }}</td>
+                    <td>{{ r.male_expected }}</td>
+                    <td>{{ r.male_got.toFixed(4) }}</td>
+                    <td :class="r.male_pass ? 'cell-pass' : 'cell-fail'">{{ r.male_pass ? '✓' : '✗' }}</td>
+                    <td>{{ r.female_expected }}</td>
+                    <td>{{ r.female_got.toFixed(4) }}</td>
+                    <td :class="r.female_pass ? 'cell-pass' : 'cell-fail'">{{ r.female_pass ? '✓' : '✗' }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- EAR 基准点表 -->
+            <div class="bv-section">
+              <h3>2. EAR 公式基准点验证 &nbsp;<small>EAR(D=1 Gy, e=30, a=60) 应 = β（BEIR VII Table 12-2E）</small></h3>
+              <table class="bv-table">
+                <thead>
+                  <tr>
+                    <th>器官</th>
+                    <th>男 期望β</th><th>男 计算值</th><th>男</th>
+                    <th>女 期望β</th><th>女 计算值</th><th>女</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="r in bvResult.ear_check" :key="r.organ">
+                    <td>{{ r.organ }}</td>
+                    <td>{{ r.male_expected }}</td>
+                    <td>{{ r.male_got.toFixed(4) }}</td>
+                    <td :class="r.male_pass ? 'cell-pass' : 'cell-fail'">{{ r.male_pass ? '✓' : '✗' }}</td>
+                    <td>{{ r.female_expected }}</td>
+                    <td>{{ r.female_got.toFixed(4) }}</td>
+                    <td :class="r.female_pass ? 'cell-pass' : 'cell-fail'">{{ r.female_pass ? '✓' : '✗' }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- 年龄调整因子 -->
+            <div class="bv-section bv-section-half">
+              <h3>3. 年龄调整因子 &nbsp;<small>exp(γ·(e−30)/10)，肺癌 γ=−0.40</small></h3>
+              <table class="bv-table">
+                <thead><tr><th>暴露年龄</th><th>调整因子</th><th>说明</th></tr></thead>
+                <tbody>
+                  <tr v-for="r in bvResult.age_factor" :key="r.age"
+                      :class="r.age === 30 ? 'row-baseline' : ''">
+                    <td>{{ r.age }} 岁</td>
+                    <td>{{ r.factor }}</td>
+                    <td>{{ r.note }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- 权重表 -->
+            <div class="bv-section bv-section-half">
+              <h3>4. 器官专属 ERR/EAR 权重 &nbsp;<small>BEIR VII Chapter 12</small></h3>
+              <table class="bv-table">
+                <thead><tr><th>器官</th><th>ERR 权重</th><th>EAR 权重</th><th>说明</th></tr></thead>
+                <tbody>
+                  <tr v-for="r in bvResult.weight_table" :key="r.organ"
+                      :class="r.note !== '标准权重' ? 'row-special' : ''">
+                    <td>{{ r.organ }}</td>
+                    <td>{{ r.err_weight }}</td>
+                    <td>{{ r.ear_weight }}</td>
+                    <td>{{ r.note }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- LAR 修复前后对比 -->
+            <div class="bv-section">
+              <h3>5. LAR 修复前后对比 &nbsp;<small>30岁男性，D = 0.1 Sv</small></h3>
+              <table class="bv-table">
+                <thead>
+                  <tr>
+                    <th>器官</th>
+                    <th>修复前 0.5/0.5 (%)</th>
+                    <th>修复后 BEIR VII (%)</th>
+                    <th>差异</th>
+                    <th>权重</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="r in bvResult.lar_comparison" :key="r.organ">
+                    <td>{{ r.organ }}</td>
+                    <td>{{ r.lar_old_pct.toFixed(6) }}</td>
+                    <td>{{ r.lar_new_pct.toFixed(6) }}</td>
+                    <td :class="Math.abs(r.diff_pct) > 20 ? 'cell-warn' : Math.abs(r.diff_pct) > 5 ? 'cell-mod' : 'cell-pass'">
+                      {{ r.diff_pct > 0 ? '+' : '' }}{{ r.diff_pct }}%
+                    </td>
+                    <td>{{ r.weights_applied }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+          </div>
+
+          <div v-else-if="!bvLoading" class="bv-empty">
+            <p>🔬</p>
+            <p>点击「运行验证」，自动对照 BEIR VII 报告检验公式、参数与模型权重</p>
+          </div>
+          <div v-if="bvError" class="bv-error">错误：{{ bvError }}</div>
+        </div>
+      </div>
+
     </main>
 
     <!-- 消息提示 -->
@@ -990,7 +1165,8 @@ export default {
         { id: 'dose', name: '剂量分析', icon: '📊' },
         { id: 'dvh', name: 'DVH分析', icon: '📈' },
         { id: 'risk', name: '风险评估', icon: '🏥' },
-        { id: 'icrp-compare', name: 'ICRP对比', icon: '📋' }
+        { id: 'icrp-compare', name: 'ICRP对比', icon: '📋' },
+        { id: 'beir7-validate', name: 'BEIR VII验证', icon: '🔬' }
       ],
 
       // 影像数据
@@ -1032,6 +1208,11 @@ export default {
       icrcResult: null,
       icrcChartUrl: '',
       icrcError: '',
+
+      // BEIR VII 验证
+      bvLoading: false,
+      bvResult: null,
+      bvError: '',
 
       // 风险评估
       patientCtFile: null,
@@ -1770,6 +1951,24 @@ export default {
     },
 
     // ========== ICRP 标准体模对比 ==========
+
+    async runBeir7Validation() {
+      this.bvLoading = true;
+      this.bvResult = null;
+      this.bvError = '';
+      try {
+        const response = await axios.get(`${API_BASE}/api/beir7-validation`, { timeout: 60000 });
+        if (response.data.success) {
+          this.bvResult = response.data.data;
+        } else {
+          this.bvError = response.data.error || '验证失败';
+        }
+      } catch (err) {
+        this.bvError = err.response?.data?.error || err.message || '请求失败';
+      } finally {
+        this.bvLoading = false;
+      }
+    },
 
     async runIcrcComparison() {
       this.icrcLoading = true;
@@ -3676,5 +3875,77 @@ export default {
   padding: 1rem;
   border-radius: 8px;
   margin-top: 1rem;
+}
+
+/* ===== BEIR VII 验证页样式 ===== */
+.bv-workspace { padding: 1.5rem 2rem; max-width: 1200px; margin: 0 auto; }
+.bv-header { margin-bottom: 1.5rem; }
+.bv-header h2 { margin: 0 0 0.4rem; font-size: 1.4rem; }
+.bv-desc { color: #555; margin: 0 0 1rem; }
+.bv-run-btn { min-width: 140px; }
+
+.bv-summary-cards {
+  display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem;
+}
+.bv-card {
+  flex: 1 1 160px; border-radius: 10px; padding: 1rem 1.2rem;
+  text-align: center; border: 1px solid #e0e0e0;
+}
+.card-pass { background: #e8f5e9; border-color: #a5d6a7; }
+.card-fail { background: #ffebee; border-color: #ef9a9a; }
+.card-info { background: #e3f2fd; border-color: #90caf9; }
+.bv-card-icon { font-size: 1.8rem; margin-bottom: 0.3rem; }
+.bv-card-label { font-weight: 600; font-size: 0.95rem; }
+.bv-card-sub { font-size: 0.82rem; color: #666; margin-top: 0.2rem; }
+
+.bv-issues { margin-bottom: 1.5rem; }
+.bv-issues h3 { font-size: 1rem; margin-bottom: 0.6rem; }
+.bv-issue {
+  display: flex; gap: 1rem; align-items: flex-start;
+  padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 0.6rem;
+  border-left: 4px solid;
+}
+.issue-fixed { background: #f1f8e9; border-color: #7cb342; }
+.issue-info  { background: #e3f2fd; border-color: #1976d2; }
+.issue-badge {
+  font-size: 0.78rem; font-weight: 700; white-space: nowrap;
+  padding: 0.2rem 0.5rem; border-radius: 4px;
+  background: rgba(0,0,0,0.06);
+}
+.issue-title { font-weight: 600; margin-bottom: 0.2rem; }
+.issue-desc  { font-size: 0.88rem; color: #444; }
+.issue-impact { font-size: 0.85rem; color: #666; margin-top: 0.2rem; }
+
+.bv-results { display: flex; flex-direction: column; gap: 1.5rem; }
+.bv-section h3 { font-size: 1rem; margin-bottom: 0.6rem; }
+.bv-section h3 small { font-weight: normal; color: #888; font-size: 0.82rem; }
+.bv-section-half { max-width: 600px; }
+
+.bv-table {
+  width: 100%; border-collapse: collapse; font-size: 0.88rem;
+}
+.bv-table th {
+  background: #f5f5f5; padding: 0.5rem 0.7rem;
+  text-align: center; border: 1px solid #e0e0e0; white-space: nowrap;
+}
+.bv-table td {
+  padding: 0.4rem 0.7rem; text-align: center;
+  border: 1px solid #e8e8e8;
+}
+.bv-table tr:nth-child(even) td { background: #fafafa; }
+.row-baseline td { background: #fff8e1 !important; font-weight: 600; }
+.row-special td { background: #fce4ec !important; }
+.cell-pass { color: #2e7d32; font-weight: 700; }
+.cell-fail { color: #c62828; font-weight: 700; }
+.cell-warn { color: #c62828; font-weight: 700; }
+.cell-mod  { color: #f57c00; font-weight: 600; }
+
+.bv-empty {
+  text-align: center; padding: 4rem; color: #aaa; font-size: 1.1rem;
+}
+.bv-empty p:first-child { font-size: 3rem; margin-bottom: 0.5rem; }
+.bv-error {
+  background: #ffebee; color: #c62828;
+  padding: 1rem; border-radius: 8px; margin-top: 1rem;
 }
 </style>

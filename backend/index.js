@@ -1800,6 +1800,32 @@ app.post('/api/icrp-comparison', async (req, res) => {
 
 console.log('[ICRP对比] API端点已加载: POST /api/icrp-comparison');
 
+// ==================== BEIR VII 验证 ====================
+
+/**
+ * GET /api/beir7-validation
+ * 运行 validate_beir7.py --json，返回验证结果
+ */
+app.get('/api/beir7-validation', async (req, res) => {
+    try {
+        const pythonPath = process.platform === 'win32' ? 'python' : 'python3';
+        const script = path.join(__dirname, 'validate_beir7.py');
+        const { stdout, stderr } = await new Promise((resolve, reject) => {
+            const { exec } = require('child_process');
+            exec(`"${pythonPath}" "${script}" --json`, { timeout: 30000 }, (err, stdout, stderr) => {
+                if (err) reject(err);
+                else resolve({ stdout, stderr });
+            });
+        });
+        const data = JSON.parse(stdout);
+        res.json({ success: true, data });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+console.log('[BEIR VII验证] API端点已加载: GET /api/beir7-validation');
+
 // ==================== 器官轮廓叠加 ====================
 
 // multer: 接收上传的器官 mask (.nii / .nii.gz)

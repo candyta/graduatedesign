@@ -15,6 +15,7 @@ Author: BNCT Team
 Date: 2026-02-11
 """
 
+import sys
 import numpy as np
 from typing import Dict, Tuple, Optional
 import json
@@ -104,12 +105,32 @@ class BEIRVII_RiskEngine:
             'male': {'beta': 1.00, 'gamma': -0.50, 'eta': 4.0},
             'female': {'beta': 1.60, 'gamma': -0.50, 'eta': 4.0}
         },
-        'thyroid': {
-            'male': {'beta': 0.40, 'gamma': -1.50, 'eta': 0.0},
-            'female': {'beta': 2.00, 'gamma': -0.72, 'eta': 0.0}
-        }
     }
-    
+    # 注：BEIR VII 对甲状腺不提供 EAR 模型，仅使用 ERR 模型，故此处无 thyroid 条目。
+
+    # ERR/EAR 模型权重
+    # 来源：BEIR VII Chapter 12 推荐
+    #   大多数实体癌：ERR 0.7 + EAR 0.3
+    #   肺癌：        ERR 0.3 + EAR 0.7（颠倒，绝对风险转运证据更强）
+    #   乳腺癌：      仅 EAR（ERR 0.0 + EAR 1.0）
+    #   甲状腺癌：    仅 ERR（ERR 1.0 + EAR 0.0，无 EAR 参数）
+    LAR_WEIGHTS = {
+        # organ: (err_weight, ear_weight)
+        'stomach':   (0.7, 0.3),
+        'colon':     (0.7, 0.3),
+        'liver':     (0.7, 0.3),
+        'lung':      (0.3, 0.7),
+        'breast':    (0.0, 1.0),
+        'ovary':     (0.7, 0.3),
+        'bladder':   (0.7, 0.3),
+        'thyroid':   (1.0, 0.0),
+        'brain':     (0.7, 0.3),
+        'esophagus': (0.7, 0.3),
+        'pancreas':  (0.7, 0.3),
+        'kidney':    (0.7, 0.3),
+        'leukemia':  (0.7, 0.3),
+    }
+
     # 基线癌症发病率（中国数据，每10万人年）
     # 来源：中国肿瘤登记年报
     BASELINE_INCIDENCE = {
@@ -154,9 +175,9 @@ class BEIRVII_RiskEngine:
         if self.patient_gender not in ['male', 'female']:
             raise ValueError("Gender must be 'male' or 'female'")
         
-        print(f"初始化BEIR VII风险评估引擎")
-        print(f"患者年龄: {patient_age} 岁")
-        print(f"患者性别: {patient_gender}")
+        print(f"初始化BEIR VII风险评估引擎", file=sys.stderr)
+        print(f"患者年龄: {patient_age} 岁", file=sys.stderr)
+        print(f"患者性别: {patient_gender}", file=sys.stderr)
     
     def calculate_err(self,
                      organ: str,
@@ -429,13 +450,14 @@ class BEIRVII_RiskEngine:
                                dose_sv: float,
                                survival_function: Optional[callable] = None,
                                life_expectancy: int = 85,
-                               err_weight: float = 0.5) -> Dict:
+                               err_weight: float = None) -> Dict:
         """
         使用BEIR VII推荐的ERR和EAR加权组合计算LAR
 
         LAR_combined = w_ERR × LAR_ERR + w_EAR × LAR_EAR
 
-        BEIR VII 对大多数实体癌使用等权重（w=0.5）
+        权重按器官查 LAR_WEIGHTS，遵循 BEIR VII Chapter 12 推荐：
+          大多数实体癌 0.7/0.3，肺癌 0.3/0.7，乳腺癌 0.0/1.0，甲状腺 1.0/0.0
 
         Parameters:
         -----------
@@ -447,29 +469,36 @@ class BEIRVII_RiskEngine:
             生存函数
         life_expectancy : int
             预期寿命
-        err_weight : float
-            ERR模型权重（EAR权重 = 1 - err_weight）
+        err_weight : float, optional
+            手动指定 ERR 权重（None 时按 LAR_WEIGHTS 自动查表）
 
         Returns:
         --------
         dict
-            包含 lar_err, lar_ear, lar_combined 的字典
+            包含 lar_err, lar_ear, lar_combined, err_weight, ear_weight 的字典
         """
         lar_err = self.calculate_lar(organ, dose_sv, survival_function, life_expectancy)
         lar_ear = self.calculate_lar_ear(organ, dose_sv, survival_function, life_expectancy)
 
-        ear_weight = 1.0 - err_weight
-
-        # 如果EAR模型不可用（返回0），仅用ERR模型
-        if lar_ear > 0:
-            lar_combined = err_weight * lar_err + ear_weight * lar_ear
+        # 查器官专属权重（优先使用手动传入值）
+        if err_weight is None:
+            w_err, w_ear = self.LAR_WEIGHTS.get(organ, (0.7, 0.3))
         else:
+            w_err = err_weight
+            w_ear = 1.0 - err_weight
+
+        if lar_ear > 0:
+            lar_combined = w_err * lar_err + w_ear * lar_ear
+        else:
+            # EAR 无结果时退回 ERR
             lar_combined = lar_err
 
         return {
             'lar_err': lar_err,
             'lar_ear': lar_ear,
-            'lar_combined': lar_combined
+            'lar_combined': lar_combined,
+            'err_weight': w_err,
+            'ear_weight': w_ear,
         }
     
     def assess_all_organs(self,
@@ -529,7 +558,7 @@ class BEIRVII_RiskEngine:
                 # 平均剂量
                 avg_dose = site_dose / len(matched_organs)
 
-                # 使用ERR+EAR组合模型计算LAR（BEIR VII推荐）
+                # 使用ERR+EAR组合模型计算LAR（BEIR VII推荐权重，按器官自动查表）
                 lar_data = self.calculate_lar_combined(
                     cancer_site,
                     avg_dose,
