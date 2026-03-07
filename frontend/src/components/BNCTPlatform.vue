@@ -1005,14 +1005,12 @@
               <div class="bvf-tier bvf-tier1">
                 <div class="bvf-num">第一层</div>
                 <div class="bvf-title">基础参数验证（组件级）</div>
-                <div class="bvf-desc">逐项验证 ERR/EAR 公式、β 参数、年龄调整因子、器官权重，确保每个基础组件与 BEIR VII 原文完全一致</div>
                 <div class="bvf-items">① ERR公式 &nbsp;② EAR公式 &nbsp;③ 年龄因子 &nbsp;④ 器官权重</div>
               </div>
               <div class="bvf-arrow">→</div>
               <div class="bvf-tier bvf-tier2">
                 <div class="bvf-num">第二层</div>
                 <div class="bvf-title">综合案例验证（集成级）</div>
-                <div class="bvf-desc">在5个真实临床场景中运行完整计算流程，每个器官与标准解析值逐一对比，并与文献参考结果核验</div>
                 <div class="bvf-items">⑤ 5案例 × 逐器官公式对比 + 文献参考 + 趋势一致性验证</div>
               </div>
             </div>
@@ -1105,150 +1103,164 @@
               <h3>5. 综合案例验证 &nbsp;<small>5个文献来源案例，验证不同年龄/性别/剂量场景下的完整 LAR 计算流程</small></h3>
               <div class="bv-cases-grid">
                 <div v-for="c in bvResult.cases" :key="c.id" class="bv-case-card">
-                  <div class="bv-case-header">
-                    <span class="bv-case-num">案例 {{ c.id }}</span>
-                    <span class="bv-case-name">{{ c.name }}</span>
+                  <!-- 始终可见：案例摘要（可点击展开） -->
+                  <div class="bv-case-summary" @click="toggleCase(c.id)">
+                    <div class="bv-case-header">
+                      <span class="bv-case-num">案例 {{ c.id }}</span>
+                      <span class="bv-case-name">{{ c.name }}</span>
+                      <span :class="['spot-verdict', c.all_spots_pass ? 'sv-pass' : 'sv-fail']" style="margin-left:auto">
+                        {{ c.all_spots_pass ? '✓ 验证通过' : '✗ 存在偏差' }}
+                      </span>
+                    </div>
+                    <div class="bv-case-meta">
+                      <span class="bv-case-param">
+                        {{ c.params.gender === 'male' ? '男性' : '女性' }}
+                        &nbsp;·&nbsp;{{ c.params.age }}岁
+                        &nbsp;·&nbsp;{{ c.params.dose_sv }} Sv
+                      </span>
+                      <span class="bv-case-total">
+                        总LAR：<strong>{{ c.total_lar_pct.toFixed(4) }}%</strong>
+                      </span>
+                      <span class="bv-expand-hint">{{ expandedCases[c.id] ? '▲ 收起' : '▼ 展开详情' }}</span>
+                    </div>
                   </div>
-                  <div class="bv-case-meta">
-                    <span class="bv-case-param">
-                      {{ c.params.gender === 'male' ? '男性' : '女性' }}
-                      &nbsp;·&nbsp;{{ c.params.age }}岁
-                      &nbsp;·&nbsp;{{ c.params.dose_sv }} Sv
-                    </span>
-                    <span class="bv-case-total">
-                      总LAR：<strong>{{ c.total_lar_pct.toFixed(4) }}%</strong>
-                    </span>
-                  </div>
-                  <p class="bv-case-desc">{{ c.description }}</p>
-                  <div class="bv-case-ref">
-                    <span class="bv-ref-badge">文献</span>
-                    <span class="bv-ref-text">{{ c.reference }}</span>
-                  </div>
-                  <!-- 程序计算结果 -->
-                  <div class="case-table-label">
-                    <span class="ctlabel-prog">▶ 程序计算结果</span>
-                  </div>
-                  <table class="bv-table bv-case-table">
-                    <thead>
-                      <tr>
-                        <th>器官</th>
-                        <th>LAR_ERR (%)</th>
-                        <th>LAR_EAR (%)</th>
-                        <th>LAR综合 (%)</th>
-                        <th>权重</th>
-                        <th>风险级别</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr v-for="r in c.organ_results" :key="r.organ">
-                        <td>{{ r.organ }}</td>
-                        <td>{{ r.lar_pct !== null ? r.lar_err_pct.toFixed(5) : '-' }}</td>
-                        <td>{{ r.lar_pct !== null ? r.lar_ear_pct.toFixed(5) : '-' }}</td>
-                        <td><strong>{{ r.lar_pct !== null ? r.lar_pct.toFixed(5) : '-' }}</strong></td>
-                        <td>{{ r.weights || '-' }}</td>
-                        <td>
-                          <span v-if="r.risk_level" :class="['risk-badge', 'risk-' + r.risk_level]">
-                            {{ {'negligible':'可忽略','low':'低风险','moderate':'中等','high':'高风险'}[r.risk_level] || r.risk_level }}
-                          </span>
-                          <span v-else>-</span>
-                        </td>
-                      </tr>
-                    </tbody>
-                    <tfoot>
-                      <tr class="case-total-row">
-                        <td colspan="3" style="text-align:right;font-weight:600;">总计 LAR</td>
-                        <td><strong>{{ c.total_lar_pct.toFixed(5) }}%</strong></td>
-                        <td colspan="2"></td>
-                      </tr>
-                    </tfoot>
-                  </table>
 
-                  <!-- 公式解析验证（标准结果对比） -->
-                  <div class="case-table-label" style="margin-top:0.8rem">
-                    <span class="ctlabel-ref">▶ 公式解析验证（标准结果对比）</span>
-                    <span :class="['spot-verdict', c.all_spots_pass ? 'sv-pass' : 'sv-fail']">
-                      {{ c.all_spots_pass ? '✓ 全部通过' : '✗ 存在偏差' }}
-                      （{{ c.spot_check_count }} 项）
-                    </span>
-                  </div>
-                  <p class="spot-desc">
-                    对每个器官独立计算解析值
-                    <code>ERR = β · D<sub>eff</sub> · exp(γ · (e−30)/10)</code>，
-                    与程序输出逐一对比，误差 &lt; 1×10<sup>−9</sup> 即判定通过。
-                    <span v-if="c.spot_checks.some(s => s.ddref_applied)">
-                      本案例剂量 &lt; 0.1 Sv，DDREF=1.5 已作用于有效剂量（D<sub>eff</sub>=D/DDREF）。
-                    </span>
-                  </p>
-                  <table class="bv-table spot-table">
-                    <thead>
-                      <tr>
-                        <th>器官</th>
-                        <th>标准解析值（β·D<sub>eff</sub>·exp(γ·(e−30)/10)）</th>
-                        <th>程序输出值</th>
-                        <th>误差</th>
-                        <th>结果</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr v-for="s in c.spot_checks" :key="s.organ">
-                        <td>{{ s.organ }}<span v-if="s.ddref_applied" class="ddref-tag">DDREF</span></td>
-                        <td class="spot-formula">{{ s.formula }}</td>
-                        <td class="spot-val">{{ s.analytical.toFixed(8) }}</td>
-                        <td class="spot-val">{{ s.program.toFixed(8) }}</td>
-                        <td>
-                          <span :class="['spot-pass', s.pass ? 'sp-ok' : 'sp-fail']">
-                            {{ s.pass ? '✓' : '✗' }}
-                          </span>
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
+                  <!-- 展开后显示详情 -->
+                  <div v-if="expandedCases[c.id]" class="bv-case-detail">
+                    <p class="bv-case-desc">{{ c.description }}</p>
+                    <div class="bv-case-ref">
+                      <span class="bv-ref-badge">文献</span>
+                      <span class="bv-ref-text">{{ c.reference }}</span>
+                    </div>
 
-                  <!-- 文献参考对比 -->
-                  <template v-if="c.ref_comparison">
-                    <!-- Case 1：BEIR VII Table 12-3 对比 -->
-                    <div v-if="c.ref_comparison.type === 'beir7_table123'" class="ref-cmp-box ref-beir7">
-                      <div class="ref-cmp-title">
-                        📖 与 BEIR VII Table 12-3（美国人口基线）对比
-                      </div>
-                      <div class="ref-cmp-row">
-                        <div class="ref-cmp-col">
-                          <div class="ref-cmp-label">BEIR VII 美国人口估计</div>
-                          <div class="ref-cmp-value">
-                            ~{{ c.ref_comparison.total_lar_us_approx }}%
-                            <span class="ref-ci">（95% CI {{ c.ref_comparison.ci_low }}%–{{ c.ref_comparison.ci_high }}%）</span>
+                    <!-- 程序计算结果 -->
+                    <div class="case-table-label">
+                      <span class="ctlabel-prog">▶ 程序计算结果</span>
+                    </div>
+                    <table class="bv-table bv-case-table">
+                      <thead>
+                        <tr>
+                          <th>器官</th>
+                          <th>LAR_ERR (%)</th>
+                          <th>LAR_EAR (%)</th>
+                          <th>LAR综合 (%)</th>
+                          <th>权重</th>
+                          <th>风险级别</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="r in c.organ_results" :key="r.organ">
+                          <td>{{ r.organ }}</td>
+                          <td>{{ r.lar_pct !== null ? r.lar_err_pct.toFixed(5) : '-' }}</td>
+                          <td>{{ r.lar_pct !== null ? r.lar_ear_pct.toFixed(5) : '-' }}</td>
+                          <td><strong>{{ r.lar_pct !== null ? r.lar_pct.toFixed(5) : '-' }}</strong></td>
+                          <td>{{ r.weights || '-' }}</td>
+                          <td>
+                            <span v-if="r.risk_level" :class="['risk-badge', 'risk-' + r.risk_level]">
+                              {{ {'negligible':'可忽略','low':'低风险','moderate':'中等','high':'高风险'}[r.risk_level] || r.risk_level }}
+                            </span>
+                            <span v-else>-</span>
+                          </td>
+                        </tr>
+                      </tbody>
+                      <tfoot>
+                        <tr class="case-total-row">
+                          <td colspan="3" style="text-align:right;font-weight:600;">总计 LAR</td>
+                          <td><strong>{{ c.total_lar_pct.toFixed(5) }}%</strong></td>
+                          <td colspan="2"></td>
+                        </tr>
+                      </tfoot>
+                    </table>
+
+                    <!-- 公式解析验证（标准结果对比） -->
+                    <div class="case-table-label" style="margin-top:0.8rem">
+                      <span class="ctlabel-ref">▶ 公式解析验证（标准结果对比）</span>
+                      <span :class="['spot-verdict', c.all_spots_pass ? 'sv-pass' : 'sv-fail']">
+                        {{ c.all_spots_pass ? '✓ 全部通过' : '✗ 存在偏差' }}
+                        （{{ c.spot_check_count }} 项）
+                      </span>
+                    </div>
+                    <p class="spot-desc">
+                      对每个器官独立计算解析值
+                      <code>ERR = β · D<sub>eff</sub> · exp(γ · (e−30)/10)</code>，
+                      与程序输出逐一对比，误差 &lt; 1×10<sup>−9</sup> 即判定通过。
+                      <span v-if="c.spot_checks.some(s => s.ddref_applied)">
+                        本案例剂量 &lt; 0.1 Sv，DDREF=1.5 已作用于有效剂量（D<sub>eff</sub>=D/DDREF）。
+                      </span>
+                    </p>
+                    <table class="bv-table spot-table">
+                      <thead>
+                        <tr>
+                          <th>器官</th>
+                          <th>解析公式（β·D<sub>eff</sub>·exp(γ·(e−30)/10)）</th>
+                          <th>解析计算值</th>
+                          <th>程序输出值</th>
+                          <th>误差（|解析−程序|）</th>
+                          <th>结果</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="s in c.spot_checks" :key="s.organ">
+                          <td>{{ s.organ }}<span v-if="s.ddref_applied" class="ddref-tag">DDREF</span></td>
+                          <td class="spot-formula">{{ s.formula }}</td>
+                          <td class="spot-val">{{ s.analytical.toFixed(8) }}</td>
+                          <td class="spot-val">{{ s.program.toFixed(8) }}</td>
+                          <td class="spot-val spot-err">{{ Math.abs(s.analytical - s.program) < 1e-9 ? '&lt; 1×10⁻⁹' : Math.abs(s.analytical - s.program).toExponential(2) }}</td>
+                          <td>
+                            <span :class="['spot-pass', s.pass ? 'sp-ok' : 'sp-fail']">
+                              {{ s.pass ? '✓' : '✗' }}
+                            </span>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+
+                    <!-- 文献参考对比 -->
+                    <template v-if="c.ref_comparison">
+                      <!-- Case 1：BEIR VII Table 12-3 对比 -->
+                      <div v-if="c.ref_comparison.type === 'beir7_table123'" class="ref-cmp-box ref-beir7">
+                        <div class="ref-cmp-title">
+                          📖 与 BEIR VII Table 12-3（美国人口基线）对比
+                        </div>
+                        <div class="ref-cmp-row">
+                          <div class="ref-cmp-col">
+                            <div class="ref-cmp-label">BEIR VII 美国人口估计</div>
+                            <div class="ref-cmp-value">
+                              ~{{ c.ref_comparison.total_lar_us_approx }}%
+                              <span class="ref-ci">（95% CI {{ c.ref_comparison.ci_low }}%–{{ c.ref_comparison.ci_high }}%）</span>
+                            </div>
+                          </div>
+                          <div class="ref-cmp-arrow">→</div>
+                          <div class="ref-cmp-col">
+                            <div class="ref-cmp-label">本程序（中国人口基线）</div>
+                            <div class="ref-cmp-value ref-ours">{{ c.ref_comparison.our_total_pct }}%</div>
+                          </div>
+                          <div class="ref-cmp-col ref-verdict-col">
+                            <div class="ref-cmp-label">量级</div>
+                            <div class="ref-cmp-value ref-ours">同一数量级 ✓</div>
                           </div>
                         </div>
-                        <div class="ref-cmp-arrow">→</div>
-                        <div class="ref-cmp-col">
-                          <div class="ref-cmp-label">本程序（中国人口基线）</div>
-                          <div class="ref-cmp-value ref-ours">{{ c.ref_comparison.our_total_pct }}%</div>
-                        </div>
-                        <div class="ref-cmp-col ref-verdict-col">
-                          <div class="ref-cmp-label">量级</div>
-                          <div class="ref-cmp-value ref-ours">同一数量级 ✓</div>
+                        <div class="ref-cmp-note">{{ c.ref_comparison.note }}</div>
+                      </div>
+
+                      <!-- Cases 2-5：定量趋势预期 -->
+                      <div v-else-if="c.ref_comparison.type === 'trend_check'" class="ref-cmp-box ref-trend">
+                        <div class="ref-cmp-title">📐 模型参数定量趋势验证</div>
+                        <div class="ref-cmp-note">{{ c.ref_comparison.basis }}</div>
+                        <div class="ref-cmp-expected">
+                          <strong>预期结论：</strong>{{ c.ref_comparison.expected_lar_vs_case1 }}
+                          &nbsp;—&nbsp;
+                          <strong>实际总LAR：{{ c.total_lar_pct.toFixed(4) }}%</strong>
+                          <span :class="['trend-ok', c.all_spots_pass ? 'sv-pass' : 'sv-fail']">
+                            {{ c.all_spots_pass ? '✓ 符合预期' : '⚠ 请检查' }}
+                          </span>
                         </div>
                       </div>
-                      <div class="ref-cmp-note">{{ c.ref_comparison.note }}</div>
-                    </div>
+                    </template>
 
-                    <!-- Cases 2-5：定量趋势预期 -->
-                    <div v-else-if="c.ref_comparison.type === 'trend_check'" class="ref-cmp-box ref-trend">
-                      <div class="ref-cmp-title">📐 模型参数定量趋势验证</div>
-                      <div class="ref-cmp-note">{{ c.ref_comparison.basis }}</div>
-                      <div class="ref-cmp-expected">
-                        <strong>预期结论：</strong>{{ c.ref_comparison.expected_lar_vs_case1 }}
-                        &nbsp;—&nbsp;
-                        <strong>实际总LAR：{{ c.total_lar_pct.toFixed(4) }}%</strong>
-                        <span :class="['trend-ok', c.all_spots_pass ? 'sv-pass' : 'sv-fail']">
-                          {{ c.all_spots_pass ? '✓ 符合预期' : '⚠ 请检查' }}
-                        </span>
-                      </div>
-                    </div>
-                  </template>
-
-                  <p class="bv-case-context"><strong>临床意义：</strong>{{ c.clinical_context }}</p>
-                  <p class="bv-case-citation">{{ c.citation }}</p>
+                    <p class="bv-case-context"><strong>临床意义：</strong>{{ c.clinical_context }}</p>
+                    <p class="bv-case-citation">{{ c.citation }}</p>
+                  </div><!-- /bv-case-detail -->
                 </div>
               </div>
             </div>
@@ -1501,6 +1513,7 @@ export default {
       bvLoading: false,
       bvResult: null,
       bvError: '',
+      expandedCases: {},
 
       // 风险评估
       patientCtFile: null,
@@ -2254,6 +2267,7 @@ export default {
       this.bvLoading = true;
       this.bvResult = null;
       this.bvError = '';
+      this.expandedCases = {};
       try {
         const response = await axios.get(`${API_BASE}/api/beir7-validation`, { timeout: 60000 });
         if (response.data.success) {
@@ -2266,6 +2280,10 @@ export default {
       } finally {
         this.bvLoading = false;
       }
+    },
+
+    toggleCase(id) {
+      this.expandedCases = { ...this.expandedCases, [id]: !this.expandedCases[id] };
     },
 
     async runIcrcComparison() {
@@ -4289,8 +4307,22 @@ export default {
   background: #fff;
   border: 1px solid #e0e0e0;
   border-radius: 10px;
-  padding: 1rem 1.2rem;
+  overflow: hidden;
   box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
+.bv-case-summary {
+  padding: 0.85rem 1.2rem;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s;
+}
+.bv-case-summary:hover { background: #f5f5f5; }
+.bv-case-detail {
+  padding: 0 1.2rem 1rem;
+  border-top: 1px solid #f0f0f0;
+}
+.bv-expand-hint {
+  font-size: 0.78rem; color: #888; white-space: nowrap;
 }
 .bv-case-header {
   display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.4rem;
@@ -4436,6 +4468,7 @@ export default {
 .spot-table { font-size: 0.78rem; }
 .spot-formula { font-family: 'Courier New', monospace; font-size: 0.76rem; color: #333; }
 .spot-val    { font-family: 'Courier New', monospace; text-align: right; }
+.spot-err    { color: #2e7d32; font-size: 0.76rem; }
 .spot-pass   { font-weight: 700; font-size: 0.9rem; }
 .sp-ok   { color: #2e7d32; }
 .sp-fail { color: #c62828; }
