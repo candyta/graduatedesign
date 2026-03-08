@@ -2410,10 +2410,10 @@ export default {
 .platform-header {
   background: white;
   box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-  padding: 1rem 2rem;
+  padding: 0.75rem 2rem 0;
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start;
 }
 
 .logo-section {
@@ -2440,14 +2440,19 @@ export default {
 .nav-tabs {
   display: flex;
   gap: 0.35rem;
+  width: 100%;
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid #f0f0f0;
+  flex-wrap: wrap;
 }
 
 .nav-tab {
-  padding: 0.55rem 1rem;
+  padding: 0.55rem 1rem 0.75rem;
   border: none;
   background: #f5f5f5;
   cursor: pointer;
-  border-radius: 8px;
+  border-radius: 8px 8px 0 0;
   transition: all 0.3s;
   font-size: 0.88rem;
   font-weight: 500;
@@ -2467,7 +2472,7 @@ export default {
 
 /* ========== 主内容区 ========== */
 .main-content {
-  padding: 2rem;
+  padding: 1.2rem 2rem 2rem;
   max-width: 1800px;
   margin: 0 auto;
 }
@@ -2475,7 +2480,7 @@ export default {
 .tab-content {
   background: white;
   border-radius: 12px;
-  padding: 2rem;
+  padding: 1.5rem;
   box-shadow: 0 4px 20px rgba(0,0,0,0.1);
   animation: fadeIn 0.5s;
 }
@@ -2487,34 +2492,42 @@ export default {
 
 /* ========== 工作区布局 ========== */
 .workspace {
-  display: grid;
-  grid-template-columns: 240px 1fr;
-  gap: 1.5rem;
-  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1.2rem;
 }
 
-/* ========== 控制面板 ========== */
+/* ========== 控制面板 (顶部横向) ========== */
 .control-panel {
   background: #f9f9f9;
   border-radius: 8px;
-  padding: 1.5rem;
-  align-self: start;
+  padding: 1rem 1.5rem;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 0 2.5rem;
+  align-items: flex-start;
 }
 
 .panel-section {
-  margin-bottom: 2rem;
-  padding-bottom: 2rem;
-  border-bottom: 1px solid #e0e0e0;
+  flex: 1;
+  min-width: 200px;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0;
+  border-bottom: none;
+  padding-right: 2rem;
+  border-right: 1px solid #e0e0e0;
 }
 
 .panel-section:last-child {
-  border-bottom: none;
+  border-right: none;
+  padding-right: 0;
 }
 
 .panel-section h3 {
   color: #667eea;
-  margin-bottom: 1rem;
-  font-size: 1.1rem;
+  margin-bottom: 0.75rem;
+  font-size: 1rem;
 }
 
 .btn {
@@ -2748,7 +2761,7 @@ export default {
   position: relative;
   width: 100%;
   aspect-ratio: 1;
-  max-height: 220px;
+  max-height: 420px;
   background: #000;
   display: flex;
   align-items: center;
@@ -3867,7 +3880,7 @@ export default {
 /* ========== 响应式设计 ========== */
 @media (max-width: 1400px) {
   .workspace {
-    grid-template-columns: 240px 1fr;
+    flex-direction: column;
   }
 
   .viz-grid {
@@ -3880,7 +3893,26 @@ export default {
 }
 
 @media (max-width: 1024px) {
-  .workspace,
+  .workspace {
+    flex-direction: column;
+  }
+
+  .control-panel {
+    flex-direction: column;
+  }
+
+  .panel-section {
+    border-right: none;
+    padding-right: 0;
+    border-bottom: 1px solid #e0e0e0;
+    padding-bottom: 0.75rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .panel-section:last-child {
+    border-bottom: none;
+  }
+
   .mcnp-workspace,
   .dvh-workspace,
   .risk-workspace {
