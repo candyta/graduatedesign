@@ -70,12 +70,18 @@
                 @change="handleContourMaskUpload"
               />
 
-              <!-- 已加载的器官列表 -->
-              <div v-if="contourMasks.length > 0" class="contour-list">
-                <div v-for="(mask, idx) in contourMasks" :key="idx" class="contour-item">
-                  <span class="contour-color-dot" :style="{ background: mask.color }"></span>
-                  <span class="contour-organ-name" :title="mask.name">{{ mask.name }}</span>
-                  <button class="btn-icon-sm" @click="contourMasks.splice(idx,1)" title="移除">✕</button>
+              <!-- 已加载的器官列表（折叠） -->
+              <div v-if="contourMasks.length > 0" class="contour-summary">
+                <div class="contour-summary-header" @click="contourListExpanded = !contourListExpanded">
+                  <span>已加载 {{ contourMasks.length }} 个器官</span>
+                  <span class="auto-seg-toggle">{{ contourListExpanded ? '▲' : '▼' }}</span>
+                </div>
+                <div v-if="contourListExpanded" class="contour-list">
+                  <div v-for="(mask, idx) in contourMasks" :key="idx" class="contour-item">
+                    <span class="contour-color-dot" :style="{ background: mask.color }"></span>
+                    <span class="contour-organ-name" :title="mask.name">{{ mask.name }}</span>
+                    <button class="btn-icon-sm" @click="contourMasks.splice(idx,1)" title="移除">✕</button>
+                  </div>
                 </div>
               </div>
 
@@ -1564,6 +1570,7 @@ export default {
       autoSegmenting: false,
       autoSegResult: null,
       autoSegExpanded: false,
+      contourListExpanded: false,
       // 与 contour_overlay.py COLORS 顺序一致
       contourColors: ['#E6C832','#DC6464','#3C3CDC','#64C850','#C850C8','#32C8C8','#DC8232','#9650DC','#F05050','#50DCA0','#C8C850','#5096DC'],
 
@@ -2714,7 +2721,7 @@ export default {
   position: relative;
   width: 100%;
   aspect-ratio: 1;
-  max-height: 300px;
+  max-height: 220px;
   background: #000;
   display: flex;
   align-items: center;
@@ -3790,10 +3797,9 @@ export default {
 /* ========== 响应式设计 ========== */
 @media (max-width: 1400px) {
   .workspace {
-    grid-template-columns: 250px 1fr;
+    grid-template-columns: 240px 1fr;
   }
 
-  .viewer-grid,
   .viz-grid {
     grid-template-columns: repeat(2, 1fr);
   }
@@ -4026,7 +4032,30 @@ export default {
 }
 
 /* 器官轮廓 */
-.contour-list { margin: 6px 0; }
+.contour-summary {
+  background: #f0f4ff;
+  border-radius: 4px;
+  margin: 4px 0;
+  overflow: hidden;
+}
+
+.contour-summary-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 5px 8px;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: #667eea;
+  user-select: none;
+}
+
+.contour-summary-header:hover {
+  background: #e4eaff;
+}
+
+.contour-list { margin: 0; border-top: 1px solid #dde4ff; max-height: 180px; overflow-y: auto; }
 .contour-item {
   display: flex;
   align-items: center;
