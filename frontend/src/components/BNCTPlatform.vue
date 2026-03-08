@@ -40,36 +40,14 @@
               />
               
               <div v-if="uploadedFile" class="file-info">
-                <div class="info-item">
+                <div class="info-item info-item--col">
                   <span class="label">文件名:</span>
-                  <span class="value">{{ uploadedFile.name }}</span>
+                  <span class="value filename-value" :title="uploadedFile.name">{{ uploadedFile.name }}</span>
                 </div>
                 <div class="info-item">
                   <span class="label">大小:</span>
                   <span class="value">{{ formatFileSize(uploadedFile.size) }}</span>
-                </div>
-                <div class="info-item">
-                  <span class="label">状态:</span>
                   <span class="value status-success">✓ 已加载</span>
-                </div>
-              </div>
-            </div>
-
-            <div class="panel-section">
-              <h3>🎯 视图控制</h3>
-              <div class="view-controls">
-                <div v-for="view in ['axial', 'coronal', 'sagittal']" :key="view" class="control-item">
-                  <label>{{ viewNames[view] }}</label>
-                  <input 
-                    v-model.number="sliceIndices[view]"
-                    type="range"
-                    :min="0"
-                    :max="Math.max(0, (slices[view] && slices[view].length ? slices[view].length : 1) - 1)"
-                    class="slider"
-                  />
-                  <span class="slice-number">
-                    {{ sliceIndices[view] + 1 }} / {{ slices[view] && slices[view].length ? slices[view].length : 0 }}
-                  </span>
                 </div>
               </div>
             </div>
@@ -135,8 +113,17 @@
                   ⚠ {{ autoSegResult.error }}
                   <br><code>{{ autoSegResult.install_cmd }}</code>
                 </div>
-                <div v-if="autoSegResult && autoSegResult.success" class="contour-msg-ok" style="margin-top:6px;">
-                  ✓ 已识别 {{ autoSegResult.organs.length }} 个器官，轮廓已自动加载。
+                <div v-if="autoSegResult && autoSegResult.success" class="auto-seg-summary" style="margin-top:6px;">
+                  <div class="auto-seg-header" @click="autoSegExpanded = !autoSegExpanded">
+                    <span class="auto-seg-count">✓ 已识别 {{ autoSegResult.organs.length }} 个器官</span>
+                    <span class="auto-seg-toggle">{{ autoSegExpanded ? '▲' : '▼' }}</span>
+                  </div>
+                  <div v-if="autoSegExpanded" class="auto-seg-organ-list">
+                    <div v-for="(organ, oi) in autoSegResult.organs" :key="oi" class="auto-seg-organ-item">
+                      <span class="auto-seg-organ-dot" :style="{ background: contourColors[oi % contourColors.length] }"></span>
+                      <span>{{ organ }}</span>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -187,6 +174,15 @@
                 <div class="image-info">
                   <span>切片: {{ sliceIndices[view] + 1 }}/{{ slices[view] && slices[view].length ? slices[view].length : 0 }}</span>
                   <span v-if="imageMetadata[view]">{{ imageMetadata[view].spacing }} mm</span>
+                </div>
+                <div class="viewer-slice-control">
+                  <input
+                    v-model.number="sliceIndices[view]"
+                    type="range"
+                    :min="0"
+                    :max="Math.max(0, (slices[view] && slices[view].length ? slices[view].length : 1) - 1)"
+                    class="viewer-slider"
+                  />
                 </div>
               </div>
             </div>
@@ -1567,6 +1563,7 @@ export default {
       contourGenerating: false,
       autoSegmenting: false,
       autoSegResult: null,
+      autoSegExpanded: false,
       // 与 contour_overlay.py COLORS 顺序一致
       contourColors: ['#E6C832','#DC6464','#3C3CDC','#64C850','#C850C8','#32C8C8','#DC8232','#9650DC','#F05050','#50DCA0','#C8C850','#5096DC'],
 
@@ -2457,9 +2454,9 @@ export default {
 /* ========== 工作区布局 ========== */
 .workspace {
   display: grid;
-  grid-template-columns: 300px 1fr;
-  gap: 2rem;
-  min-height: 700px;
+  grid-template-columns: 240px 1fr;
+  gap: 1.5rem;
+  min-height: 0;
 }
 
 /* ========== 控制面板 ========== */
@@ -2545,17 +2542,34 @@ export default {
 }
 
 .file-info {
-  margin-top: 1rem;
-  padding: 1rem;
+  margin-top: 0.6rem;
+  padding: 0.7rem 0.8rem;
   background: white;
   border-radius: 6px;
-  font-size: 0.9rem;
+  font-size: 0.85rem;
 }
 
 .info-item {
   display: flex;
   justify-content: space-between;
-  margin-bottom: 0.5rem;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.4rem;
+}
+
+.info-item--col {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+}
+
+.filename-value {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #333;
+  font-size: 0.82rem;
 }
 
 .label {
@@ -2616,6 +2630,32 @@ export default {
   text-align: right;
 }
 
+/* ========== 切面滑块（嵌入切面框下方）========== */
+.viewer-slice-control {
+  padding: 4px 8px 6px;
+  background: #1a1a2e;
+}
+
+.viewer-slider {
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: #444;
+  outline: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+
+.viewer-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #667eea;
+  cursor: pointer;
+}
+
 /* ========== 影像查看器 ========== */
 .image-viewer {
   display: flex;
@@ -2626,7 +2666,7 @@ export default {
 .viewer-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 1.5rem;
+  gap: 0.8rem;
 }
 
 .viewer-panel {
@@ -2638,7 +2678,7 @@ export default {
 .panel-header {
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: white;
-  padding: 0.8rem 1rem;
+  padding: 0.5rem 0.8rem;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -2646,7 +2686,7 @@ export default {
 
 .panel-header h4 {
   margin: 0;
-  font-size: 1rem;
+  font-size: 0.9rem;
 }
 
 .panel-actions {
@@ -2674,10 +2714,12 @@ export default {
   position: relative;
   width: 100%;
   aspect-ratio: 1;
+  max-height: 300px;
   background: #000;
   display: flex;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
 }
 
 .medical-image {
@@ -4029,6 +4071,61 @@ export default {
 .contour-msg-ok {
   font-size: 0.78rem; color: #2E7D32;
   background: #e8f5e9; border-radius: 4px; padding: 4px 6px;
+}
+
+/* 自动勾画折叠面板 */
+.auto-seg-summary {
+  background: #e8f5e9;
+  border-radius: 4px;
+  overflow: hidden;
+  font-size: 0.78rem;
+}
+
+.auto-seg-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 5px 8px;
+  cursor: pointer;
+  color: #2E7D32;
+  font-weight: 500;
+  user-select: none;
+}
+
+.auto-seg-header:hover {
+  background: #d4edda;
+}
+
+.auto-seg-toggle {
+  font-size: 0.7rem;
+  color: #4CAF50;
+}
+
+.auto-seg-organ-list {
+  border-top: 1px solid #c8e6c9;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.auto-seg-organ-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  color: #333;
+  font-size: 0.76rem;
+}
+
+.auto-seg-organ-item:hover {
+  background: #f1f8e9;
+}
+
+.auto-seg-organ-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 
 .legend-good { color: #4CAF50; }
