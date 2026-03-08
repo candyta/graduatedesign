@@ -2,12 +2,21 @@ const express = require('express');
 const multer = require('multer');
 const fs = require('fs-extra');
 const path = require('path');
-const { exec } = require('child_process');
+const { exec, spawn } = require('child_process');
 const util = require('util');
 const cors = require('cors');
 const compressing = require('compressing');
 const execAsync = util.promisify(exec);
 const app = express();
+
+// MCNP 实时进度状态
+const mcnpState = {
+  running: false,
+  progress: 0,
+  logs: [],
+  total: 0,
+  completed: 0
+};
 const { processDoseDataFile } = require('./mcnp2png');
 const zlib = require('zlib');
 
@@ -660,6 +669,18 @@ app.post('/generate-mcnp-input', async (req, res) => {
 
 
 
+// 返回当前 MCNP 计算进度和日志（供前端轮询）
+app.get('/mcnp-progress', (req, res) => {
+    const newLogs = mcnpState.logs.splice(0); // 取走所有新日志后清空缓冲
+    res.json({
+        running: mcnpState.running,
+        progress: mcnpState.progress,
+        logs: newLogs,
+        completed: mcnpState.completed,
+        total: mcnpState.total
+    });
+});
+
 app.post('/run-mcnp-computation', async (req, res) => {
     try {
         const inputDir = DIRS.INPUT;
@@ -696,33 +717,65 @@ app.post('/run-mcnp-computation', async (req, res) => {
 
         console.log(`Sorted input files: ${sortedInputFiles}`);
 
+        // 初始化进度状态
+        mcnpState.running = true;
+        mcnpState.progress = 0;
+        mcnpState.logs = [];
+        mcnpState.total = sortedInputFiles.length;
+        mcnpState.completed = 0;
+
+        // 辅助函数：用 spawn 执行单个文件，实时收集日志
+        const runWithSpawn = (fullFilePath, fileName) => new Promise((resolve, reject) => {
+            const proc = spawn(PYTHON_PATH, ['run_batch.py', fullFilePath], {
+                cwd: __dirname
+            });
+            let stdoutBuf = Buffer.alloc(0);
+            let stderrBuf = Buffer.alloc(0);
+
+            proc.stdout.on('data', (chunk) => {
+                stdoutBuf = Buffer.concat([stdoutBuf, chunk]);
+                const lines = chunk.toString('utf8').replace(/\uFFFD/g, '?').split(/\r?\n/);
+                lines.forEach(line => {
+                    if (line.trim()) {
+                        mcnpState.logs.push(`[${fileName}] ${line}`);
+                        console.log(`[MCNP stdout] ${line}`);
+                    }
+                });
+            });
+            proc.stderr.on('data', (chunk) => {
+                stderrBuf = Buffer.concat([stderrBuf, chunk]);
+                const lines = chunk.toString('utf8').replace(/\uFFFD/g, '?').split(/\r?\n/);
+                lines.forEach(line => {
+                    if (line.trim()) {
+                        mcnpState.logs.push(`[${fileName}] WARN: ${line}`);
+                    }
+                });
+            });
+            proc.on('close', (code) => {
+                const stdoutStr = stdoutBuf.toString('utf8').replace(/\uFFFD/g, '?');
+                const stderrStr = stderrBuf.toString('utf8').replace(/\uFFFD/g, '?');
+                resolve({ file: fileName, stdout: stdoutStr, stderr: stderrStr, code });
+            });
+            proc.on('error', reject);
+        });
+
         // 执行 MCNP 计算
         const results = [];
         for (const filePath of sortedInputFiles) {
             const fullFilePath = path.join(inputDir, filePath);
             console.log(`Running MCNP calculation for file: ${fullFilePath}`);
+            mcnpState.logs.push(`开始处理: ${filePath}`);
 
-            const command = `"${PYTHON_PATH}" "run_batch.py" "${fullFilePath}"`;
-            console.log(`Executing command: ${command}`);
+            const result = await runWithSpawn(fullFilePath, filePath);
+            results.push(result);
 
-            // 使用encoding: 'buffer'避免GBK解码错误，然后手动转换
-            const { stdout, stderr } = await execAsync(command, {
-                encoding: 'buffer',
-                maxBuffer: 10 * 1024 * 1024,
-                cwd: __dirname  // ← 添加工作目录，确保run_batch.py在正确的目录运行
-            });
-            
-            // 手动转换为字符串，忽略无法解码的字符
-            const stdoutStr = stdout.toString('utf8', 0, stdout.length).replace(/\uFFFD/g, '?');
-            const stderrStr = stderr.toString('utf8', 0, stderr.length).replace(/\uFFFD/g, '?');
-
-            // Log the results of the computation
-            console.log(`stdout for ${filePath}: ${stdoutStr}`);
-            console.log(`stderr for ${filePath}: ${stderrStr}`);
-
-            // 保存计算结果
-            results.push({ file: filePath, stdout: stdoutStr, stderr: stderrStr });
+            mcnpState.completed += 1;
+            mcnpState.progress = Math.round((mcnpState.completed / mcnpState.total) * 95);
+            mcnpState.logs.push(`完成: ${filePath} (退出码: ${result.code})`);
         }
+
+        mcnpState.progress = 100;
+        mcnpState.running = false;
 
         // 将输出文件保存到 OUTPUT 目录
         await fs.ensureDir(outputDir);
@@ -767,6 +820,8 @@ app.post('/run-mcnp-computation', async (req, res) => {
 
     } catch (err) {
         console.error('Error during MCNP computation:', err.message);
+        mcnpState.running = false;
+        mcnpState.logs.push(`计算出错: ${err.message}`);
         res.status(500).json({
             success: false,
             message: 'MCNP计算失败',

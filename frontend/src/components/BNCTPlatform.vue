@@ -318,7 +318,6 @@
             multiple 
             style="display: none"
           />
-          <p class="hint">或拖拽文件到此处</p>
           <div v-if="doseFiles.length > 0" class="file-list">
             <div v-for="(file, index) in doseFiles" :key="index" class="file-item">
               <span>{{ file.name }}</span>
@@ -328,68 +327,57 @@
         </div>
       </div>
 
-      <!-- 剂量切片控制 -->
-      <div v-if="hasDoseData" class="panel-section">
-        <h3>🎯 剂量切片控制</h3>
-        <div class="view-controls">
-          <div v-for="view in ['axial', 'coronal', 'sagittal']" :key="view" class="control-item">
-            <label>{{ viewNames[view] }}</label>
-            <input 
-              v-model.number="doseSliceIndices[view]"
-              type="range"
-              :min="0"
-              :max="Math.max(0, (slices['dose' + capitalize(view)] && slices['dose' + capitalize(view)].length ? slices['dose' + capitalize(view)].length : 1) - 1)"
-              class="slider"
-            />
-            <span class="slice-number">
-              {{ doseSliceIndices[view] + 1 }} / {{ slices['dose' + capitalize(view)] && slices['dose' + capitalize(view)].length ? slices['dose' + capitalize(view)].length : 0 }}
-            </span>
-          </div>
-        </div>
-      </div>
 
-      <!-- 器官轮廓显示 -->
+      <!-- 器官轮廓显示（折叠） -->
       <div v-if="hasDoseData" class="panel-section">
-        <h3>🫀 器官轮廓</h3>
-        <div class="dose-organ-list">
-          <div
-            v-for="organ in doseOrganList"
-            :key="organ.keyword"
-            class="dose-organ-item"
-            @click="organ.visible = !organ.visible; doseOrgansDirty = true"
-          >
-            <input
-              type="checkbox"
-              :checked="organ.visible"
-              @change.stop="organ.visible = $event.target.checked; doseOrgansDirty = true"
-              @click.stop
-              class="organ-checkbox"
-            />
-            <span class="contour-color-dot" :style="{ background: organ.color, opacity: organ.visible ? 1 : 0.35 }"></span>
-            <span class="contour-organ-name" :style="{ color: organ.visible ? '#333' : '#aaa' }">{{ organ.name }}</span>
+        <div class="organ-collapse-header" @click="doseOrganExpanded = !doseOrganExpanded">
+          <h3 style="margin:0;">🫀 器官轮廓</h3>
+          <span class="collapse-arrow">{{ doseOrganExpanded ? '▲' : '▼' }}</span>
+        </div>
+        <div v-if="!doseOrganExpanded" class="organ-collapse-summary">
+          已加载 {{ doseOrganList.filter(o => o.visible).length }}/{{ doseOrganList.length }} 个器官可见
+        </div>
+        <div v-if="doseOrganExpanded">
+          <div class="dose-organ-list">
+            <div
+              v-for="organ in doseOrganList"
+              :key="organ.keyword"
+              class="dose-organ-item"
+              @click="organ.visible = !organ.visible; doseOrgansDirty = true"
+            >
+              <input
+                type="checkbox"
+                :checked="organ.visible"
+                @change.stop="organ.visible = $event.target.checked; doseOrgansDirty = true"
+                @click.stop
+                class="organ-checkbox"
+              />
+              <span class="contour-color-dot" :style="{ background: organ.color, opacity: organ.visible ? 1 : 0.35 }"></span>
+              <span class="contour-organ-name" :style="{ color: organ.visible ? '#333' : '#aaa' }">{{ organ.name }}</span>
+            </div>
           </div>
-        </div>
-        <div style="display:flex;gap:6px;margin-top:8px;">
+          <div style="display:flex;gap:6px;margin-top:8px;">
+            <button
+              @click="doseOrganList.forEach(o => o.visible = true); doseOrgansDirty = true"
+              class="btn btn-secondary"
+              style="flex:1;font-size:0.78rem;padding:4px 0;"
+            >全选</button>
+            <button
+              @click="doseOrganList.forEach(o => o.visible = false); doseOrgansDirty = true"
+              class="btn btn-secondary"
+              style="flex:1;font-size:0.78rem;padding:4px 0;"
+            >全消</button>
+          </div>
           <button
-            @click="doseOrganList.forEach(o => o.visible = true); doseOrgansDirty = true"
-            class="btn btn-secondary"
-            style="flex:1;font-size:0.78rem;padding:4px 0;"
-          >全选</button>
-          <button
-            @click="doseOrganList.forEach(o => o.visible = false); doseOrgansDirty = true"
-            class="btn btn-secondary"
-            style="flex:1;font-size:0.78rem;padding:4px 0;"
-          >全消</button>
+            v-if="doseOrgansDirty"
+            @click="reapplyDoseOrgans"
+            :disabled="doseOrganApplying"
+            class="btn btn-primary"
+            style="width:100%;margin-top:8px;"
+          >
+            {{ doseOrganApplying ? '⏳ 重新生成中...' : '✅ 应用轮廓设置' }}
+          </button>
         </div>
-        <button
-          v-if="doseOrgansDirty"
-          @click="reapplyDoseOrgans"
-          :disabled="doseOrganApplying"
-          class="btn btn-primary"
-          style="width:100%;margin-top:8px;"
-        >
-          {{ doseOrganApplying ? '⏳ 重新生成中...' : '✅ 应用轮廓设置' }}
-        </button>
       </div>
 
       <!-- 剂量统计信息 -->
@@ -444,6 +432,14 @@
             <button @click="previousDoseSlice('axial')" :disabled="doseSliceIndices.axial === 0" class="nav-btn">◀ 上一张</button>
             <button @click="nextDoseSlice('axial')" :disabled="doseSliceIndices.axial >= slices.doseAxial.length - 1" class="nav-btn">下一张 ▶</button>
           </div>
+          <div v-if="slices.doseAxial && slices.doseAxial.length > 0" class="dose-panel-slider">
+            <input
+              v-model.number="doseSliceIndices.axial"
+              type="range" min="0"
+              :max="slices.doseAxial.length - 1"
+              class="viewer-slider"
+            />
+          </div>
         </div>
 
         <!-- 冠状：竖长方形，较大 -->
@@ -473,6 +469,14 @@
             <button @click="previousDoseSlice('coronal')" :disabled="doseSliceIndices.coronal === 0" class="nav-btn">◀ 上一张</button>
             <button @click="nextDoseSlice('coronal')" :disabled="doseSliceIndices.coronal >= slices.doseCoronal.length - 1" class="nav-btn">下一张 ▶</button>
           </div>
+          <div v-if="slices.doseCoronal && slices.doseCoronal.length > 0" class="dose-panel-slider">
+            <input
+              v-model.number="doseSliceIndices.coronal"
+              type="range" min="0"
+              :max="slices.doseCoronal.length - 1"
+              class="viewer-slider"
+            />
+          </div>
         </div>
 
         <!-- 矢状：竖长方形，较大 -->
@@ -501,6 +505,14 @@
           <div v-if="slices.doseSagittal && slices.doseSagittal.length > 0" class="slice-nav-buttons">
             <button @click="previousDoseSlice('sagittal')" :disabled="doseSliceIndices.sagittal === 0" class="nav-btn">◀ 上一张</button>
             <button @click="nextDoseSlice('sagittal')" :disabled="doseSliceIndices.sagittal >= slices.doseSagittal.length - 1" class="nav-btn">下一张 ▶</button>
+          </div>
+          <div v-if="slices.doseSagittal && slices.doseSagittal.length > 0" class="dose-panel-slider">
+            <input
+              v-model.number="doseSliceIndices.sagittal"
+              type="range" min="0"
+              :max="slices.doseSagittal.length - 1"
+              class="viewer-slider"
+            />
           </div>
         </div>
       </div>
@@ -760,19 +772,6 @@
             </div>
           </div>
 
-          <!-- 可视化 -->
-          <div class="risk-visualization">
-            <h4>风险分布可视化</h4>
-            <div class="viz-container">
-              <div v-if="riskVisualization" class="risk-3d-view">
-                <img :src="riskVisualization" alt="风险分布" />
-              </div>
-              <div v-else class="placeholder-large">
-                <p>🎯</p>
-                <p>风险分布可视化将在此显示</p>
-              </div>
-            </div>
-          </div>
         </div>
       </div>
 
@@ -1655,6 +1654,7 @@ export default {
       ],
       doseOrgansDirty: false,
       doseOrganApplying: false,
+      doseOrganExpanded: false,
 
       // 体模构建参数
       phantomBuilt: false,
@@ -1928,12 +1928,19 @@ export default {
       this.mcnpSteps[1].status = 'active';
       this.loadingMessage = 'MCNP计算中,请耐心等待...';
       this.addLog('开始MCNP蒙特卡洛模拟...');
+      this.progress = 0;
 
-      // 模拟进度更新
-      const progressInterval = setInterval(() => {
-        if (this.progress < 90) {
-          this.progress += Math.random() * 5;
-        }
+      // 轮询后端实时进度
+      const progressInterval = setInterval(async () => {
+        try {
+          const { data } = await axios.get(`${API_BASE}/mcnp-progress`);
+          if (data.progress > this.progress) {
+            this.progress = data.progress;
+          }
+          if (data.logs && data.logs.length) {
+            data.logs.forEach(line => this.addLog(line, 'info'));
+          }
+        } catch (_) { /* 忽略轮询错误 */ }
       }, 1000);
 
       try {
@@ -2448,7 +2455,9 @@ export default {
 }
 
 .nav-tab {
-  padding: 0.55rem 1rem 0.75rem;
+  flex: 1;
+  text-align: center;
+  padding: 0.55rem 0.5rem 0.75rem;
   border: none;
   background: #f5f5f5;
   cursor: pointer;
@@ -2977,55 +2986,67 @@ export default {
 
 /* ========== 日志面板 ========== */
 .log-panel {
-  background: #f9f9f9;
+  background: #1e2530;
   border-radius: 8px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
   max-height: 600px;
+  border: 1px solid #2d3748;
 }
 
 .log-header {
-  background: #333;
-  color: white;
-  padding: 1rem;
+  background: #2d3748;
+  color: #e2e8f0;
+  padding: 0.6rem 1rem;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  border-bottom: 1px solid #4a5568;
 }
 
 .log-header h4 {
   margin: 0;
+  font-size: 0.9rem;
+  letter-spacing: 0.03em;
 }
 
 .log-content {
   flex: 1;
   overflow-y: auto;
-  padding: 1rem;
-  font-family: 'Courier New', monospace;
-  font-size: 0.85rem;
-  background: #2c3e50;
-  color: #ecf0f1;
+  padding: 0.5rem;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  background: #1e2530;
+  color: #a0aec0;
 }
 
 .log-entry {
-  padding: 0.5rem;
-  margin-bottom: 0.3rem;
-  border-left: 3px solid #3498db;
-  background: rgba(255,255,255,0.05);
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.2rem 0.4rem;
+  border-left: 2px solid #4299e1;
+  margin-bottom: 0.15rem;
+  background: rgba(255,255,255,0.02);
+  border-radius: 0 3px 3px 0;
 }
 
 .log-entry.success {
-  border-color: #2ecc71;
+  border-color: #48bb78;
+  color: #9ae6b4;
 }
 
 .log-entry.error {
-  border-color: #e74c3c;
+  border-color: #fc8181;
+  color: #fed7d7;
 }
 
 .log-time {
-  color: #95a5a6;
-  margin-right: 0.5rem;
+  color: #4a5568;
+  flex-shrink: 0;
+  font-size: 0.72rem;
+  padding-top: 0.05rem;
 }
 
 .log-empty {
@@ -3056,6 +3077,11 @@ export default {
   display: flex;
   flex-direction: column;
   gap: 20px;
+}
+
+/* 剂量面板下方滑块 */
+.dose-panel-slider {
+  padding: 4px 8px 6px;
 }
 
 /* 剂量切片导航按钮 */
@@ -3410,9 +3436,9 @@ export default {
 
 /* ========== 风险评估 ========== */
 .risk-workspace {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
 }
 
 .risk-assessment-panel {
@@ -3717,28 +3743,6 @@ export default {
   border-top: 2px solid #667eea;
 }
 
-.risk-visualization h4 {
-  color: #667eea;
-  margin-bottom: 1rem;
-}
-
-.viz-container {
-  background: #f9f9f9;
-  border-radius: 8px;
-  padding: 2rem;
-}
-
-.risk-3d-view {
-  background: #000;
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.risk-3d-view img {
-  width: 100%;
-  display: block;
-}
-
 /* ========== 消息提示 ========== */
 .message-toast {
   position: fixed;
@@ -3914,8 +3918,7 @@ export default {
   }
 
   .mcnp-workspace,
-  .dvh-workspace,
-  .risk-workspace {
+  .dvh-workspace {
     grid-template-columns: 1fr;
   }
 
@@ -4105,6 +4108,31 @@ export default {
   margin-bottom: 0.6rem;
   display: flex;
   gap: 1.5rem;
+}
+
+/* 器官轮廓折叠头 */
+.organ-collapse-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+  padding: 2px 0 6px;
+}
+
+.organ-collapse-header:hover {
+  opacity: 0.8;
+}
+
+.collapse-arrow {
+  color: #667eea;
+  font-size: 0.75rem;
+}
+
+.organ-collapse-summary {
+  font-size: 0.8rem;
+  color: #888;
+  margin-top: 4px;
 }
 
 /* 剂量页器官轮廓列表 */
