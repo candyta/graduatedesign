@@ -2471,7 +2471,7 @@ export default {
   background: #f9f9f9;
   border-radius: 8px;
   padding: 1.5rem;
-  height: fit-content;
+  align-self: stretch;
 }
 
 .panel-section {
