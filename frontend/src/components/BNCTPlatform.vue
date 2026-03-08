@@ -633,7 +633,7 @@
                   <span class="status-check">✓ 全身体模已构建完成（男性标准体模，照射部位自动识别）</span>
                 </div>
                 <div v-else class="phantom-status-warn">
-                  请先在「MCNP计算」标签页中完成全身体模构建，<br/>风险评估将直接基于已构建的体模和照射位置进行。
+                  请先在「MCNP计算」标签页中完成全身体模构建，风险评估将直接基于已构建的体模和照射位置进行。
                 </div>
               </div>
 
@@ -2463,7 +2463,7 @@ export default {
   cursor: pointer;
   border-radius: 8px 8px 0 0;
   transition: all 0.3s;
-  font-size: 0.88rem;
+  font-size: 1rem;
   font-weight: 500;
   white-space: nowrap;
 }
@@ -3003,12 +3003,14 @@ export default {
   justify-content: space-between;
   align-items: center;
   border-bottom: 1px solid #4a5568;
+  white-space: nowrap;
 }
 
 .log-header h4 {
   margin: 0;
   font-size: 0.9rem;
   letter-spacing: 0.03em;
+  white-space: nowrap;
 }
 
 .log-content {
