@@ -57,19 +57,6 @@
             <div class="panel-section">
               <h3>🫀 器官轮廓</h3>
 
-              <!-- 上传 mask 文件 -->
-              <button @click="$refs.contourInput.click()" class="btn btn-secondary" style="width:100%;margin-bottom:6px;">
-                <span class="icon">📂</span> 上传器官 Mask (.nii/.nii.gz)
-              </button>
-              <input
-                ref="contourInput"
-                type="file"
-                multiple
-                accept=".nii,.nii.gz"
-                style="display:none"
-                @change="handleContourMaskUpload"
-              />
-
               <!-- 已加载的器官列表（折叠） -->
               <div v-if="contourMasks.length > 0" class="contour-summary">
                 <div class="contour-summary-header" @click="contourListExpanded = !contourListExpanded">
@@ -194,6 +181,55 @@
             </div>
 
           </section>
+        </div>
+
+        <!-- 全屏遮罩 -->
+        <div v-if="fullscreenView" class="fullscreen-overlay" @click.self="fullscreenView = null">
+          <div class="fullscreen-panel">
+            <div class="panel-header">
+              <h4>{{ viewNames[fullscreenView] }}切面</h4>
+              <div class="panel-actions">
+                <button @click="fullscreenView = null" class="btn-icon" title="退出全屏">✕</button>
+              </div>
+            </div>
+            <div class="fullscreen-image-container">
+              <img
+                v-if="showContourOverlay && overlaySlices[fullscreenView] && overlaySlices[fullscreenView][sliceIndices[fullscreenView]]"
+                :src="getImageUrl(overlaySlices[fullscreenView][sliceIndices[fullscreenView]])"
+                :alt="`${viewNames[fullscreenView]}轮廓叠加`"
+                class="fullscreen-image"
+                @error="handleImageError"
+              />
+              <img
+                v-else-if="slices[fullscreenView] && slices[fullscreenView][sliceIndices[fullscreenView]]"
+                :src="getImageUrl(slices[fullscreenView][sliceIndices[fullscreenView]])"
+                :alt="`${viewNames[fullscreenView]}切片`"
+                class="fullscreen-image"
+                @error="handleImageError"
+              />
+              <div v-if="!slices[fullscreenView] || slices[fullscreenView].length === 0" class="placeholder">
+                <p>📷</p>
+                <p>等待加载影像数据...</p>
+              </div>
+              <div v-if="showCrosshair" class="crosshair">
+                <div class="crosshair-h"></div>
+                <div class="crosshair-v"></div>
+              </div>
+            </div>
+            <div class="image-info">
+              <span>切片: {{ sliceIndices[fullscreenView] + 1 }}/{{ slices[fullscreenView] && slices[fullscreenView].length ? slices[fullscreenView].length : 0 }}</span>
+              <span v-if="imageMetadata[fullscreenView]">{{ imageMetadata[fullscreenView].spacing }} mm</span>
+            </div>
+            <div class="viewer-slice-control" style="padding: 0 1rem 1rem;">
+              <input
+                v-model.number="sliceIndices[fullscreenView]"
+                type="range"
+                :min="0"
+                :max="Math.max(0, (slices[fullscreenView] && slices[fullscreenView].length ? slices[fullscreenView].length : 1) - 1)"
+                class="viewer-slider"
+              />
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1472,6 +1508,9 @@ export default {
         { id: 'beir7-validate', name: 'BEIR VII验证', icon: '🔬' }
       ],
 
+      // 全屏
+      fullscreenView: null,
+
       // 影像数据
       slices: {
         axial: [],
@@ -1642,6 +1681,13 @@ export default {
   },
 
   async mounted() {
+    // 全屏 Escape 键退出
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && this.fullscreenView) {
+        this.fullscreenView = null;
+      }
+    });
+
     // 绑定MCNP步骤的action
     this.mcnpSteps[0].action = this.buildWholeBodyPhantom;
     this.mcnpSteps[1].action = this.runMcnpCalculation;
@@ -1755,30 +1801,11 @@ export default {
       link.click();
     },
 
-    toggleFullscreen(_view) {
-      this.showMessage('全屏功能开发中...', 'info');
+    toggleFullscreen(view) {
+      this.fullscreenView = this.fullscreenView === view ? null : view;
     },
 
     // ========== 器官轮廓 ==========
-    handleContourMaskUpload(e) {
-      const files = Array.from(e.target.files);
-      const existing = new Set(this.contourMasks.map(m => m.name));
-      files.forEach(file => {
-        const name = file.name.replace(/\.nii(\.gz)?$/, '');
-        if (!existing.has(name)) {
-          const idx = this.contourMasks.length;
-          this.contourMasks.push({
-            name,
-            file,
-            color: this.contourColors[idx % this.contourColors.length],
-            visible: true
-          });
-          existing.add(name);
-        }
-      });
-      e.target.value = '';
-    },
-
     async generateContourOverlay() {
       if (!this.niiPath || this.contourMasks.length === 0) return;
       this.contourGenerating = true;
@@ -2471,7 +2498,7 @@ export default {
   background: #f9f9f9;
   border-radius: 8px;
   padding: 1.5rem;
-  align-self: stretch;
+  align-self: start;
 }
 
 .panel-section {
@@ -3762,6 +3789,49 @@ export default {
 .fade-leave-to {
   opacity: 0;
   transform: translateX(100px);
+}
+
+/* ========== 全屏遮罩 ========== */
+.fullscreen-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
+
+.fullscreen-panel {
+  background: #1a1a2e;
+  border-radius: 12px;
+  width: 90vw;
+  max-width: 900px;
+  height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.fullscreen-image-container {
+  flex: 1;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.fullscreen-image {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
 }
 
 /* ========== 加载遮罩 ========== */
