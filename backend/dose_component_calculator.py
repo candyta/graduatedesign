@@ -563,4 +563,4 @@ if __name__ == "__main__":
         params = {}
 
     out = run_calculator(params)
-    print(_json.dumps(out, ensure_ascii=False, indent=2, cls=_NpEncoder))
+    print(_json.dumps(out, ensure_ascii=False, cls=_NpEncoder))

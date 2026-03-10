@@ -568,4 +568,4 @@ if __name__ == "__main__":
         params = {}
 
     result = run_full_validation(params)
-    print(_json.dumps(result, ensure_ascii=False, indent=2, cls=_NpEncoder))
+    print(_json.dumps(result, ensure_ascii=False, cls=_NpEncoder))

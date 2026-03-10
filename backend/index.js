@@ -2077,14 +2077,15 @@ function spawnPython(scriptPath, inputObj, timeoutMs) {
         proc.on('close', () => {
             clearTimeout(timer);
             if (stderr) console.warn(`[spawnPython] stderr: ${stderr.slice(0, 300)}`);
-            const lines = stdout.trim().split('\n');
-            const jsonLine = lines.slice().reverse().find(l => l.trimStart().startsWith('{'));
-            if (!jsonLine) {
-                reject(new Error(`Python 脚本未返回 JSON。stdout: ${stdout.slice(0, 200)}`));
+            const raw = stdout.trim();
+            // 找到第一个 '{' 开始位置，截取完整 JSON（支持多行缩进输出）
+            const jsonStart = raw.indexOf('{');
+            if (jsonStart === -1) {
+                reject(new Error(`Python 脚本未返回 JSON。stdout: ${raw.slice(0, 200)}`));
                 return;
             }
-            try { resolve(JSON.parse(jsonLine)); }
-            catch (e) { reject(new Error(`JSON 解析失败: ${e.message}`)); }
+            try { resolve(JSON.parse(raw.slice(jsonStart))); }
+            catch (e) { reject(new Error(`JSON 解析失败: ${e.message}\nraw: ${raw.slice(jsonStart, jsonStart + 120)}`)); }
         });
         proc.on('error', err => { clearTimeout(timer); reject(err); });
 
