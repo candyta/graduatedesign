@@ -2057,6 +2057,63 @@ console.log('[轮廓功能] API端点已加载:');
 console.log('  - POST /generate-contour-slices');
 console.log('  - POST /auto-segment');
 
+// ==================== 剂量组分计算 ====================
+
+/**
+ * POST /dose-components/calculate
+ * body (JSON): 源配置 + 体模配置 + CBE/RBE + 硼浓度
+ * 返回: { success, result: { source_config, phantom_config, tumor_point,
+ *          skin_point, depth_profile, summary, ... } }
+ */
+app.post('/dose-components/calculate', async (req, res) => {
+    try {
+        const params = req.body || {};
+        const scriptPath = path.join(__dirname, 'dose_component_calculator.py');
+        const paramsJson = JSON.stringify(params).replace(/"/g, '\\"');
+        const cmd = `"${PYTHON_PATH}" "${scriptPath}" "${paramsJson}"`;
+        console.log('[剂量组分] 执行计算...');
+        const { stdout, stderr } = await execAsync(cmd, { timeout: 60000 });
+        if (stderr) console.warn('[剂量组分] stderr:', stderr);
+        const lines = stdout.trim().split('\n');
+        const jsonLine = lines.reverse().find(l => l.startsWith('{'));
+        if (!jsonLine) throw new Error('Python 脚本未返回 JSON');
+        const result = JSON.parse(jsonLine);
+        res.json(result);
+    } catch (err) {
+        console.error('[剂量组分计算] 失败:', err.message);
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+/**
+ * POST /dose-components/validate
+ * body (JSON): { cbe_rbe?, boron_conc?, source_position?, ... }
+ * 返回: 三级验证结果
+ */
+app.post('/dose-components/validate', async (req, res) => {
+    try {
+        const params = req.body || {};
+        const scriptPath = path.join(__dirname, 'validate_dose_components.py');
+        const paramsJson = JSON.stringify(params).replace(/"/g, '\\"');
+        const cmd = `"${PYTHON_PATH}" "${scriptPath}" "${paramsJson}"`;
+        console.log('[剂量组分验证] 运行三级验证...');
+        const { stdout, stderr } = await execAsync(cmd, { timeout: 120000 });
+        if (stderr) console.warn('[剂量组分验证] stderr:', stderr);
+        const lines = stdout.trim().split('\n');
+        const jsonLine = lines.reverse().find(l => l.startsWith('{'));
+        if (!jsonLine) throw new Error('Python 脚本未返回 JSON');
+        const result = JSON.parse(jsonLine);
+        res.json(result);
+    } catch (err) {
+        console.error('[剂量组分验证] 失败:', err.message);
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+console.log('[剂量组分] API端点已加载:');
+console.log('  - POST /dose-components/calculate');
+console.log('  - POST /dose-components/validate');
+
 app.listen(PORT, () => {
     log(`服务器已启动: http://localhost:${PORT}`);
 });

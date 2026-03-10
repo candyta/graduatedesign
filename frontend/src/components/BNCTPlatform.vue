@@ -1465,6 +1465,559 @@
         </div>
       </div>
 
+      <!-- ====================================================
+           Tab: 剂量组分设置
+           ==================================================== -->
+      <div v-show="activeTab === 'dose-setup'" class="tab-content">
+        <div class="ds-workspace">
+
+          <!-- ── 左侧：参数配置面板 ── -->
+          <aside class="ds-sidebar">
+
+            <!-- 源配置 -->
+            <div class="ds-section">
+              <h3 class="ds-section-title">☢️ 中子源配置</h3>
+
+              <div class="ds-field-group">
+                <label class="ds-label">源类型</label>
+                <select v-model="dsSource.source_type" class="ds-select" @change="dsOnParamChange">
+                  <option value="epithermal">超热中子束 (Epithermal)</option>
+                  <option value="thermal">热中子束 (Thermal)</option>
+                  <option value="mono">单能中子 (Mono-energetic)</option>
+                </select>
+              </div>
+
+              <div class="ds-field-group">
+                <label class="ds-label">位置 (cm)</label>
+                <div class="ds-xyz-row">
+                  <span class="ds-axis">X</span>
+                  <input v-model.number="dsSource.position[0]" type="number" step="1" class="ds-input" @input="dsOnParamChange" />
+                  <span class="ds-axis">Y</span>
+                  <input v-model.number="dsSource.position[1]" type="number" step="1" class="ds-input" @input="dsOnParamChange" />
+                  <span class="ds-axis">Z</span>
+                  <input v-model.number="dsSource.position[2]" type="number" step="1" class="ds-input" @input="dsOnParamChange" />
+                </div>
+              </div>
+
+              <div class="ds-field-group">
+                <label class="ds-label">方向（单位向量）</label>
+                <div class="ds-xyz-row">
+                  <span class="ds-axis">ux</span>
+                  <input v-model.number="dsSource.direction[0]" type="number" step="0.1" min="-1" max="1" class="ds-input" @input="dsOnParamChange" />
+                  <span class="ds-axis">uy</span>
+                  <input v-model.number="dsSource.direction[1]" type="number" step="0.1" min="-1" max="1" class="ds-input" @input="dsOnParamChange" />
+                  <span class="ds-axis">uz</span>
+                  <input v-model.number="dsSource.direction[2]" type="number" step="0.1" min="-1" max="1" class="ds-input" @input="dsOnParamChange" />
+                </div>
+              </div>
+
+              <div class="ds-row2">
+                <div class="ds-field-group">
+                  <label class="ds-label">束流半径 (cm)</label>
+                  <input v-model.number="dsSource.beam_radius" type="number" step="0.5" min="0.5" max="20" class="ds-input-full" @input="dsOnParamChange" />
+                </div>
+                <div class="ds-field-group">
+                  <label class="ds-label">强度 (n/cm²/s)</label>
+                  <select v-model="dsIntensityExp" class="ds-select" @change="dsOnIntensityChange">
+                    <option value="8">10⁸</option>
+                    <option value="9">10⁹</option>
+                    <option value="10">10¹⁰</option>
+                    <option value="11">10¹¹</option>
+                    <option value="12">10¹²</option>
+                    <option value="13">10¹³</option>
+                  </select>
+                </div>
+              </div>
+
+              <div v-if="dsSource.source_type === 'mono'" class="ds-field-group">
+                <label class="ds-label">单能能量 (MeV)</label>
+                <input v-model.number="dsSource.energy_mono" type="number" step="0.001" min="1e-6" class="ds-input-full" @input="dsOnParamChange" />
+              </div>
+
+              <div v-if="dsSource.source_type !== 'mono'" class="ds-field-group">
+                <label class="ds-label">能谱（预设）</label>
+                <div class="ds-spectrum-preview">
+                  <div v-for="(w, i) in dsSource.energy_spectrum.weights" :key="i"
+                       class="ds-spectrum-bar"
+                       :style="{ height: Math.round(w * 100 / Math.max(...dsSource.energy_spectrum.weights)) + '%',
+                                 background: w === Math.max(...dsSource.energy_spectrum.weights) ? '#667eea' : '#a0aec0' }"
+                       :title="`${dsSource.energy_spectrum.energies[i]} MeV: ${(w*100).toFixed(1)}%`">
+                  </div>
+                </div>
+                <div class="ds-spectrum-label">
+                  <span>{{ dsSource.energy_spectrum.energies[0] }} MeV</span>
+                  <span>{{ dsSource.energy_spectrum.energies[dsSource.energy_spectrum.energies.length-1] }} MeV</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 体模配置 -->
+            <div class="ds-section">
+              <h3 class="ds-section-title">🧍 体模配置</h3>
+
+              <div class="ds-field-group">
+                <label class="ds-label">体模类型</label>
+                <select v-model="dsPhantom.phantom_type" class="ds-select" @change="dsOnParamChange">
+                  <option value="AM">成年男性 (AM, ICRP-110)</option>
+                  <option value="AF">成年女性 (AF, ICRP-110)</option>
+                </select>
+              </div>
+
+              <div class="ds-row2">
+                <div class="ds-field-group">
+                  <label class="ds-label">身高 (cm)</label>
+                  <input v-model.number="dsPhantom.height_cm" type="number" step="1" min="140" max="220" class="ds-input-full" @input="dsOnParamChange" />
+                </div>
+                <div class="ds-field-group">
+                  <label class="ds-label">体重 (kg)</label>
+                  <input v-model.number="dsPhantom.weight_kg" type="number" step="1" min="30" max="150" class="ds-input-full" @input="dsOnParamChange" />
+                </div>
+              </div>
+
+              <div class="ds-field-group">
+                <label class="ds-label">体模中心偏移 (cm)</label>
+                <div class="ds-xyz-row">
+                  <span class="ds-axis">X</span>
+                  <input v-model.number="dsPhantom.center[0]" type="number" step="1" class="ds-input" @input="dsOnParamChange" />
+                  <span class="ds-axis">Y</span>
+                  <input v-model.number="dsPhantom.center[1]" type="number" step="1" class="ds-input" @input="dsOnParamChange" />
+                  <span class="ds-axis">Z</span>
+                  <input v-model.number="dsPhantom.center[2]" type="number" step="1" class="ds-input" @input="dsOnParamChange" />
+                </div>
+              </div>
+
+              <div class="ds-field-group">
+                <label class="ds-label">旋转角度 (°)</label>
+                <div class="ds-xyz-row">
+                  <span class="ds-axis">Rx</span>
+                  <input v-model.number="dsPhantom.rotation_deg[0]" type="number" step="5" min="-180" max="180" class="ds-input" @input="dsOnParamChange" />
+                  <span class="ds-axis">Ry</span>
+                  <input v-model.number="dsPhantom.rotation_deg[1]" type="number" step="5" min="-180" max="180" class="ds-input" @input="dsOnParamChange" />
+                  <span class="ds-axis">Rz</span>
+                  <input v-model.number="dsPhantom.rotation_deg[2]" type="number" step="5" min="-180" max="180" class="ds-input" @input="dsOnParamChange" />
+                </div>
+              </div>
+
+              <div class="ds-field-group">
+                <label class="ds-label">肿瘤位置（相对体模中心，cm）</label>
+                <div class="ds-xyz-row">
+                  <span class="ds-axis">X</span>
+                  <input v-model.number="dsPhantom.tumor_position[0]" type="number" step="0.5" class="ds-input" @input="dsOnParamChange" />
+                  <span class="ds-axis">Y</span>
+                  <input v-model.number="dsPhantom.tumor_position[1]" type="number" step="0.5" class="ds-input" @input="dsOnParamChange" />
+                  <span class="ds-axis">Z</span>
+                  <input v-model.number="dsPhantom.tumor_position[2]" type="number" step="0.5" class="ds-input" @input="dsOnParamChange" />
+                </div>
+              </div>
+
+              <div class="ds-row2">
+                <div class="ds-field-group">
+                  <label class="ds-label">肿瘤半径 (cm)</label>
+                  <input v-model.number="dsPhantom.tumor_radius" type="number" step="0.5" min="0.5" max="10" class="ds-input-full" @input="dsOnParamChange" />
+                </div>
+                <div class="ds-field-group">
+                  <label class="ds-label">肿瘤深度 (cm)</label>
+                  <input v-model.number="dsTumorDepth" type="number" step="0.5" min="0" max="30" class="ds-input-full" @input="dsOnParamChange" />
+                </div>
+              </div>
+            </div>
+
+            <!-- CBE/RBE 参数 -->
+            <div class="ds-section">
+              <h3 class="ds-section-title">⚗️ CBE / RBE 因子</h3>
+              <div class="ds-cbe-table">
+                <div class="ds-cbe-header">
+                  <span>组织</span><span>硼 CBE</span><span>氮 RBE</span><span>氢 RBE</span><span>γ RBE</span>
+                </div>
+                <div v-for="tissue in ['tumor','normal_tissue','skin']" :key="tissue" class="ds-cbe-row">
+                  <span class="ds-cbe-tissue">{{ dsTissueLabel[tissue] }}</span>
+                  <input v-model.number="dsCbeRbe[tissue].boron_cbe"    type="number" step="0.05" min="0.1" max="10" class="ds-cbe-input" @input="dsOnParamChange" />
+                  <input v-model.number="dsCbeRbe[tissue].nitrogen_rbe" type="number" step="0.1"  min="0.1" max="10" class="ds-cbe-input" @input="dsOnParamChange" />
+                  <input v-model.number="dsCbeRbe[tissue].hydrogen_rbe" type="number" step="0.1"  min="0.1" max="10" class="ds-cbe-input" @input="dsOnParamChange" />
+                  <input v-model.number="dsCbeRbe[tissue].gamma_rbe"    type="number" step="0.05" min="0.1" max="5"  class="ds-cbe-input" @input="dsOnParamChange" />
+                </div>
+              </div>
+            </div>
+
+            <!-- 硼浓度 -->
+            <div class="ds-section">
+              <h3 class="ds-section-title">⚛️ 硼浓度 (ppm)</h3>
+              <div class="ds-boron-grid">
+                <template v-for="(label, key) in dsBoronLabel" :key="key">
+                  <span class="ds-boron-label">{{ label }}</span>
+                  <input v-model.number="dsBoronConc[key]" type="number" step="1" min="0" max="200" class="ds-boron-input" @input="dsOnParamChange" />
+                </template>
+              </div>
+            </div>
+
+            <!-- 计算按钮 -->
+            <div class="ds-section">
+              <button @click="dsCalculate" :disabled="dsLoading" class="btn btn-primary ds-calc-btn">
+                <span v-if="dsLoading" class="spinner-sm"></span>
+                {{ dsLoading ? '计算中...' : '▶ 计算剂量组分' }}
+              </button>
+              <p v-if="dsAutoCalc" class="ds-auto-hint">✓ 参数变更时自动更新</p>
+            </div>
+
+          </aside>
+
+          <!-- ── 中间：几何可视化 ── -->
+          <section class="ds-viz-panel">
+            <h3 class="ds-viz-title">几何示意图</h3>
+            <div class="ds-canvas-wrap">
+              <svg ref="dsCanvas" class="ds-svg" viewBox="0 0 420 460" xmlns="http://www.w3.org/2000/svg">
+                <!-- 背景 -->
+                <rect width="420" height="460" fill="#f8fafc" rx="8"/>
+
+                <!-- 坐标轴 -->
+                <line x1="30" y1="430" x2="390" y2="430" stroke="#cbd5e0" stroke-width="1"/>
+                <line x1="30" y1="430" x2="30"  y2="20"  stroke="#cbd5e0" stroke-width="1"/>
+                <text x="395" y="434" font-size="11" fill="#718096">Z</text>
+                <text x="32"  y="14"  font-size="11" fill="#718096">Y</text>
+
+                <!-- 体模轮廓（椭圆人体近似） -->
+                <g :transform="`translate(${dsVizPhantomX}, ${dsVizPhantomY}) rotate(${dsPhantom.rotation_deg[1]})`">
+                  <!-- 躯干 -->
+                  <ellipse cx="0" cy="0" rx="50" ry="90" fill="rgba(100,180,255,0.18)" stroke="#4299e1" stroke-width="2"/>
+                  <!-- 头部 -->
+                  <ellipse cx="0" cy="-112" rx="28" ry="24" fill="rgba(100,180,255,0.25)" stroke="#4299e1" stroke-width="1.5"/>
+                  <!-- 肿瘤 -->
+                  <circle
+                    :cx="dsPhantom.tumor_position[2] * 2"
+                    :cy="-dsPhantom.tumor_position[1] * 2"
+                    :r="Math.max(4, dsPhantom.tumor_radius * 4)"
+                    fill="rgba(229,62,62,0.55)" stroke="#e53e3e" stroke-width="2"
+                  />
+                  <text x="0" y="-106" text-anchor="middle" font-size="10" fill="#2b6cb0">HEAD</text>
+                  <text x="0" y="4"   text-anchor="middle" font-size="10" fill="#2b6cb0">BODY</text>
+                  <text
+                    :x="dsPhantom.tumor_position[2] * 2 + 8"
+                    :y="-dsPhantom.tumor_position[1] * 2 - 6"
+                    font-size="9" fill="#c53030">肿瘤</text>
+                </g>
+
+                <!-- 中子源 -->
+                <g :transform="`translate(${dsVizSourceX}, ${dsVizSourceY})`">
+                  <circle r="14" fill="#fefce8" stroke="#d97706" stroke-width="2.5"/>
+                  <text text-anchor="middle" y="4" font-size="11" fill="#92400e" font-weight="bold">n</text>
+                </g>
+
+                <!-- 束流箭头 -->
+                <line
+                  :x1="dsVizSourceX" :y1="dsVizSourceY"
+                  :x2="dsVizPhantomX" :y2="dsVizPhantomY"
+                  stroke="#d97706" stroke-width="2.5" stroke-dasharray="8,4"
+                  marker-end="url(#arrowhead)"
+                />
+
+                <!-- 箭头标记 -->
+                <defs>
+                  <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="6" refY="3" orient="auto">
+                    <polygon points="0 0, 8 3, 0 6" fill="#d97706"/>
+                  </marker>
+                </defs>
+
+                <!-- 束流半径标注 -->
+                <line
+                  :x1="dsVizSourceX - dsSource.beam_radius * 2" :y1="dsVizSourceY - 18"
+                  :x2="dsVizSourceX + dsSource.beam_radius * 2" :y2="dsVizSourceY - 18"
+                  stroke="#d97706" stroke-width="1" stroke-dasharray="3,2"
+                />
+                <text :x="dsVizSourceX" :y="dsVizSourceY - 22" text-anchor="middle" font-size="9" fill="#92400e">
+                  r={{ dsSource.beam_radius }}cm
+                </text>
+
+                <!-- 距离标注 -->
+                <text
+                  :x="(dsVizSourceX + dsVizPhantomX) / 2 + 6"
+                  :y="(dsVizSourceY + dsVizPhantomY) / 2 - 8"
+                  font-size="9" fill="#555" text-anchor="middle">
+                  {{ dsVizDistance.toFixed(1) }}cm
+                </text>
+
+                <!-- 源坐标标注 -->
+                <text :x="dsVizSourceX" :y="dsVizSourceY + 24" text-anchor="middle" font-size="9" fill="#92400e">
+                  ({{ dsSource.position[0] }},{{ dsSource.position[1] }},{{ dsSource.position[2] }})
+                </text>
+
+                <!-- 体模坐标标注 -->
+                <text :x="dsVizPhantomX" :y="dsVizPhantomY + 110" text-anchor="middle" font-size="9" fill="#2b6cb0">
+                  中心({{ dsPhantom.center[0] }},{{ dsPhantom.center[1] }},{{ dsPhantom.center[2] }})
+                </text>
+
+                <!-- 深度标注线 -->
+                <line
+                  :x1="dsVizPhantomX - 50" :y1="dsVizPhantomY - dsTumorDepth * 4"
+                  :x2="dsVizPhantomX + 50" :y2="dsVizPhantomY - dsTumorDepth * 4"
+                  stroke="#e53e3e" stroke-width="1" stroke-dasharray="4,3"
+                />
+                <text
+                  :x="dsVizPhantomX + 54" :y="dsVizPhantomY - dsTumorDepth * 4 + 4"
+                  font-size="9" fill="#c53030">深{{ dsTumorDepth }}cm</text>
+              </svg>
+            </div>
+
+            <!-- 深度滑块 -->
+            <div class="ds-depth-ctrl">
+              <label class="ds-label">肿瘤深度</label>
+              <input v-model.number="dsTumorDepth" type="range" min="0" max="25" step="0.5" class="ds-slider" @input="dsOnParamChange" />
+              <span class="ds-depth-val">{{ dsTumorDepth }} cm</span>
+            </div>
+          </section>
+
+          <!-- ── 右侧：计算结果 ── -->
+          <section class="ds-results-panel">
+
+            <!-- 结果未出现时的占位 -->
+            <div v-if="!dsResult" class="ds-empty">
+              <p style="font-size:2rem">⚡</p>
+              <p>设置参数后点击「计算剂量组分」</p>
+              <p style="font-size:0.8rem;color:#888;margin-top:4px">
+                或修改任意参数自动触发计算
+              </p>
+            </div>
+
+            <template v-else>
+              <!-- 摘要卡片 -->
+              <div class="ds-summary-cards">
+                <div class="ds-sum-card ds-sum-tumor">
+                  <div class="ds-sum-icon">🎯</div>
+                  <div class="ds-sum-val">{{ dsResult.tumor_point.total_weighted_cgy.toFixed(2) }}</div>
+                  <div class="ds-sum-label">肿瘤总加权剂量 (cGy)</div>
+                </div>
+                <div class="ds-sum-card ds-sum-skin">
+                  <div class="ds-sum-icon">🧬</div>
+                  <div class="ds-sum-val">{{ dsResult.skin_point.total_weighted_cgy.toFixed(2) }}</div>
+                  <div class="ds-sum-label">皮肤总加权剂量 (cGy)</div>
+                </div>
+                <div class="ds-sum-card ds-sum-ratio">
+                  <div class="ds-sum-icon">📐</div>
+                  <div class="ds-sum-val">{{ dsResult.summary.therapeutic_ratio.toFixed(2) }}</div>
+                  <div class="ds-sum-label">治疗比 (T/S)</div>
+                </div>
+              </div>
+
+              <!-- 剂量组分饼状柱图（肿瘤点） -->
+              <div class="ds-component-section">
+                <h4 class="ds-sub-title">肿瘤点 剂量组分分解（深度 {{ dsResult.tumor_depth_cm }} cm）</h4>
+                <div class="ds-comp-bars">
+                  <div v-for="comp in dsComponentList" :key="comp.key" class="ds-comp-row">
+                    <span class="ds-comp-label">{{ comp.label }}</span>
+                    <div class="ds-comp-bar-wrap">
+                      <div class="ds-comp-bar"
+                           :style="{ width: dsResult.tumor_point.fractions[comp.key] + '%',
+                                     background: comp.color }">
+                      </div>
+                    </div>
+                    <span class="ds-comp-pct">{{ dsResult.tumor_point.fractions[comp.key] }}%</span>
+                    <span class="ds-comp-abs">{{ dsResult.tumor_point['weighted_' + comp.key + '_cgy'].toFixed(3) }} cGy</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 物理剂量 vs 加权剂量对比 -->
+              <div class="ds-component-section">
+                <h4 class="ds-sub-title">物理剂量 vs 生物加权剂量 (cGy)</h4>
+                <table class="ds-comp-table">
+                  <thead>
+                    <tr><th>组分</th><th>物理剂量</th><th>加权因子</th><th>生物剂量</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="comp in dsCompTableRows" :key="comp.key">
+                      <td>{{ comp.label }}</td>
+                      <td class="ds-mono">{{ dsResult.tumor_point[comp.phys_key].toFixed(4) }}</td>
+                      <td class="ds-mono">× {{ comp.factor }}</td>
+                      <td class="ds-mono ds-weighted">{{ dsResult.tumor_point[comp.wt_key].toFixed(4) }}</td>
+                    </tr>
+                    <tr class="ds-total-row">
+                      <td colspan="3"><strong>合计生物加权剂量</strong></td>
+                      <td class="ds-mono ds-total"><strong>{{ dsResult.tumor_point.total_weighted_cgy.toFixed(4) }}</strong></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <!-- 深度-剂量曲线 -->
+              <div class="ds-component-section">
+                <h4 class="ds-sub-title">深度-剂量曲线（肿瘤组织）</h4>
+                <div class="ds-ddp-wrap">
+                  <svg class="ds-ddp-svg" viewBox="0 0 400 200">
+                    <rect width="400" height="200" fill="#f8fafc" rx="4"/>
+                    <!-- Y轴网格 -->
+                    <g v-for="i in 4" :key="'gy'+i">
+                      <line :x1="40" :y1="180 - i*35" :x2="390" :y2="180 - i*35"
+                            stroke="#e2e8f0" stroke-width="1"/>
+                    </g>
+                    <!-- 总剂量曲线 -->
+                    <polyline
+                      :points="dsDdpPoints"
+                      fill="none" stroke="#667eea" stroke-width="2.5"
+                    />
+                    <!-- 各组分细线 -->
+                    <polyline :points="dsDdpPointsComp('boron')"    fill="none" stroke="#e53e3e" stroke-width="1.5" stroke-dasharray="4,2"/>
+                    <polyline :points="dsDdpPointsComp('nitrogen')" fill="none" stroke="#38a169" stroke-width="1.5" stroke-dasharray="4,2"/>
+                    <polyline :points="dsDdpPointsComp('hydrogen')" fill="none" stroke="#d69e2e" stroke-width="1.5" stroke-dasharray="4,2"/>
+                    <polyline :points="dsDdpPointsComp('gamma')"    fill="none" stroke="#805ad5" stroke-width="1.5" stroke-dasharray="4,2"/>
+                    <!-- 坐标轴 -->
+                    <line x1="40" y1="20" x2="40"  y2="185" stroke="#a0aec0" stroke-width="1.5"/>
+                    <line x1="40" y1="180" x2="395" y2="180" stroke="#a0aec0" stroke-width="1.5"/>
+                    <text x="8"  y="100" font-size="9" fill="#718096" transform="rotate(-90,8,100)">剂量 (cGy)</text>
+                    <text x="210" y="198" font-size="9" fill="#718096" text-anchor="middle">深度 (cm)</text>
+                    <!-- 肿瘤深度标注线 -->
+                    <line
+                      :x1="dsDdpTumorX" y1="20"
+                      :x2="dsDdpTumorX" y2="180"
+                      stroke="#e53e3e" stroke-width="1.5" stroke-dasharray="5,3"
+                    />
+                    <!-- 图例 -->
+                    <rect x="42" y="22" width="8" height="4" fill="#667eea"/>
+                    <text x="54" y="28" font-size="8" fill="#333">总剂量</text>
+                    <line x1="90" y1="25" x2="98" y2="25" stroke="#e53e3e" stroke-width="1.5" stroke-dasharray="3,2"/>
+                    <text x="102" y="28" font-size="8" fill="#333">硼</text>
+                    <line x1="120" y1="25" x2="128" y2="25" stroke="#38a169" stroke-width="1.5" stroke-dasharray="3,2"/>
+                    <text x="132" y="28" font-size="8" fill="#333">氮</text>
+                    <line x1="150" y1="25" x2="158" y2="25" stroke="#d69e2e" stroke-width="1.5" stroke-dasharray="3,2"/>
+                    <text x="162" y="28" font-size="8" fill="#333">氢</text>
+                    <line x1="178" y1="25" x2="186" y2="25" stroke="#805ad5" stroke-width="1.5" stroke-dasharray="3,2"/>
+                    <text x="190" y="28" font-size="8" fill="#333">γ</text>
+                  </svg>
+                </div>
+              </div>
+
+              <!-- 三种组织对比 -->
+              <div class="ds-component-section">
+                <h4 class="ds-sub-title">三种组织剂量对比（深度 {{ dsResult.tumor_depth_cm }} cm）</h4>
+                <table class="ds-comp-table">
+                  <thead>
+                    <tr><th>组织</th><th>总加权剂量 (cGy)</th><th>硼%</th><th>氮%</th><th>氢%</th><th>γ%</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="t in ['tumor','normal_tissue','skin']" :key="t">
+                      <td>{{ dsTissueLabel[t] }}</td>
+                      <td class="ds-mono">{{ dsResult[t + '_point'].total_weighted_cgy.toFixed(3) }}</td>
+                      <td class="ds-mono">{{ dsResult[t + '_point'].fractions.boron }}%</td>
+                      <td class="ds-mono">{{ dsResult[t + '_point'].fractions.nitrogen }}%</td>
+                      <td class="ds-mono">{{ dsResult[t + '_point'].fractions.hydrogen }}%</td>
+                      <td class="ds-mono">{{ dsResult[t + '_point'].fractions.gamma }}%</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+            </template>
+          </section>
+
+        </div>
+
+        <!-- ── 验证面板 ── -->
+        <div class="ds-validate-panel">
+          <div class="ds-validate-header">
+            <h3>🧪 剂量参数三级验证</h3>
+            <p class="ds-validate-desc">
+              Level 1：CBE/RBE 与文献值对比 ·
+              Level 2：解析公式核查 ·
+              Level 3：临床基准案例（JRR-4 / Petten HFR / MIT MITR-II）
+            </p>
+            <button @click="dsRunValidation" :disabled="dsValidating" class="btn btn-primary">
+              <span v-if="dsValidating" class="spinner-sm"></span>
+              {{ dsValidating ? '验证中...' : '▶ 运行验证' }}
+            </button>
+          </div>
+
+          <div v-if="dsValidateResult" class="ds-validate-body">
+            <!-- 总结卡片 -->
+            <div class="ds-val-summary">
+              <div class="ds-val-card" :class="dsValidateResult.level1_cbe_rbe.passed ? 'val-pass' : 'val-fail'">
+                <div class="ds-val-icon">{{ dsValidateResult.level1_cbe_rbe.passed ? '✓' : '✗' }}</div>
+                <div class="ds-val-label">L1 CBE/RBE</div>
+              </div>
+              <div class="ds-val-card" :class="dsValidateResult.level1_boron_conc.passed ? 'val-pass' : 'val-fail'">
+                <div class="ds-val-icon">{{ dsValidateResult.level1_boron_conc.passed ? '✓' : '✗' }}</div>
+                <div class="ds-val-label">L1 硼浓度</div>
+              </div>
+              <div class="ds-val-card" :class="dsValidateResult.level2_formula.passed ? 'val-pass' : 'val-fail'">
+                <div class="ds-val-icon">{{ dsValidateResult.level2_formula.passed ? '✓' : '✗' }}</div>
+                <div class="ds-val-label">L2 公式</div>
+              </div>
+              <div class="ds-val-card val-info">
+                <div class="ds-val-icon">📋</div>
+                <div class="ds-val-label">L3 案例 {{ dsValidateResult.summary.level3_cases_pass }}</div>
+              </div>
+              <div class="ds-val-card" :class="dsValidateResult.all_pass ? 'val-pass' : 'val-warn'">
+                <div class="ds-val-icon">{{ dsValidateResult.all_pass ? '✓' : '!' }}</div>
+                <div class="ds-val-label">总体结果</div>
+              </div>
+            </div>
+
+            <!-- L1 CBE/RBE 明细 -->
+            <details class="ds-val-detail" open>
+              <summary>Level 1 ─ CBE/RBE 参数验证（{{ dsValidateResult.level1_cbe_rbe.checks.length }} 项）</summary>
+              <table class="ds-val-table">
+                <thead><tr><th>组织</th><th>参数</th><th>用户值</th><th>文献值</th><th>文献范围</th><th>结果</th></tr></thead>
+                <tbody>
+                  <tr v-for="(c, i) in dsValidateResult.level1_cbe_rbe.checks" :key="i" :class="c.passed ? '' : 'val-row-fail'">
+                    <td>{{ c.tissue }}</td>
+                    <td>{{ c.factor }}</td>
+                    <td class="ds-mono">{{ c.user_value }}</td>
+                    <td class="ds-mono">{{ c.lit_value }}</td>
+                    <td class="ds-mono">[{{ c.lit_range[0] }}, {{ c.lit_range[1] }}]</td>
+                    <td>{{ c.passed ? '✓' : '✗' }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </details>
+
+            <!-- L2 公式验证 -->
+            <details class="ds-val-detail">
+              <summary>Level 2 ─ 剂量公式解析验证</summary>
+              <table class="ds-val-table">
+                <thead><tr><th>验证项</th><th>计算值</th><th>解析/参考值</th><th>结果</th><th>备注</th></tr></thead>
+                <tbody>
+                  <tr v-for="(c, i) in dsValidateResult.level2_formula.checks" :key="i" :class="c.passed ? '' : 'val-row-fail'">
+                    <td>{{ c.name }}</td>
+                    <td class="ds-mono">{{ c.computed_cgy !== undefined ? c.computed_cgy : c.sigma_used }}</td>
+                    <td class="ds-mono">{{ c.analytic_cgy !== undefined ? c.analytic_cgy : c.lit_value }}</td>
+                    <td>{{ c.passed ? '✓' : '✗' }}</td>
+                    <td style="font-size:0.75rem">{{ c.note || c.ref || '' }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </details>
+
+            <!-- L3 临床案例 -->
+            <details class="ds-val-detail">
+              <summary>Level 3 ─ 临床基准案例验证 ({{ dsValidateResult.level3_clinical.n_pass }}/{{ dsValidateResult.level3_clinical.total }} 通过)</summary>
+              <div v-for="cas in dsValidateResult.level3_clinical.cases" :key="cas.id" class="ds-val-case">
+                <div class="ds-val-case-header" :class="cas.passed ? 'case-pass' : 'case-fail'">
+                  <span>{{ cas.passed ? '✓' : '✗' }} {{ cas.name }}</span>
+                  <span class="ds-val-case-ref">{{ cas.ref }}</span>
+                </div>
+                <div class="ds-val-case-body">
+                  <p class="ds-val-case-desc">{{ cas.description }}</p>
+                  <table class="ds-val-table">
+                    <thead><tr><th>检查项</th><th>计算值</th><th>期望范围</th><th>结果</th></tr></thead>
+                    <tbody>
+                      <tr v-for="(ck, ci) in cas.checks" :key="ci" :class="ck.passed ? '' : 'val-row-fail'">
+                        <td>{{ ck.check }}</td>
+                        <td class="ds-mono">{{ ck.value }}</td>
+                        <td class="ds-mono">{{ ck.expected }}</td>
+                        <td>{{ ck.passed ? '✓' : '✗' }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </details>
+
+          </div>
+          <div v-else-if="!dsValidating" class="ds-val-empty">
+            <p>点击「运行验证」，自动完成三级参数正确性验证</p>
+          </div>
+        </div>
+
+      </div>
+      <!-- /Tab: 剂量组分设置 -->
+
     </main>
 
     <!-- 消息提示 -->
@@ -1504,7 +2057,8 @@ export default {
         { id: 'dvh', name: 'DVH分析', icon: '📈' },
         { id: 'risk', name: '风险评估', icon: '🏥' },
         { id: 'icrp-compare', name: 'ICRP对比', icon: '📋' },
-        { id: 'beir7-validate', name: 'BEIR VII验证', icon: '🔬' }
+        { id: 'beir7-validate', name: 'BEIR VII验证', icon: '🔬' },
+        { id: 'dose-setup', name: '剂量组分设置', icon: '⚡' }
       ],
 
       // 全屏
@@ -1658,10 +2212,125 @@ export default {
 
       // 体模构建参数
       phantomBuilt: false,
+
+      // ========== 剂量组分设置 Tab ==========
+      dsLoading:   false,
+      dsValidating: false,
+      dsAutoCalc:  true,
+      dsAutoTimer: null,
+      dsResult:    null,
+      dsValidateResult: null,
+      dsIntensityExp: '12',
+
+      dsSource: {
+        source_type:      'epithermal',
+        position:         [0, 0, 100],
+        direction:        [0, 0, -1],
+        beam_radius:      5.0,
+        energy_mono:      0.001,
+        energy_spectrum: {
+          energies: [5e-7, 1e-6, 1e-5, 1e-4, 1e-3, 0.01, 0.1, 1.0, 10.0],
+          weights:  [0.00, 0.05, 0.15, 0.25, 0.25,  0.15, 0.10, 0.04, 0.01]
+        },
+        intensity: 1e12
+      },
+
+      dsPhantom: {
+        phantom_type:   'AM',
+        center:         [0, 0, 0],
+        rotation_deg:   [0, 0, 0],
+        height_cm:      170,
+        weight_kg:      70,
+        tumor_position: [0, 0, 7],
+        tumor_radius:   2.0
+      },
+
+      dsTumorDepth: 7.0,
+
+      dsCbeRbe: {
+        tumor: {
+          boron_cbe: 3.8, nitrogen_rbe: 3.2, hydrogen_rbe: 3.2, gamma_rbe: 1.0
+        },
+        normal_tissue: {
+          boron_cbe: 1.35, nitrogen_rbe: 3.2, hydrogen_rbe: 3.2, gamma_rbe: 1.0
+        },
+        skin: {
+          boron_cbe: 2.5, nitrogen_rbe: 3.2, hydrogen_rbe: 3.2, gamma_rbe: 1.0
+        }
+      },
+
+      dsBoronConc: {
+        tumor: 60, skin: 25, blood: 25, normal_tissue: 18
+      },
+
+      dsTissueLabel: {
+        tumor: '肿瘤', normal_tissue: '正常组织', skin: '皮肤'
+      },
+      dsBoronLabel: {
+        tumor: '肿瘤', skin: '皮肤', blood: '血液', normal_tissue: '正常组织'
+      },
+
+      dsComponentList: [
+        { key: 'boron',    label: '硼 (¹⁰B·CBE)',   color: '#e53e3e' },
+        { key: 'nitrogen', label: '氮 (¹⁴N·RBE)',   color: '#38a169' },
+        { key: 'hydrogen', label: '氢 (¹H·RBE)',    color: '#d69e2e' },
+        { key: 'gamma',    label: '伽马 (γ·RBE)',   color: '#805ad5' }
+      ],
+
+      dsCompTableRows: [
+        { key: 'boron',    label: '硼 ¹⁰B(n,α)',  phys_key: 'boron_dose_cgy',    wt_key: 'weighted_boron_cgy',    factor: 'CBE_B'  },
+        { key: 'nitrogen', label: '氮 ¹⁴N(n,p)',  phys_key: 'nitrogen_dose_cgy', wt_key: 'weighted_nitrogen_cgy', factor: 'RBE_N'  },
+        { key: 'hydrogen', label: '氢 ¹H(n,γ)',   phys_key: 'hydrogen_dose_cgy', wt_key: 'weighted_hydrogen_cgy', factor: 'RBE_H'  },
+        { key: 'gamma',    label: 'γ 伽马',        phys_key: 'gamma_dose_cgy',    wt_key: 'weighted_gamma_cgy',    factor: 'RBE_γ'  }
+      ],
     };
   },
 
   computed: {
+    // ── 剂量组分可视化计算属性 ──
+    dsVizPhantomX() {
+      // 将体模 Z 坐标映射到 SVG X 轴 [40, 380]
+      const z = this.dsPhantom.center[2];
+      return Math.max(80, Math.min(340, 210 + z * 1.5));
+    },
+    dsVizPhantomY() {
+      // 将体模 Y 坐标映射到 SVG Y 轴（翻转），体模躯干中心
+      const y = this.dsPhantom.center[1];
+      return Math.max(140, Math.min(320, 250 - y * 1.5));
+    },
+    dsVizSourceX() {
+      const z = this.dsSource.position[2];
+      return Math.max(20, Math.min(400, 210 + z * 0.6));
+    },
+    dsVizSourceY() {
+      const y = this.dsSource.position[1];
+      return Math.max(20, Math.min(420, 80 - y * 1.0));
+    },
+    dsVizDistance() {
+      const s = this.dsSource.position;
+      const p = this.dsPhantom.center;
+      return Math.sqrt((s[0]-p[0])**2 + (s[1]-p[1])**2 + (s[2]-p[2])**2);
+    },
+    dsDdpPoints() {
+      if (!this.dsResult || !this.dsResult.depth_profile) return '';
+      const profile = this.dsResult.depth_profile;
+      const maxD = Math.max(...profile.map(p => p.total_weighted_cgy), 0.001);
+      return profile.map((p, i) => {
+        const x = 40 + (i / (profile.length - 1)) * 350;
+        const y = 180 - (p.total_weighted_cgy / maxD) * 155;
+        return `${x},${y}`;
+      }).join(' ');
+    },
+    dsDdpTumorX() {
+      if (!this.dsResult || !this.dsResult.depth_profile) return 210;
+      const profile = this.dsResult.depth_profile;
+      const depths  = profile.map(p => p.depth_cm);
+      const td      = this.dsResult.tumor_depth_cm;
+      const idx     = depths.findIndex(d => d >= td);
+      if (idx < 0) return 390;
+      return 40 + (idx / (profile.length - 1)) * 350;
+    },
+
     canGenerateDVH() {
       return this.organFiles.length > 0 && this.hasDoseData;
     },
@@ -1703,6 +2372,90 @@ export default {
   },
 
   methods: {
+    // ========== 剂量组分设置方法 ==========
+    dsOnParamChange() {
+      if (!this.dsAutoCalc) return;
+      clearTimeout(this.dsAutoTimer);
+      this.dsAutoTimer = setTimeout(() => { this.dsCalculate(); }, 800);
+    },
+
+    dsOnIntensityChange() {
+      this.dsSource.intensity = Math.pow(10, Number(this.dsIntensityExp));
+      this.dsOnParamChange();
+    },
+
+    dsDdpPointsComp(component) {
+      if (!this.dsResult || !this.dsResult.depth_profile) return '';
+      const profile = this.dsResult.depth_profile;
+      const maxD    = Math.max(...profile.map(p => p.total_weighted_cgy), 0.001);
+      const keyMap  = { boron: 'weighted_boron_cgy', nitrogen: 'weighted_nitrogen_cgy',
+                        hydrogen: 'weighted_hydrogen_cgy', gamma: 'weighted_gamma_cgy' };
+      const k = keyMap[component];
+      return profile.map((p, i) => {
+        const x = 40 + (i / (profile.length - 1)) * 350;
+        const y = 180 - (p[k] / maxD) * 155;
+        return `${x},${y}`;
+      }).join(' ');
+    },
+
+    async dsCalculate() {
+      this.dsLoading = true;
+      try {
+        const params = {
+          source_position:  [...this.dsSource.position],
+          source_direction: [...this.dsSource.direction],
+          beam_radius:      this.dsSource.beam_radius,
+          source_type:      this.dsSource.source_type,
+          energy_mono:      this.dsSource.energy_mono,
+          energy_spectrum:  this.dsSource.source_type !== 'mono' ? this.dsSource.energy_spectrum : null,
+          intensity:        this.dsSource.intensity,
+          phantom_center:   [...this.dsPhantom.center],
+          phantom_rotation: [...this.dsPhantom.rotation_deg],
+          phantom_type:     this.dsPhantom.phantom_type,
+          height_cm:        this.dsPhantom.height_cm,
+          weight_kg:        this.dsPhantom.weight_kg,
+          tumor_position:   [...this.dsPhantom.tumor_position],
+          tumor_radius:     this.dsPhantom.tumor_radius,
+          tumor_depth_cm:   this.dsTumorDepth,
+          cbe_rbe:          JSON.parse(JSON.stringify(this.dsCbeRbe)),
+          boron_conc:       { ...this.dsBoronConc }
+        };
+        const { data } = await axios.post(`${API_BASE}/dose-components/calculate`, params);
+        if (data.success) {
+          this.dsResult = data.result;
+        } else {
+          this.showMessage('计算失败：' + (data.message || '未知错误'), 'error');
+        }
+      } catch (e) {
+        this.showMessage('请求失败：' + e.message, 'error');
+      } finally {
+        this.dsLoading = false;
+      }
+    },
+
+    async dsRunValidation() {
+      this.dsValidating = true;
+      this.dsValidateResult = null;
+      try {
+        const params = {
+          cbe_rbe:   JSON.parse(JSON.stringify(this.dsCbeRbe)),
+          boron_conc: { ...this.dsBoronConc },
+          source_position:  [...this.dsSource.position],
+          source_direction: [...this.dsSource.direction]
+        };
+        const { data } = await axios.post(`${API_BASE}/dose-components/validate`, params);
+        if (data.success) {
+          this.dsValidateResult = data;
+        } else {
+          this.showMessage('验证失败：' + (data.message || ''), 'error');
+        }
+      } catch (e) {
+        this.showMessage('验证请求失败：' + e.message, 'error');
+      } finally {
+        this.dsValidating = false;
+      }
+    },
+
     // ========== 工具方法 ==========
     getImageUrl(path) {
       return path ? `${API_BASE}${path}?t=${Date.now()}` : '';
@@ -4790,4 +5543,402 @@ export default {
 }
 .cfv-pass .cfv-icon { background: #2e7d32; color: #fff; }
 .cfv-warn .cfv-icon { background: #e65100; color: #fff; }
+
+/* ========================================
+   剂量组分设置 Tab (dose-setup)
+   ======================================== */
+
+.ds-workspace {
+  display: grid;
+  grid-template-columns: 280px 1fr 1fr;
+  gap: 1rem;
+  padding: 1rem;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* ── 侧边栏 ── */
+.ds-sidebar {
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  padding: 0.8rem;
+  overflow-y: auto;
+  max-height: calc(100vh - 130px);
+}
+
+.ds-section {
+  border-bottom: 1px solid #edf2f7;
+  padding-bottom: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.ds-section:last-child { border-bottom: none; margin-bottom: 0; }
+
+.ds-section-title {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: #4a5568;
+  margin-bottom: 0.6rem;
+}
+
+.ds-field-group { margin-bottom: 0.55rem; }
+
+.ds-label {
+  display: block;
+  font-size: 0.75rem;
+  color: #718096;
+  margin-bottom: 0.2rem;
+}
+
+.ds-xyz-row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.ds-axis {
+  font-size: 0.7rem;
+  color: #a0aec0;
+  min-width: 16px;
+  text-align: right;
+}
+.ds-input {
+  width: 52px;
+  padding: 3px 4px;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  font-size: 0.78rem;
+  text-align: center;
+}
+.ds-input:focus { border-color: #667eea; outline: none; }
+.ds-input-full {
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  font-size: 0.8rem;
+}
+.ds-input-full:focus { border-color: #667eea; outline: none; }
+
+.ds-select {
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  font-size: 0.78rem;
+  background: #fff;
+}
+.ds-select:focus { border-color: #667eea; outline: none; }
+
+.ds-row2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.4rem;
+}
+
+/* 能谱预览条形图 */
+.ds-spectrum-preview {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 36px;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  padding: 2px 4px;
+  background: #f7fafc;
+}
+.ds-spectrum-bar {
+  flex: 1;
+  min-width: 3px;
+  border-radius: 2px 2px 0 0;
+  transition: height 0.2s;
+}
+.ds-spectrum-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.65rem;
+  color: #a0aec0;
+  margin-top: 1px;
+}
+
+/* CBE表格 */
+.ds-cbe-table { font-size: 0.72rem; }
+.ds-cbe-header {
+  display: grid;
+  grid-template-columns: 60px 1fr 1fr 1fr 1fr;
+  gap: 2px;
+  font-weight: 700;
+  color: #718096;
+  margin-bottom: 3px;
+  padding: 0 2px;
+}
+.ds-cbe-row {
+  display: grid;
+  grid-template-columns: 60px 1fr 1fr 1fr 1fr;
+  gap: 2px;
+  align-items: center;
+  margin-bottom: 3px;
+}
+.ds-cbe-tissue { font-size: 0.72rem; color: #4a5568; }
+.ds-cbe-input {
+  width: 100%;
+  padding: 2px 3px;
+  border: 1px solid #e2e8f0;
+  border-radius: 3px;
+  font-size: 0.7rem;
+  text-align: center;
+}
+.ds-cbe-input:focus { border-color: #667eea; outline: none; }
+
+/* 硼浓度 */
+.ds-boron-grid {
+  display: grid;
+  grid-template-columns: 1fr 80px;
+  gap: 4px 8px;
+  align-items: center;
+}
+.ds-boron-label { font-size: 0.75rem; color: #4a5568; }
+.ds-boron-input {
+  padding: 3px 6px;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  font-size: 0.78rem;
+  text-align: center;
+  width: 100%;
+}
+.ds-boron-input:focus { border-color: #667eea; outline: none; }
+
+.ds-calc-btn { width: 100%; padding: 8px; font-size: 0.9rem; }
+.ds-auto-hint { font-size: 0.72rem; color: #38a169; text-align: center; margin-top: 4px; }
+
+/* ── 可视化面板 ── */
+.ds-viz-panel {
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  padding: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.ds-viz-title {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: #4a5568;
+  margin-bottom: 0.5rem;
+  align-self: flex-start;
+}
+.ds-canvas-wrap {
+  width: 100%;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.ds-svg { width: 100%; display: block; }
+
+.ds-depth-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  width: 100%;
+}
+.ds-slider { flex: 1; }
+.ds-depth-val { font-size: 0.85rem; font-weight: 700; color: #e53e3e; min-width: 44px; }
+
+/* ── 结果面板 ── */
+.ds-results-panel {
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  padding: 0.8rem;
+  overflow-y: auto;
+  max-height: calc(100vh - 130px);
+}
+
+.ds-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  color: #a0aec0;
+  gap: 4px;
+}
+
+/* 摘要卡片 */
+.ds-summary-cards {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+.ds-sum-card {
+  flex: 1;
+  padding: 0.6rem;
+  border-radius: 8px;
+  text-align: center;
+}
+.ds-sum-tumor  { background: linear-gradient(135deg,#fff5f5,#fed7d7); border:1px solid #fc8181; }
+.ds-sum-skin   { background: linear-gradient(135deg,#f0fff4,#c6f6d5); border:1px solid #68d391; }
+.ds-sum-ratio  { background: linear-gradient(135deg,#ebf8ff,#bee3f8); border:1px solid #63b3ed; }
+.ds-sum-icon   { font-size: 1.2rem; }
+.ds-sum-val    { font-size: 1.4rem; font-weight: 700; color: #2d3748; }
+.ds-sum-label  { font-size: 0.68rem; color: #718096; }
+
+.ds-component-section { margin-bottom: 1rem; }
+.ds-sub-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #4a5568;
+  margin-bottom: 0.45rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid #edf2f7;
+}
+
+/* 组分条形图 */
+.ds-comp-bars { display: flex; flex-direction: column; gap: 5px; }
+.ds-comp-row  { display: flex; align-items: center; gap: 6px; }
+.ds-comp-label { font-size: 0.72rem; color: #4a5568; min-width: 90px; }
+.ds-comp-bar-wrap {
+  flex: 1;
+  height: 12px;
+  background: #edf2f7;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.ds-comp-bar {
+  height: 100%;
+  border-radius: 6px;
+  transition: width 0.4s ease;
+}
+.ds-comp-pct { font-size: 0.72rem; color: #718096; min-width: 34px; text-align: right; }
+.ds-comp-abs { font-size: 0.7rem; color: #2d3748; min-width: 80px; font-family: monospace; }
+
+/* 表格 */
+.ds-comp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+}
+.ds-comp-table th {
+  background: #f7fafc;
+  color: #4a5568;
+  font-weight: 600;
+  padding: 4px 6px;
+  border: 1px solid #e2e8f0;
+  text-align: left;
+}
+.ds-comp-table td {
+  padding: 3px 6px;
+  border: 1px solid #e2e8f0;
+}
+.ds-mono    { font-family: 'Courier New', monospace; font-size: 0.72rem; }
+.ds-weighted { color: #3182ce; font-weight: 600; }
+.ds-total-row { background: #f0fff4; }
+.ds-total   { color: #2f855a; font-weight: 700; }
+
+/* 深度剂量曲线 */
+.ds-ddp-wrap { border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden; }
+.ds-ddp-svg  { width: 100%; display: block; }
+
+/* ── 验证面板 ── */
+.ds-validate-panel {
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  margin: 0 1rem 1rem;
+  padding: 1rem;
+}
+.ds-validate-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+.ds-validate-header h3 { font-size: 1rem; color: #2d3748; }
+.ds-validate-desc { flex: 1; font-size: 0.78rem; color: #718096; min-width: 200px; }
+
+.ds-val-summary {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+.ds-val-card {
+  flex: 1; min-width: 80px;
+  padding: 0.5rem;
+  border-radius: 8px;
+  text-align: center;
+}
+.val-pass { background: #f0fff4; border: 1px solid #68d391; }
+.val-fail { background: #fff5f5; border: 1px solid #fc8181; }
+.val-warn { background: #fffbeb; border: 1px solid #f6e05e; }
+.val-info { background: #ebf8ff; border: 1px solid #63b3ed; }
+.ds-val-icon  { font-size: 1.1rem; font-weight: 700; }
+.ds-val-label { font-size: 0.72rem; color: #4a5568; margin-top: 2px; }
+
+.ds-val-detail {
+  margin-bottom: 0.75rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.ds-val-detail summary {
+  padding: 0.5rem 0.75rem;
+  background: #f7fafc;
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #4a5568;
+  user-select: none;
+}
+.ds-val-detail summary:hover { background: #edf2f7; }
+
+.ds-val-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.73rem;
+}
+.ds-val-table th {
+  background: #f7fafc;
+  padding: 4px 6px;
+  border: 1px solid #e2e8f0;
+  font-weight: 600;
+  color: #4a5568;
+}
+.ds-val-table td {
+  padding: 3px 6px;
+  border: 1px solid #e2e8f0;
+}
+.val-row-fail { background: #fff5f5; }
+
+.ds-val-case {
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  margin: 0.5rem;
+  overflow: hidden;
+}
+.ds-val-case-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.4rem 0.7rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.case-pass { background: #f0fff4; color: #22543d; }
+.case-fail { background: #fff5f5; color: #742a2a; }
+.ds-val-case-ref { font-size: 0.68rem; font-weight: 400; color: #718096; }
+.ds-val-case-body { padding: 0.5rem; }
+.ds-val-case-desc { font-size: 0.75rem; color: #718096; margin-bottom: 6px; }
+
+.ds-val-empty {
+  text-align: center;
+  color: #a0aec0;
+  padding: 1.5rem;
+  font-size: 0.85rem;
+}
+.ds-validate-body { margin-top: 0.5rem; }
 </style>
