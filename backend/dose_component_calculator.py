@@ -563,4 +563,7 @@ if __name__ == "__main__":
         params = {}
 
     out = run_calculator(params)
-    print(_json.dumps(out, ensure_ascii=False, cls=_NpEncoder))
+    # 直接写 UTF-8 字节到 stdout.buffer，绕过 Windows GBK 平台编码
+    sys.stdout.buffer.write(_json.dumps(out, ensure_ascii=False, cls=_NpEncoder).encode('utf-8'))
+    sys.stdout.buffer.write(b'\n')
+    sys.stdout.buffer.flush()

@@ -568,4 +568,6 @@ if __name__ == "__main__":
         params = {}
 
     result = run_full_validation(params)
-    print(_json.dumps(result, ensure_ascii=False, cls=_NpEncoder))
+    sys.stdout.buffer.write(_json.dumps(result, ensure_ascii=False, cls=_NpEncoder).encode('utf-8'))
+    sys.stdout.buffer.write(b'\n')
+    sys.stdout.buffer.flush()

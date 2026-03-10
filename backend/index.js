@@ -2064,7 +2064,9 @@ console.log('  - POST /auto-segment');
  */
 function spawnPython(scriptPath, inputObj, timeoutMs) {
     return new Promise((resolve, reject) => {
-        const proc = spawn(PYTHON_PATH, [scriptPath]);
+        // PYTHONUTF8=1 强制 Python stdout 使用 UTF-8，避免 Windows GBK 编码错误
+        const env = Object.assign({}, process.env, { PYTHONUTF8: '1' });
+        const proc = spawn(PYTHON_PATH, [scriptPath], { env });
         let stdout = '';
         let stderr = '';
         const timer = setTimeout(() => {
