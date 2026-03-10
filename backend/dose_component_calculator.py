@@ -546,10 +546,21 @@ def run_calculator(params: Dict) -> Dict:
 if __name__ == "__main__":
     import sys, json as _json
 
+    class _NpEncoder(_json.JSONEncoder):
+        """将 numpy 数值类型转为原生 Python 类型，避免 JSON 序列化报错。"""
+        def default(self, obj):
+            if isinstance(obj, np.integer):  return int(obj)
+            if isinstance(obj, np.floating): return float(obj)
+            if isinstance(obj, np.bool_):    return bool(obj)
+            if isinstance(obj, np.ndarray):  return obj.tolist()
+            return super().default(obj)
+
     if len(sys.argv) > 1:
         params = _json.loads(sys.argv[1])
+    elif not sys.stdin.isatty():
+        params = _json.loads(sys.stdin.read())
     else:
         params = {}
 
     out = run_calculator(params)
-    print(_json.dumps(out, ensure_ascii=False, indent=2))
+    print(_json.dumps(out, ensure_ascii=False, indent=2, cls=_NpEncoder))

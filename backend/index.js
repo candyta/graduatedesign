@@ -2060,24 +2060,48 @@ console.log('  - POST /auto-segment');
 // ==================== 剂量组分计算 ====================
 
 /**
+ * 通用辅助：用 spawn + stdin 调用 Python 脚本，避免命令行 JSON 转义问题
+ */
+function spawnPython(scriptPath, inputObj, timeoutMs) {
+    return new Promise((resolve, reject) => {
+        const proc = spawn(PYTHON_PATH, [scriptPath]);
+        let stdout = '';
+        let stderr = '';
+        const timer = setTimeout(() => {
+            proc.kill();
+            reject(new Error('Python 脚本超时'));
+        }, timeoutMs);
+
+        proc.stdout.on('data', d => { stdout += d; });
+        proc.stderr.on('data', d => { stderr += d; });
+        proc.on('close', () => {
+            clearTimeout(timer);
+            if (stderr) console.warn(`[spawnPython] stderr: ${stderr.slice(0, 300)}`);
+            const lines = stdout.trim().split('\n');
+            const jsonLine = lines.slice().reverse().find(l => l.trimStart().startsWith('{'));
+            if (!jsonLine) {
+                reject(new Error(`Python 脚本未返回 JSON。stdout: ${stdout.slice(0, 200)}`));
+                return;
+            }
+            try { resolve(JSON.parse(jsonLine)); }
+            catch (e) { reject(new Error(`JSON 解析失败: ${e.message}`)); }
+        });
+        proc.on('error', err => { clearTimeout(timer); reject(err); });
+
+        // 通过 stdin 传递参数，完全避免 shell 转义问题
+        proc.stdin.write(JSON.stringify(inputObj));
+        proc.stdin.end();
+    });
+}
+
+/**
  * POST /dose-components/calculate
- * body (JSON): 源配置 + 体模配置 + CBE/RBE + 硼浓度
- * 返回: { success, result: { source_config, phantom_config, tumor_point,
- *          skin_point, depth_profile, summary, ... } }
  */
 app.post('/dose-components/calculate', async (req, res) => {
     try {
-        const params = req.body || {};
-        const scriptPath = path.join(__dirname, 'dose_component_calculator.py');
-        const paramsJson = JSON.stringify(params).replace(/"/g, '\\"');
-        const cmd = `"${PYTHON_PATH}" "${scriptPath}" "${paramsJson}"`;
         console.log('[剂量组分] 执行计算...');
-        const { stdout, stderr } = await execAsync(cmd, { timeout: 60000 });
-        if (stderr) console.warn('[剂量组分] stderr:', stderr);
-        const lines = stdout.trim().split('\n');
-        const jsonLine = lines.reverse().find(l => l.startsWith('{'));
-        if (!jsonLine) throw new Error('Python 脚本未返回 JSON');
-        const result = JSON.parse(jsonLine);
+        const scriptPath = path.join(__dirname, 'dose_component_calculator.py');
+        const result = await spawnPython(scriptPath, req.body || {}, 60000);
         res.json(result);
     } catch (err) {
         console.error('[剂量组分计算] 失败:', err.message);
@@ -2087,22 +2111,12 @@ app.post('/dose-components/calculate', async (req, res) => {
 
 /**
  * POST /dose-components/validate
- * body (JSON): { cbe_rbe?, boron_conc?, source_position?, ... }
- * 返回: 三级验证结果
  */
 app.post('/dose-components/validate', async (req, res) => {
     try {
-        const params = req.body || {};
-        const scriptPath = path.join(__dirname, 'validate_dose_components.py');
-        const paramsJson = JSON.stringify(params).replace(/"/g, '\\"');
-        const cmd = `"${PYTHON_PATH}" "${scriptPath}" "${paramsJson}"`;
         console.log('[剂量组分验证] 运行三级验证...');
-        const { stdout, stderr } = await execAsync(cmd, { timeout: 120000 });
-        if (stderr) console.warn('[剂量组分验证] stderr:', stderr);
-        const lines = stdout.trim().split('\n');
-        const jsonLine = lines.reverse().find(l => l.startsWith('{'));
-        if (!jsonLine) throw new Error('Python 脚本未返回 JSON');
-        const result = JSON.parse(jsonLine);
+        const scriptPath = path.join(__dirname, 'validate_dose_components.py');
+        const result = await spawnPython(scriptPath, req.body || {}, 120000);
         res.json(result);
     } catch (err) {
         console.error('[剂量组分验证] 失败:', err.message);

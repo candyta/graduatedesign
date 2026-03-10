@@ -550,11 +550,22 @@ def run_full_validation(user_params: Dict = None) -> Dict:
 
 if __name__ == "__main__":
     import sys, json as _json
+    import numpy as _np
+
+    class _NpEncoder(_json.JSONEncoder):
+        def default(self, obj):
+            if isinstance(obj, _np.integer):  return int(obj)
+            if isinstance(obj, _np.floating): return float(obj)
+            if isinstance(obj, _np.bool_):    return bool(obj)
+            if isinstance(obj, _np.ndarray):  return obj.tolist()
+            return super().default(obj)
 
     if len(sys.argv) > 1:
         params = _json.loads(sys.argv[1])
+    elif not sys.stdin.isatty():
+        params = _json.loads(sys.stdin.read())
     else:
         params = {}
 
     result = run_full_validation(params)
-    print(_json.dumps(result, ensure_ascii=False, indent=2))
+    print(_json.dumps(result, ensure_ascii=False, indent=2, cls=_NpEncoder))
