@@ -1465,10 +1465,12 @@
         </div>
       </div>
 
-      <!-- ====================================================
-           Tab: 剂量组分设置
-           ==================================================== -->
-      <div v-show="activeTab === 'dose-setup'" class="tab-content">
+      <!-- ── MCNP Tab：剂量组分参数（嵌入在MCNP页面中） ── -->
+      <div v-show="activeTab === 'mcnp'" class="tab-content">
+        <div class="ds-mcnp-title">
+          <h2>⚡ 剂量组分参数设置</h2>
+          <p>设置源与体模的位置/方向/能量，实时调整 CBE/RBE 参数，预览各组分剂量分布</p>
+        </div>
         <div class="ds-workspace">
 
           <!-- ── 左侧：参数配置面板 ── -->
@@ -2016,7 +2018,7 @@
         </div>
 
       </div>
-      <!-- /Tab: 剂量组分设置 -->
+      <!-- /MCNP Tab 剂量组分设置 -->
 
     </main>
 
@@ -2057,8 +2059,7 @@ export default {
         { id: 'dvh', name: 'DVH分析', icon: '📈' },
         { id: 'risk', name: '风险评估', icon: '🏥' },
         { id: 'icrp-compare', name: 'ICRP对比', icon: '📋' },
-        { id: 'beir7-validate', name: 'BEIR VII验证', icon: '🔬' },
-        { id: 'dose-setup', name: '剂量组分设置', icon: '⚡' }
+        { id: 'beir7-validate', name: 'BEIR VII验证', icon: '🔬' }
       ],
 
       // 全屏
@@ -5545,8 +5546,30 @@ export default {
 .cfv-warn .cfv-icon { background: #e65100; color: #fff; }
 
 /* ========================================
-   剂量组分设置 Tab (dose-setup)
+   剂量组分设置（嵌入 MCNP Tab）
    ======================================== */
+
+/* MCNP 页面第二个 tab-content 块：顶部加分隔线 */
+.tab-content + .tab-content {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 3px solid rgba(102,126,234,0.2);
+}
+
+.ds-mcnp-title {
+  padding: 0.6rem 1rem 0.5rem;
+  border-bottom: 1px solid #e2e8f0;
+  margin-bottom: 0;
+}
+.ds-mcnp-title h2 {
+  font-size: 1rem;
+  color: #4a5568;
+  margin-bottom: 2px;
+}
+.ds-mcnp-title p {
+  font-size: 0.77rem;
+  color: #718096;
+}
 
 .ds-workspace {
   display: grid;
