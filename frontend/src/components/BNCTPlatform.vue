@@ -1695,123 +1695,181 @@
 
             <!-- ── 模式A：全身体模示意图 ── -->
             <div v-if="dsVizMode === 'schematic'" class="ds-canvas-wrap">
-              <!-- 全身体模矢状切片滑块（有体模/CT时显示） -->
-              <div v-if="dsHasPhantomBg" class="ds-phantom-slice-ctrl">
-                <span class="ds-phantom-slice-label">
-                  {{ phantomSlices.sagittal.length ? '体模矢状面' : 'CT矢状面' }}
+
+              <!-- 三视图标签（有体模切片时显示） -->
+              <div v-if="dsHasPhantomBg" class="ds-ct-view-tabs">
+                <button
+                  v-for="v in [{k:'sagittal',l:'矢状'},{k:'coronal',l:'冠状'},{k:'axial',l:'轴向'}]"
+                  :key="v.k"
+                  :class="['ds-ct-view-tab', dsVizPhantomView === v.k ? 'active' : '']"
+                  :disabled="!phantomSlices[v.k].length && !(v.k==='sagittal' && slices.sagittal.length)"
+                  @click="dsVizPhantomView = v.k"
+                >{{ v.l }}</button>
+                <span class="ds-ct-view-hint">
+                  {{ dsVizPhantomView==='sagittal' ? '矢状面 (YZ)' : dsVizPhantomView==='coronal' ? '冠状面 (XZ)' : '轴向面 (XY)' }}
                 </span>
-                <input
-                  type="range" v-model.number="dsVizPhantomSliceIdx"
-                  :min="0" :max="dsPhantomBgMaxIdx"
-                  class="ds-slider ds-phantom-slider"
-                />
-                <span class="ds-phantom-slice-num">{{ dsVizPhantomSliceIdx + 1 }}/{{ dsPhantomBgMaxIdx + 1 }}</span>
               </div>
 
-              <svg ref="dsCanvas" class="ds-svg" viewBox="0 0 420 460" xmlns="http://www.w3.org/2000/svg">
-                <!-- 背景 -->
-                <rect width="420" height="460"
-                  :fill="dsPhantomBgSlice ? '#0d1117' : '#f8fafc'" rx="8"/>
+              <!-- 画布：有体模 → img + SVG覆盖；无体模 → 纯SVG示意图 -->
+              <div class="ds-phantom-canvas">
 
-                <!-- 全身体模矢状切片背景 -->
-                <image
-                  v-if="dsPhantomBgSlice"
-                  :href="dsPhantomBgSlice"
-                  x="30" y="10" width="360" height="440"
-                  preserveAspectRatio="none"
-                  opacity="0.85"
-                />
+                <!-- 有体模：用 <img> 显示（object-fit:contain 保持正确宽高比） -->
+                <template v-if="dsPhantomBgSlice">
+                  <img :src="dsPhantomBgSlice" class="ds-phantom-bg-img" alt="体模切片" />
 
-                <!-- 坐标轴 -->
-                <line x1="30" y1="430" x2="390" y2="430"
-                  :stroke="dsPhantomBgSlice ? 'rgba(255,255,255,0.3)' : '#cbd5e0'" stroke-width="1"/>
-                <line x1="30" y1="430" x2="30"  y2="20"
-                  :stroke="dsPhantomBgSlice ? 'rgba(255,255,255,0.3)' : '#cbd5e0'" stroke-width="1"/>
-                <text x="395" y="434" font-size="11" :fill="dsPhantomBgSlice ? '#94a3b8' : '#718096'">Z</text>
-                <text x="32"  y="14"  font-size="11" :fill="dsPhantomBgSlice ? '#94a3b8' : '#718096'">Y</text>
+                  <!-- SVG 覆盖层：束流几何（在矢状/冠状面下有意义） -->
+                  <svg v-if="dsVizPhantomView !== 'axial'"
+                    class="ds-phantom-overlay"
+                    viewBox="0 0 420 460"
+                    xmlns="http://www.w3.org/2000/svg">
+                    <defs>
+                      <marker id="arrowhead2" markerWidth="8" markerHeight="6" refX="6" refY="3" orient="auto">
+                        <polygon points="0 0, 8 3, 0 6" fill="#d97706"/>
+                      </marker>
+                    </defs>
+                    <!-- 肿瘤标记 -->
+                    <g :transform="`translate(${dsVizPhantomX}, ${dsVizPhantomY})`">
+                      <circle
+                        :cx="dsPhantom.tumor_position[2] * 2"
+                        :cy="-dsPhantom.tumor_position[1] * 2"
+                        :r="Math.max(5, dsPhantom.tumor_radius * 4)"
+                        fill="rgba(229,62,62,0.75)" stroke="#fc8181" stroke-width="2"
+                      />
+                      <text
+                        :x="dsPhantom.tumor_position[2] * 2 + 8"
+                        :y="-dsPhantom.tumor_position[1] * 2 - 6"
+                        font-size="10" fill="#fc8181">肿瘤</text>
+                    </g>
+                    <!-- 中子源 -->
+                    <g :transform="`translate(${dsVizSourceX}, ${dsVizSourceY})`">
+                      <circle r="14" fill="#fefce8" stroke="#d97706" stroke-width="2.5"/>
+                      <text text-anchor="middle" y="4" font-size="11" fill="#92400e" font-weight="bold">n</text>
+                    </g>
+                    <!-- 束流箭头 -->
+                    <line
+                      :x1="dsVizSourceX" :y1="dsVizSourceY"
+                      :x2="dsVizPhantomX" :y2="dsVizPhantomY"
+                      stroke="#d97706" stroke-width="2" stroke-dasharray="8,4"
+                      marker-end="url(#arrowhead2)"
+                    />
+                    <!-- 束流半径标注 -->
+                    <line
+                      :x1="dsVizSourceX - dsSource.beam_radius * 2" :y1="dsVizSourceY - 18"
+                      :x2="dsVizSourceX + dsSource.beam_radius * 2" :y2="dsVizSourceY - 18"
+                      stroke="#d97706" stroke-width="1" stroke-dasharray="3,2"
+                    />
+                    <text :x="dsVizSourceX" :y="dsVizSourceY - 22" text-anchor="middle" font-size="9" fill="#92400e">
+                      r={{ dsSource.beam_radius }}cm
+                    </text>
+                    <!-- 距离标注 -->
+                    <text
+                      :x="(dsVizSourceX + dsVizPhantomX) / 2 + 6"
+                      :y="(dsVizSourceY + dsVizPhantomY) / 2 - 8"
+                      font-size="9" fill="#cbd5e0" text-anchor="middle">
+                      {{ dsVizDistance.toFixed(1) }}cm
+                    </text>
+                    <!-- 深度标注线 -->
+                    <line
+                      :x1="dsVizPhantomX - 50" :y1="dsVizPhantomY - dsTumorDepth * 4"
+                      :x2="dsVizPhantomX + 50" :y2="dsVizPhantomY - dsTumorDepth * 4"
+                      stroke="#fc8181" stroke-width="1" stroke-dasharray="4,3"
+                    />
+                    <text
+                      :x="dsVizPhantomX + 54" :y="dsVizPhantomY - dsTumorDepth * 4 + 4"
+                      font-size="9" fill="#fc8181">深{{ dsTumorDepth }}cm</text>
+                  </svg>
+                </template>
 
-                <!-- 体模轮廓辅助线（有背景图时隐藏，仅无背景时显示简略示意） -->
-                <g :transform="`translate(${dsVizPhantomX}, ${dsVizPhantomY}) rotate(${dsPhantom.rotation_deg[1]})`">
-                  <ellipse v-if="!dsPhantomBgSlice" cx="0" cy="0" rx="50" ry="90"
-                    fill="rgba(100,180,255,0.18)"
-                    stroke="#4299e1"
-                    stroke-width="2"
-                    stroke-dasharray="6,3"/>
-                  <ellipse v-if="!dsPhantomBgSlice" cx="0" cy="-112" rx="28" ry="24"
-                    fill="rgba(100,180,255,0.25)"
-                    stroke="#4299e1"
-                    stroke-width="1.5"
-                    stroke-dasharray="4,3"/>
-                  <!-- 肿瘤 -->
-                  <circle
-                    :cx="dsPhantom.tumor_position[2] * 2"
-                    :cy="-dsPhantom.tumor_position[1] * 2"
-                    :r="Math.max(4, dsPhantom.tumor_radius * 4)"
-                    fill="rgba(229,62,62,0.70)" stroke="#fc8181" stroke-width="2"
+                <!-- 无体模：纯SVG示意图（两椭圆 + 肿瘤 + 源 + 束流） -->
+                <svg v-else ref="dsCanvas" class="ds-svg" viewBox="0 0 420 460" xmlns="http://www.w3.org/2000/svg">
+                  <rect width="420" height="460" fill="#f8fafc" rx="8"/>
+                  <!-- 坐标轴 -->
+                  <line x1="30" y1="430" x2="390" y2="430" stroke="#cbd5e0" stroke-width="1"/>
+                  <line x1="30" y1="430" x2="30"  y2="20"  stroke="#cbd5e0" stroke-width="1"/>
+                  <text x="395" y="434" font-size="11" fill="#718096">Z</text>
+                  <text x="32"  y="14"  font-size="11" fill="#718096">Y</text>
+                  <!-- 体模轮廓（简略椭圆） -->
+                  <g :transform="`translate(${dsVizPhantomX}, ${dsVizPhantomY}) rotate(${dsPhantom.rotation_deg[1]})`">
+                    <ellipse cx="0" cy="0" rx="50" ry="90"
+                      fill="rgba(100,180,255,0.18)" stroke="#4299e1" stroke-width="2" stroke-dasharray="6,3"/>
+                    <ellipse cx="0" cy="-112" rx="28" ry="24"
+                      fill="rgba(100,180,255,0.25)" stroke="#4299e1" stroke-width="1.5" stroke-dasharray="4,3"/>
+                    <text x="0" y="-106" text-anchor="middle" font-size="10" fill="#2b6cb0">HEAD</text>
+                    <text x="0" y="4"   text-anchor="middle" font-size="10" fill="#2b6cb0">BODY</text>
+                    <!-- 肿瘤 -->
+                    <circle
+                      :cx="dsPhantom.tumor_position[2] * 2"
+                      :cy="-dsPhantom.tumor_position[1] * 2"
+                      :r="Math.max(4, dsPhantom.tumor_radius * 4)"
+                      fill="rgba(229,62,62,0.70)" stroke="#fc8181" stroke-width="2"
+                    />
+                    <text
+                      :x="dsPhantom.tumor_position[2] * 2 + 8"
+                      :y="-dsPhantom.tumor_position[1] * 2 - 6"
+                      font-size="9" fill="#c53030">肿瘤</text>
+                  </g>
+                  <!-- 中子源 -->
+                  <g :transform="`translate(${dsVizSourceX}, ${dsVizSourceY})`">
+                    <circle r="14" fill="#fefce8" stroke="#d97706" stroke-width="2.5"/>
+                    <text text-anchor="middle" y="4" font-size="11" fill="#92400e" font-weight="bold">n</text>
+                  </g>
+                  <!-- 束流箭头 -->
+                  <line
+                    :x1="dsVizSourceX" :y1="dsVizSourceY"
+                    :x2="dsVizPhantomX" :y2="dsVizPhantomY"
+                    stroke="#d97706" stroke-width="2.5" stroke-dasharray="8,4"
+                    marker-end="url(#arrowhead)"
                   />
-                  <text v-if="!dsPhantomBgSlice" x="0" y="-106" text-anchor="middle" font-size="10" fill="#2b6cb0">HEAD</text>
-                  <text v-if="!dsPhantomBgSlice" x="0" y="4"   text-anchor="middle" font-size="10" fill="#2b6cb0">BODY</text>
+                  <defs>
+                    <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="6" refY="3" orient="auto">
+                      <polygon points="0 0, 8 3, 0 6" fill="#d97706"/>
+                    </marker>
+                  </defs>
+                  <!-- 束流半径标注 -->
+                  <line
+                    :x1="dsVizSourceX - dsSource.beam_radius * 2" :y1="dsVizSourceY - 18"
+                    :x2="dsVizSourceX + dsSource.beam_radius * 2" :y2="dsVizSourceY - 18"
+                    stroke="#d97706" stroke-width="1" stroke-dasharray="3,2"
+                  />
+                  <text :x="dsVizSourceX" :y="dsVizSourceY - 22" text-anchor="middle" font-size="9" fill="#92400e">
+                    r={{ dsSource.beam_radius }}cm
+                  </text>
+                  <!-- 距离标注 -->
                   <text
-                    :x="dsPhantom.tumor_position[2] * 2 + 8"
-                    :y="-dsPhantom.tumor_position[1] * 2 - 6"
-                    font-size="9" :fill="dsPhantomBgSlice ? '#fc8181' : '#c53030'">肿瘤</text>
-                </g>
+                    :x="(dsVizSourceX + dsVizPhantomX) / 2 + 6"
+                    :y="(dsVizSourceY + dsVizPhantomY) / 2 - 8"
+                    font-size="9" fill="#555" text-anchor="middle">
+                    {{ dsVizDistance.toFixed(1) }}cm
+                  </text>
+                  <!-- 体模坐标标注 -->
+                  <text :x="dsVizPhantomX" :y="dsVizPhantomY + 110" text-anchor="middle" font-size="9" fill="#2b6cb0">
+                    中心({{ dsPhantom.center[0] }},{{ dsPhantom.center[1] }},{{ dsPhantom.center[2] }})
+                  </text>
+                  <!-- 深度标注线 -->
+                  <line
+                    :x1="dsVizPhantomX - 50" :y1="dsVizPhantomY - dsTumorDepth * 4"
+                    :x2="dsVizPhantomX + 50" :y2="dsVizPhantomY - dsTumorDepth * 4"
+                    stroke="#fc8181" stroke-width="1" stroke-dasharray="4,3"
+                  />
+                  <text
+                    :x="dsVizPhantomX + 54" :y="dsVizPhantomY - dsTumorDepth * 4 + 4"
+                    font-size="9" fill="#fc8181">深{{ dsTumorDepth }}cm</text>
+                </svg>
+              </div>
 
-                <!-- 中子源 -->
-                <g :transform="`translate(${dsVizSourceX}, ${dsVizSourceY})`">
-                  <circle r="14" fill="#fefce8" stroke="#d97706" stroke-width="2.5"/>
-                  <text text-anchor="middle" y="4" font-size="11" fill="#92400e" font-weight="bold">n</text>
-                </g>
-
-                <!-- 束流箭头 -->
-                <line
-                  :x1="dsVizSourceX" :y1="dsVizSourceY"
-                  :x2="dsVizPhantomX" :y2="dsVizPhantomY"
-                  stroke="#d97706" stroke-width="2.5" stroke-dasharray="8,4"
-                  marker-end="url(#arrowhead)"
+              <!-- 切片滑块（有体模时显示） -->
+              <div v-if="dsHasPhantomBg" class="ds-phantom-slice-ctrl">
+                <input
+                  type="range"
+                  :value="dsVizPhantomSliceIndices[dsVizPhantomView]"
+                  :min="0" :max="dsPhantomBgMaxIdx"
+                  class="ds-slider ds-phantom-slider"
+                  @input="e => { dsVizPhantomSliceIndices[dsVizPhantomView] = +e.target.value }"
                 />
-
-                <!-- 箭头标记 -->
-                <defs>
-                  <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="6" refY="3" orient="auto">
-                    <polygon points="0 0, 8 3, 0 6" fill="#d97706"/>
-                  </marker>
-                </defs>
-
-                <!-- 束流半径标注 -->
-                <line
-                  :x1="dsVizSourceX - dsSource.beam_radius * 2" :y1="dsVizSourceY - 18"
-                  :x2="dsVizSourceX + dsSource.beam_radius * 2" :y2="dsVizSourceY - 18"
-                  stroke="#d97706" stroke-width="1" stroke-dasharray="3,2"
-                />
-                <text :x="dsVizSourceX" :y="dsVizSourceY - 22" text-anchor="middle" font-size="9" fill="#92400e">
-                  r={{ dsSource.beam_radius }}cm
-                </text>
-
-                <!-- 距离标注 -->
-                <text
-                  :x="(dsVizSourceX + dsVizPhantomX) / 2 + 6"
-                  :y="(dsVizSourceY + dsVizPhantomY) / 2 - 8"
-                  font-size="9" :fill="dsPhantomBgSlice ? '#cbd5e0' : '#555'" text-anchor="middle">
-                  {{ dsVizDistance.toFixed(1) }}cm
-                </text>
-
-                <!-- 体模坐标标注 -->
-                <text :x="dsVizPhantomX" :y="dsVizPhantomY + 110" text-anchor="middle" font-size="9"
-                  :fill="dsPhantomBgSlice ? '#7dd3fc' : '#2b6cb0'">
-                  中心({{ dsPhantom.center[0] }},{{ dsPhantom.center[1] }},{{ dsPhantom.center[2] }})
-                </text>
-
-                <!-- 深度标注线 -->
-                <line
-                  :x1="dsVizPhantomX - 50" :y1="dsVizPhantomY - dsTumorDepth * 4"
-                  :x2="dsVizPhantomX + 50" :y2="dsVizPhantomY - dsTumorDepth * 4"
-                  stroke="#fc8181" stroke-width="1" stroke-dasharray="4,3"
-                />
-                <text
-                  :x="dsVizPhantomX + 54" :y="dsVizPhantomY - dsTumorDepth * 4 + 4"
-                  font-size="9" fill="#fc8181">深{{ dsTumorDepth }}cm</text>
-              </svg>
+                <span class="ds-phantom-slice-num">
+                  {{ dsVizPhantomSliceIndices[dsVizPhantomView] + 1 }}/{{ dsPhantomBgMaxIdx + 1 }}
+                </span>
+              </div>
             </div>
 
             <!-- ── 模式B：CT 图像交互定位（三视图）── -->
@@ -2217,7 +2275,8 @@ export default {
       dsVizCtSliceIndices: { axial: 0, coronal: 0, sagittal: 0 },
       // 全身体模预览切片（构建体模后填入）
       phantomSlices: { axial: [], coronal: [], sagittal: [] },
-      dsVizPhantomSliceIdx: 0,    // 示意图模式中体模切片索引（矢状面）
+      dsVizPhantomView: 'sagittal',  // 示意图模式中体模视图: 'axial'|'coronal'|'sagittal'
+      dsVizPhantomSliceIndices: { axial: 0, coronal: 0, sagittal: 0 },
 
       // 剂量数据
       doseFiles: [],
@@ -2511,26 +2570,33 @@ export default {
       return { left: `${left}%`, top: `${top}%`, width: `${diam}%`, height: `${diam}%`, marginLeft: `-${diam/2}%`, marginTop: `-${diam/2}%` };
     },
 
-    // ── 示意图模式：全身体模切片（矢状面背景）──
+    // ── 示意图模式：全身体模切片（三视图背景）──
     dsPhantomBgSlice() {
-      // 优先使用构建好的全身体模矢状切片，回退到 CT 矢状切片
-      const src = this.phantomSlices.sagittal.length
-        ? this.phantomSlices.sagittal
-        : this.slices.sagittal;
+      const view = this.dsVizPhantomView;
+      // phantom 三视图优先；axial/coronal 无 CT 回退
+      const src = this.phantomSlices[view].length
+        ? this.phantomSlices[view]
+        : (view === 'sagittal' ? this.slices.sagittal : []);
       if (!src.length) return null;
-      const idx = Math.max(0, Math.min(src.length - 1, this.dsVizPhantomSliceIdx));
+      const idx = Math.max(0, Math.min(src.length - 1,
+        this.dsVizPhantomSliceIndices[view]));
       return this.getImageUrl(src[idx]);
     },
 
     dsPhantomBgMaxIdx() {
-      const src = this.phantomSlices.sagittal.length
-        ? this.phantomSlices.sagittal : this.slices.sagittal;
+      const view = this.dsVizPhantomView;
+      const src = this.phantomSlices[view].length
+        ? this.phantomSlices[view]
+        : (view === 'sagittal' ? this.slices.sagittal : []);
       return Math.max(0, src.length - 1);
     },
 
     // 示意图模式：是否有任何背景图像可用
     dsHasPhantomBg() {
-      return this.phantomSlices.sagittal.length > 0 || this.slices.sagittal.length > 0;
+      return this.phantomSlices.sagittal.length > 0 ||
+             this.phantomSlices.coronal.length > 0 ||
+             this.phantomSlices.axial.length > 0 ||
+             this.slices.sagittal.length > 0;
     },
 
     canGenerateDVH() {
@@ -2948,8 +3014,12 @@ export default {
         // 保存全身体模预览切片（供几何可视化使用）
         if (response.data.phantomSlices) {
           this.phantomSlices = response.data.phantomSlices;
-          // 示意图模式默认跳到矢状面中间切片
-          this.dsVizPhantomSliceIdx = Math.floor((this.phantomSlices.sagittal.length || 0) / 2);
+          // 各视图默认跳到中间切片
+          for (const view of ['axial', 'coronal', 'sagittal']) {
+            const len = (this.phantomSlices[view] || []).length;
+            this.dsVizPhantomSliceIndices[view] = Math.floor(len / 2);
+          }
+          this.dsVizPhantomView = 'sagittal';
         }
 
         this.addLog('全身体模构建成功', 'success');
@@ -6032,13 +6102,14 @@ export default {
   flex-direction: column;
   align-items: center;
 }
-/* ── 全身体模切片滑块 ── */
+/* ── 全身体模切片滑块（位于画布下方） ── */
 .ds-phantom-slice-ctrl {
   display: flex;
   align-items: center;
   gap: 6px;
   width: 100%;
-  margin-bottom: 4px;
+  padding: 4px 0 2px;
+  margin-bottom: 2px;
 }
 .ds-phantom-slice-label {
   font-size: 0.72rem;
@@ -6130,6 +6201,33 @@ export default {
   overflow: hidden;
 }
 .ds-svg { width: 100%; display: block; }
+
+/* ── 体模三视图画布（含 img + SVG 覆盖层） ── */
+.ds-phantom-canvas {
+  position: relative;
+  width: 100%;
+  background: #0d1117;
+  /* 高度自适应：撑开到图片自然高度 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 260px;
+}
+.ds-phantom-bg-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 600px;
+  object-fit: contain;
+  opacity: 0.9;
+}
+.ds-phantom-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
 
 /* ── CT 图像交互模式 ── */
 .ds-ct-viz-wrap {

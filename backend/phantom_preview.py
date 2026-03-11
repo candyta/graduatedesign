@@ -88,11 +88,16 @@ def _rescale_if_needed(rgb: np.ndarray, min_size: int = 512) -> np.ndarray:
     return out.astype(np.uint8)
 
 
-def generate_phantom_preview(phantom: np.ndarray, output_dir: str) -> dict:
+def generate_phantom_preview(phantom: np.ndarray, output_dir: str,
+                              voxel_size_mm: tuple = (2.137, 2.137, 8.0)) -> dict:
     """
-    phantom : np.ndarray  shape (X, Y, Z)  dtype int16, organ IDs
+    phantom      : np.ndarray  shape (X, Y, Z)  dtype int16, organ IDs
+    voxel_size_mm: (sx, sy, sz) physical voxel size in mm; used for anisotropic
+                   scaling so each output image has correct physical proportions.
     Returns  {'axial': N_axial, 'coronal': N_coronal, 'sagittal': N_sagittal}
     """
+    from scipy.ndimage import zoom as ndzoom
+    sx, sy, sz = voxel_size_mm
     X, Y, Z = phantom.shape
     views = {
         'axial':    ('z', Z),
@@ -105,18 +110,37 @@ def generate_phantom_preview(phantom: np.ndarray, output_dir: str) -> dict:
         os.makedirs(vdir, exist_ok=True)
         for i in range(n_slices):
             if axis == 'z':
-                # transverse (XY plane)
+                # axial (XY plane): rows=Y(sy), cols=X(sx) — sx==sy, no anisotropy
                 s = phantom[:, :, i]       # (X, Y)
-                arr = s.T                   # (Y, X) – rows=Y, cols=X
+                arr = s.T                   # (Y, X)
+                row_scale, col_scale = 1.0, 1.0
             elif axis == 'y':
-                # coronal (XZ plane)
+                # coronal (XZ plane): rows=Z(sz), cols=X(sx)
                 s = phantom[:, i, :]       # (X, Z)
-                arr = s.T[::-1]             # (Z, X) flipped so Z=0 is at bottom
+                arr = s.T[::-1]             # (Z, X) flipped so feet at bottom
+                row_scale = sz / sx        # stretch Z rows to physical mm height
+                col_scale = 1.0
             else:
-                # sagittal (YZ plane)
+                # sagittal (YZ plane): rows=Z(sz), cols=Y(sy)
                 s = phantom[i, :, :]       # (Y, Z)
                 arr = s.T[::-1]             # (Z, Y) flipped
+                row_scale = sz / sy        # stretch Z rows to physical mm height
+                col_scale = 1.0
+
             rgb = _colorize_slice(arr)
+
+            # Apply anisotropic physical scaling (nearest-neighbour to keep
+            # organ boundaries sharp; only meaningful for cor/sag views)
+            if row_scale != 1.0 or col_scale != 1.0:
+                h, w = rgb.shape[:2]
+                new_h = max(1, round(h * row_scale))
+                new_w = max(1, round(w * col_scale))
+                rgb = np.stack(
+                    [ndzoom(rgb[:, :, c], (new_h / h, new_w / w), order=0)
+                     for c in range(3)],
+                    axis=2
+                ).astype(np.uint8)
+
             rgb = _rescale_if_needed(rgb)
             Image.fromarray(rgb, mode='RGB').save(
                 os.path.join(vdir, f'{view_name}_{i:03d}.png')
@@ -147,7 +171,14 @@ if __name__ == '__main__':
 
     try:
         data = load_phantom(args.type)
-        counts = generate_phantom_preview(data, args.output_dir)
+        # Determine physical voxel size for correct anisotropic scaling
+        _VOXEL_SIZE = {
+            'AM': (2.137, 2.137, 8.0),
+            'AF': (1.775, 1.775, 4.84),
+        }
+        voxel_size = _VOXEL_SIZE.get(args.type.upper(), (2.137, 2.137, 8.0))
+        counts = generate_phantom_preview(data, args.output_dir,
+                                          voxel_size_mm=voxel_size)
         print(json.dumps({'success': True, 'slices': counts}), flush=True)
     except Exception as e:
         print(json.dumps({'success': False, 'error': str(e)}), flush=True)
