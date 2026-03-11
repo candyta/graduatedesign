@@ -828,6 +828,56 @@ app.post('/run-mcnp-computation', async (req, res) => {
             console.warn('[sdef update] source_position not provided, using existing .inp source definition');
         }
 
+        // 【修复】将前端设置的肿瘤位置和半径注入MCNP lattice fill array
+        // 原始.inp由ct_phantom_fusion.py生成，没有肿瘤区域（material 900）。
+        // 若不注入，MCNP计算的剂量峰值将出现在束流入射点（胸腔表面），
+        // 而非肿瘤位置——即用户在可视化中看到的错误现象。
+        if (tumor_position && tumor_position.length === 3 && tumor_radius) {
+            console.log('[tumor inject] 开始向 .inp 文件注入肿瘤区域...');
+            const injectScript = path.join(__dirname, 'inject_tumor_to_inp.py');
+            for (const filePath of sortedInputFiles) {
+                const fullFilePath = path.join(inputDir, filePath);
+                try {
+                    const pt = phantom_type || 'AM';
+                    const injectCmd = [
+                        PYTHON_PATH, injectScript, fullFilePath,
+                        '--tx', tumor_position[0].toString(),
+                        '--ty', tumor_position[1].toString(),
+                        '--tz', tumor_position[2].toString(),
+                        '--radius', tumor_radius.toString(),
+                        '--phantom-type', pt
+                    ];
+                    const injectResult = await new Promise((resolve, reject) => {
+                        const proc = spawn(injectCmd[0], injectCmd.slice(1), { cwd: __dirname });
+                        let out = '', err = '';
+                        proc.stdout.on('data', d => { out += d.toString(); });
+                        proc.stderr.on('data', d => { err += d.toString(); });
+                        proc.on('close', code => resolve({ code, out, err }));
+                        proc.on('error', reject);
+                    });
+                    if (injectResult.code === 0) {
+                        // 解析最后一行 JSON 结果
+                        const lastLine = injectResult.out.trim().split('\n').pop();
+                        try {
+                            const injectJson = JSON.parse(lastLine);
+                            console.log(`[tumor inject] ${filePath}: ${injectJson.tumor_voxels_injected} 个肿瘤体素已注入`);
+                            mcnpState.logs.push(`[肿瘤注入] ${injectJson.tumor_voxels_injected} 个体素注入为材料900 (B-10 loaded)`);
+                        } catch (_) {
+                            console.log(`[tumor inject] ${filePath}: 注入完成`);
+                        }
+                        if (injectResult.out) console.log(`[tumor inject stdout] ${injectResult.out}`);
+                    } else {
+                        console.error(`[tumor inject] ${filePath} 失败 (退出码: ${injectResult.code})`);
+                        if (injectResult.err) console.error(`[tumor inject stderr] ${injectResult.err}`);
+                    }
+                } catch (injectErr) {
+                    console.error(`[tumor inject] ${filePath} 出错: ${injectErr.message}`);
+                }
+            }
+        } else {
+            console.warn('[tumor inject] tumor_position 未提供，跳过肿瘤区域注入');
+        }
+
         // 初始化进度状态
         mcnpState.running = true;
         mcnpState.progress = 0;
