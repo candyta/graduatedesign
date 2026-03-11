@@ -1727,17 +1727,22 @@
                         <polygon points="0 0, 8 3, 0 6" fill="#d97706"/>
                       </marker>
                     </defs>
-                    <!-- 肿瘤标记（使用解剖坐标精确定位） -->
-                    <circle
-                      :cx="dsTumorInPhantomSvg.x"
-                      :cy="dsTumorInPhantomSvg.y"
-                      :r="Math.max(5, dsPhantom.tumor_radius * 4)"
-                      fill="rgba(229,62,62,0.75)" stroke="#fc8181" stroke-width="2"
-                    />
-                    <text
-                      :x="dsTumorInPhantomSvg.x + 8"
-                      :y="dsTumorInPhantomSvg.y - 6"
-                      font-size="10" fill="#fc8181">肿瘤</text>
+                    <!-- 肿瘤截面：球形肿瘤在当前切片上的截面（椭圆，随切片位置动态缩放） -->
+                    <template v-if="dsTumorSliceSvg.visible">
+                      <!-- 截面轮廓椭圆（越靠近球心截面越大） -->
+                      <ellipse
+                        :cx="dsTumorSliceSvg.x"
+                        :cy="dsTumorSliceSvg.y"
+                        :rx="dsTumorSliceSvg.rx"
+                        :ry="dsTumorSliceSvg.ry"
+                        fill="rgba(229,62,62,0.55)" stroke="#fc8181" stroke-width="1.5"
+                      />
+                      <!-- 标注（仅最大截面切片附近显示） -->
+                      <text v-if="dsTumorSliceSvg.isCenterSlice"
+                        :x="dsTumorSliceSvg.x + dsTumorSliceSvg.rx + 4"
+                        :y="dsTumorSliceSvg.y - 4"
+                        font-size="10" fill="#fc8181">肿瘤</text>
+                    </template>
                     <!-- 中子源 + 束流（矢状/冠状面有意义，轴向面隐藏） -->
                     <template v-if="dsVizPhantomView !== 'axial'">
                       <g :transform="`translate(${dsVizSourceX}, ${dsVizSourceY})`">
@@ -2606,6 +2611,69 @@ export default {
       return {
         x: Math.max(10, Math.min(410, svgX)),
         y: Math.max(10, Math.min(450, svgY)),
+      };
+    },
+
+    // 当前切片处球形肿瘤的截面：根据切片位置动态计算截面半径（球截面公式）
+    // 切片距球心距离 d → 截面半径 r = sqrt(R² - d²)，超出球体范围则不可见
+    dsTumorSliceSvg() {
+      const view  = this.dsVizPhantomView;
+      const R     = this.dsPhantom.tumor_radius;   // cm
+      const d     = this.dsPhantomPhysDims;
+      const tc    = this.dsTumorInPhantomCm;        // offset from phantom geometric center
+      const isAF  = this.dsPhantom.phantom_type === 'AF';
+
+      // 体素尺寸 (cm)
+      const vox = isAF
+        ? { x: 0.1775, y: 0.1775, z: 0.484 }
+        : { x: 0.2137, y: 0.2137, z: 0.800 };
+
+      // 肿瘤中心绝对坐标（从体模边缘, cm）
+      const tcx = d.xc + tc[0];
+      const tcy = d.yc + tc[1];
+      const tcz = d.zc + tc[2];
+
+      // 当前切片的物理位置（cm）
+      const idx  = this.dsVizPhantomSliceIndices[view];
+      let slicePos_cm, dist;
+      if (view === 'sagittal') {
+        slicePos_cm = idx * vox.x;
+        dist = slicePos_cm - tcx;
+      } else if (view === 'coronal') {
+        slicePos_cm = idx * vox.y;
+        dist = slicePos_cm - tcy;
+      } else {  // axial
+        slicePos_cm = idx * vox.z;
+        dist = slicePos_cm - tcz;
+      }
+
+      // 球截面半径（cm）；超出球体范围则不显示
+      if (Math.abs(dist) > R) return { visible: false };
+      const r_slice = Math.sqrt(R * R - dist * dist);
+
+      // 映射到 SVG 坐标（全画布 0-420 × 0-460 对应体模物理范围）
+      // 注：由于各轴方向的 SVG/物理 缩放比不同，截面显示为椭圆
+      let rx, ry;
+      if (view === 'coronal') {
+        rx = r_slice * (420 / d.x);
+        ry = r_slice * (460 / d.z);
+      } else if (view === 'axial') {
+        rx = r_slice * (420 / d.x);
+        ry = r_slice * (460 / d.y);
+      } else {  // sagittal
+        rx = r_slice * (420 / d.y);
+        ry = r_slice * (460 / d.z);
+      }
+
+      const pos = this.dsTumorInPhantomSvg;
+      return {
+        visible: true,
+        x:  pos.x,
+        y:  pos.y,
+        rx: Math.max(2, rx),
+        ry: Math.max(2, ry),
+        // 截面面积越大越靠近球心，标注用
+        isCenterSlice: Math.abs(dist) < Math.max(vox.x, vox.y, vox.z),
       };
     },
 
