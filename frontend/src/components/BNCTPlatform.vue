@@ -1625,12 +1625,12 @@
 
               <div class="ds-row2">
                 <div class="ds-field-group">
-                  <label class="ds-label">肿瘤半径 (cm)</label>
+                  <label class="ds-label">肿瘤半径 (cm) <span class="ds-hint-tag" title="影响可视化图形大小；右侧剂量数值仅与深度相关">仅影响可视化</span></label>
                   <input v-model.number="dsPhantom.tumor_radius" type="number" step="0.5" min="0.5" max="10" class="ds-input-full" @input="dsOnParamChange" />
                 </div>
                 <div class="ds-field-group">
-                  <label class="ds-label">肿瘤深度 (cm)</label>
-                  <input v-model.number="dsTumorDepth" type="number" step="0.5" min="0" max="30" class="ds-input-full" @input="dsOnParamChange" />
+                  <label class="ds-label">肿瘤深度 (cm) <span class="ds-hint-tag" title="影响右侧剂量数值：深度决定中子在组织中的衰减程度">影响剂量计算</span></label>
+                  <input v-model.number="dsTumorDepth" type="number" step="0.5" min="0" max="30" class="ds-input-full" @input="dsOnTumorDepthChange" />
                 </div>
               </div>
             </div>
@@ -2701,6 +2701,14 @@ export default {
     } catch (err) {
       console.warn('[初始化] 清除会话文件失败（可忽略）:', err.message);
     }
+
+    // 同步初始肿瘤深度到tumor_position[2]，确保可视化与深度值一致
+    // （不调用dsOnParamChange，避免页面刚加载就触发计算）
+    const d = this.dsPhantomPhysDims;
+    const offset = this.dsCtToPhantomOffset;
+    this.dsPhantom.tumor_position[2] = parseFloat(
+      (d.z - d.zc - offset[2] - this.dsTumorDepth).toFixed(1)
+    );
   },
 
   methods: {
@@ -6088,6 +6096,18 @@ export default {
   font-size: 0.75rem;
   color: #718096;
   margin-bottom: 0.2rem;
+}
+.ds-hint-tag {
+  display: inline-block;
+  font-size: 0.62rem;
+  padding: 0 0.3rem;
+  border-radius: 3px;
+  margin-left: 0.3rem;
+  cursor: help;
+  vertical-align: middle;
+  background: #2d3748;
+  color: #a0aec0;
+  border: 1px solid #4a5568;
 }
 
 .ds-xyz-row {
