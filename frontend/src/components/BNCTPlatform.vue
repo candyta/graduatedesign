@@ -1665,8 +1665,103 @@
 
           <!-- ── 中间：几何可视化 ── -->
           <section class="ds-viz-panel">
-            <h3 class="ds-viz-title">几何示意图</h3>
-            <div class="ds-canvas-wrap">
+            <!-- 视图切换 Tab -->
+            <div class="ds-viz-tabs">
+              <button
+                :class="['ds-viz-tab-btn', dsVizTab === 'ct' ? 'active' : '']"
+                @click="dsVizTab = 'ct'"
+                :disabled="!slices.coronal || !slices.coronal.length"
+                :title="(!slices.coronal || !slices.coronal.length) ? '请先上传CT影像' : 'CT截面视图'">
+                🩻 CT截面
+              </button>
+              <button
+                :class="['ds-viz-tab-btn', dsVizTab === 'diagram' ? 'active' : '']"
+                @click="dsVizTab = 'diagram'">
+                📐 几何示意
+              </button>
+              <!-- MCNP 自动导入按钮 -->
+              <button class="ds-import-btn" @click="dsLoadMcnpGeometry" title="从MCNP配准结果自动填充束流几何">
+                ⬇ 从MCNP导入
+              </button>
+            </div>
+
+            <!-- MCNP 几何导入成功提示 -->
+            <transition name="ds-banner-fade">
+              <div v-if="dsMcnpGeoBanner" class="ds-geo-banner">
+                ✅ 已从MCNP配准结果自动填充束流几何参数
+              </div>
+            </transition>
+
+            <!-- ── CT 截面视图 ── -->
+            <div v-if="dsVizTab === 'ct'" class="ds-ct-view">
+              <!-- 视图选择 -->
+              <div class="ds-ct-view-sel">
+                <button v-for="v in ['axial','coronal','sagittal']" :key="v"
+                  :class="['ds-ct-sel-btn', dsCtView === v ? 'active' : '']"
+                  :disabled="!slices[v] || !slices[v].length"
+                  @click="dsCtView = v; dsCtSliceIdx = Math.min(dsCtSliceIdx, (slices[v]||[]).length - 1)">
+                  {{ v === 'axial' ? '轴位' : v === 'coronal' ? '冠状' : '矢状' }}
+                </button>
+              </div>
+
+              <!-- CT 图像 + SVG 叠加层 -->
+              <div class="ds-ct-canvas" ref="dsCtCanvas">
+                <div v-if="slices[dsCtView] && slices[dsCtView][dsCtSliceIdx]" class="ds-ct-img-wrap">
+                  <img
+                    :src="getImageUrl(slices[dsCtView][dsCtSliceIdx])"
+                    class="ds-ct-img"
+                    ref="dsCtImg"
+                    alt="CT截面"
+                  />
+                  <!-- SVG overlay：肿瘤标记 + 束流入射 -->
+                  <svg class="ds-ct-overlay" viewBox="0 0 100 100" preserveAspectRatio="none">
+                    <defs>
+                      <marker id="ct-arrow" markerWidth="6" markerHeight="5" refX="5" refY="2.5" orient="auto">
+                        <polygon points="0 0, 6 2.5, 0 5" fill="#f6ad55"/>
+                      </marker>
+                    </defs>
+                    <!-- 束流方向箭头（从顶部射入，角度由direction决定） -->
+                    <line
+                      :x1="50 - dsSource.direction[0] * 40"
+                      :y1="Math.max(2, 50 - dsSource.direction[2] * 40)"
+                      x2="50" y2="50"
+                      stroke="#f6ad55" stroke-width="1.5" stroke-dasharray="4,2"
+                      marker-end="url(#ct-arrow)"
+                    />
+                    <!-- 束流半径（椭圆） -->
+                    <ellipse cx="50" cy="50"
+                      :rx="Math.max(2, dsSource.beam_radius * 1.2)"
+                      ry="2"
+                      fill="none" stroke="#f6ad55" stroke-width="0.8" stroke-dasharray="2,1"/>
+                    <!-- 肿瘤位置（红圈） -->
+                    <circle
+                      cx="50" cy="50"
+                      :r="Math.max(3, dsPhantom.tumor_radius * 1.5)"
+                      fill="rgba(229,62,62,0.35)" stroke="#e53e3e" stroke-width="1.2"/>
+                    <text x="50" y="47" text-anchor="middle" font-size="5" fill="#fff" font-weight="bold">肿瘤</text>
+                    <!-- 深度标注 -->
+                    <text x="2" y="98" font-size="4" fill="#fff">深度 {{ dsTumorDepth }}cm</text>
+                  </svg>
+                </div>
+                <div v-else class="ds-ct-empty">
+                  <p>🩻</p>
+                  <p>请先上传CT影像</p>
+                </div>
+              </div>
+
+              <!-- 切片导航 -->
+              <div v-if="slices[dsCtView] && slices[dsCtView].length" class="ds-ct-nav">
+                <button @click="dsCtSliceIdx = Math.max(0, dsCtSliceIdx - 1)" :disabled="dsCtSliceIdx <= 0" class="nav-btn">◀ 前</button>
+                <input type="range" v-model.number="dsCtSliceIdx"
+                  :min="0" :max="(slices[dsCtView]||[]).length - 1" step="1" class="ds-ct-slider"/>
+                <button @click="dsCtSliceIdx = Math.min((slices[dsCtView]||[]).length - 1, dsCtSliceIdx + 1)"
+                  :disabled="dsCtSliceIdx >= (slices[dsCtView]||[]).length - 1" class="nav-btn">后 ▶</button>
+                <span class="ds-ct-idx-label">{{ dsCtSliceIdx + 1 }} / {{ (slices[dsCtView]||[]).length }}</span>
+              </div>
+            </div>
+
+            <!-- ── 几何示意图（原有SVG） ── -->
+            <div v-else class="ds-canvas-wrap">
               <svg ref="dsCanvas" class="ds-svg" viewBox="0 0 420 460" xmlns="http://www.w3.org/2000/svg">
                 <!-- 背景 -->
                 <rect width="420" height="460" fill="#f8fafc" rx="8"/>
@@ -1679,11 +1774,8 @@
 
                 <!-- 体模轮廓（椭圆人体近似） -->
                 <g :transform="`translate(${dsVizPhantomX}, ${dsVizPhantomY}) rotate(${dsPhantom.rotation_deg[1]})`">
-                  <!-- 躯干 -->
                   <ellipse cx="0" cy="0" rx="50" ry="90" fill="rgba(100,180,255,0.18)" stroke="#4299e1" stroke-width="2"/>
-                  <!-- 头部 -->
                   <ellipse cx="0" cy="-112" rx="28" ry="24" fill="rgba(100,180,255,0.25)" stroke="#4299e1" stroke-width="1.5"/>
-                  <!-- 肿瘤 -->
                   <circle
                     :cx="dsPhantom.tumor_position[2] * 2"
                     :cy="-dsPhantom.tumor_position[1] * 2"
@@ -1712,14 +1804,12 @@
                   marker-end="url(#arrowhead)"
                 />
 
-                <!-- 箭头标记 -->
                 <defs>
                   <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="6" refY="3" orient="auto">
                     <polygon points="0 0, 8 3, 0 6" fill="#d97706"/>
                   </marker>
                 </defs>
 
-                <!-- 束流半径标注 -->
                 <line
                   :x1="dsVizSourceX - dsSource.beam_radius * 2" :y1="dsVizSourceY - 18"
                   :x2="dsVizSourceX + dsSource.beam_radius * 2" :y2="dsVizSourceY - 18"
@@ -1729,7 +1819,6 @@
                   r={{ dsSource.beam_radius }}cm
                 </text>
 
-                <!-- 距离标注 -->
                 <text
                   :x="(dsVizSourceX + dsVizPhantomX) / 2 + 6"
                   :y="(dsVizSourceY + dsVizPhantomY) / 2 - 8"
@@ -1737,17 +1826,14 @@
                   {{ dsVizDistance.toFixed(1) }}cm
                 </text>
 
-                <!-- 源坐标标注 -->
                 <text :x="dsVizSourceX" :y="dsVizSourceY + 24" text-anchor="middle" font-size="9" fill="#92400e">
                   ({{ dsSource.position[0] }},{{ dsSource.position[1] }},{{ dsSource.position[2] }})
                 </text>
 
-                <!-- 体模坐标标注 -->
                 <text :x="dsVizPhantomX" :y="dsVizPhantomY + 110" text-anchor="middle" font-size="9" fill="#2b6cb0">
                   中心({{ dsPhantom.center[0] }},{{ dsPhantom.center[1] }},{{ dsPhantom.center[2] }})
                 </text>
 
-                <!-- 深度标注线 -->
                 <line
                   :x1="dsVizPhantomX - 50" :y1="dsVizPhantomY - dsTumorDepth * 4"
                   :x2="dsVizPhantomX + 50" :y2="dsVizPhantomY - dsTumorDepth * 4"
@@ -2223,6 +2309,16 @@ export default {
       dsValidateResult: null,
       dsIntensityExp: '12',
 
+      // 可视化面板 tab: 'diagram' | 'ct'
+      dsVizTab: 'diagram',
+      dsCtView: 'coronal',   // which CT view: axial | coronal | sagittal
+      dsCtSliceIdx: 0,
+
+      // MCNP 几何自动填充
+      dsMcnpGeoLoaded: false,
+      dsMcnpGeoBanner: false,
+      dsMcnpGeoData: null,
+
       dsSource: {
         source_type:      'epithermal',
         position:         [0, 0, 100],
@@ -2457,6 +2553,50 @@ export default {
       }
     },
 
+    async dsLoadMcnpGeometry() {
+      try {
+        const { data } = await axios.get(`${API_BASE}/dose-components/mcnp-geometry`);
+        if (data.success && data.geometry) {
+          const g = data.geometry;
+          // 填充源位置和方向
+          if (g.source_position) {
+            this.dsSource.position = [...g.source_position];
+          }
+          if (g.sdef_axs) {
+            // beam direction = axs direction (normalized)
+            const axs = g.sdef_axs;
+            const len = Math.sqrt(axs[0]*axs[0] + axs[1]*axs[1] + axs[2]*axs[2]) || 1;
+            this.dsSource.direction = axs.map(v => parseFloat((v/len).toFixed(4)));
+          }
+          if (g.beam_radius) this.dsSource.beam_radius = parseFloat(g.beam_radius.toFixed(2));
+          if (g.energy_MeV)  this.dsSource.energy_mono  = g.energy_MeV;
+          // 填充肿瘤位置
+          if (g.sdef_pos) {
+            this.dsPhantom.tumor_position = [...g.sdef_pos];
+          }
+          if (typeof g.tumor_depth_cm === 'number') {
+            this.dsTumorDepth = parseFloat(g.tumor_depth_cm.toFixed(1));
+          }
+          // 自动切换到 CT 视图（如有 CT 数据）
+          if (this.slices.coronal && this.slices.coronal.length > 0) {
+            this.dsVizTab = 'ct';
+            // 根据肿瘤 Y 坐标选择冠状切片（粗略对齐）
+            const tumorY = (g.sdef_pos && g.sdef_pos[1]) || 0;
+            const midIdx = Math.round(this.slices.coronal.length / 2);
+            this.dsCtSliceIdx = Math.max(0, Math.min(this.slices.coronal.length - 1,
+              midIdx + Math.round(tumorY)));
+          }
+          this.dsMcnpGeoLoaded = true;
+          this.dsMcnpGeoData = g;
+          this.dsMcnpGeoBanner = true;
+          setTimeout(() => { this.dsMcnpGeoBanner = false; }, 5000);
+          if (this.dsAutoCalc) this.dsCalculate();
+        }
+      } catch (e) {
+        console.warn('[剂量组分] 未能加载MCNP几何:', e.message);
+      }
+    },
+
     // ========== 工具方法 ==========
     getImageUrl(path) {
       return path ? `${API_BASE}${path}?t=${Date.now()}` : '';
@@ -2665,6 +2805,8 @@ export default {
 
         this.addLog('全身体模构建成功', 'success');
         this.showMessage('全身体模构建成功，可以开始MCNP计算或直接进行风险评估', 'success');
+        // 尝试从生成的 .inp 文件自动填充剂量组分几何参数
+        this.dsLoadMcnpGeometry();
       } catch (error) {
         this.mcnpSteps[0].status = 'error';
         this.mcnpSteps[0].result = '构建失败';
@@ -2709,6 +2851,8 @@ export default {
 
         this.addLog('MCNP计算完成', 'success');
         this.showMessage('MCNP计算完成', 'success');
+        // MCNP 完成后刷新几何信息（可能已更新 session_info.json）
+        this.dsLoadMcnpGeometry();
       } catch (error) {
         clearInterval(progressInterval);
         this.mcnpSteps[1].status = 'error';
@@ -5767,6 +5911,136 @@ export default {
 }
 .ds-slider { flex: 1; }
 .ds-depth-val { font-size: 0.85rem; font-weight: 700; color: #e53e3e; min-width: 44px; }
+
+/* ── 可视化 Tab 切换 ── */
+.ds-viz-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid #e2e8f0;
+  margin-bottom: 8px;
+}
+.ds-viz-tab-btn {
+  padding: 4px 12px;
+  border: 1px solid #cbd5e0;
+  border-radius: 4px;
+  background: #f7fafc;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.ds-viz-tab-btn.active {
+  background: #4299e1;
+  color: #fff;
+  border-color: #3182ce;
+}
+.ds-viz-tab-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.ds-import-btn {
+  margin-left: auto;
+  padding: 4px 10px;
+  border: 1px solid #68d391;
+  border-radius: 4px;
+  background: #f0fff4;
+  color: #276749;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.ds-import-btn:hover { background: #c6f6d5; }
+
+/* ── MCNP 几何导入提示横幅 ── */
+.ds-geo-banner {
+  background: #c6f6d5;
+  color: #276749;
+  border: 1px solid #68d391;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 0.82rem;
+  margin-bottom: 8px;
+  text-align: center;
+}
+.ds-banner-fade-enter-active, .ds-banner-fade-leave-active { transition: opacity 0.5s; }
+.ds-banner-fade-enter-from, .ds-banner-fade-leave-to { opacity: 0; }
+
+/* ── CT 截面视图 ── */
+.ds-ct-view {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+.ds-ct-view-sel {
+  display: flex;
+  gap: 4px;
+}
+.ds-ct-sel-btn {
+  flex: 1;
+  padding: 3px 0;
+  border: 1px solid #cbd5e0;
+  border-radius: 4px;
+  background: #f7fafc;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+.ds-ct-sel-btn.active {
+  background: #2b6cb0;
+  color: #fff;
+  border-color: #2c5282;
+}
+.ds-ct-sel-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.ds-ct-canvas {
+  width: 100%;
+  min-height: 300px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #1a202c;
+}
+.ds-ct-img-wrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ds-ct-img {
+  width: 100%;
+  height: auto;
+  max-height: 340px;
+  object-fit: contain;
+  display: block;
+}
+.ds-ct-overlay {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  pointer-events: none;
+}
+.ds-ct-empty {
+  text-align: center;
+  color: #a0aec0;
+  padding: 40px;
+  font-size: 0.9rem;
+}
+.ds-ct-empty p:first-child { font-size: 2rem; }
+
+.ds-ct-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+.ds-ct-slider { flex: 1; }
+.ds-ct-idx-label { font-size: 0.78rem; color: #718096; min-width: 52px; text-align: right; }
 
 /* ── 结果面板 ── */
 .ds-results-panel {
