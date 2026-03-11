@@ -226,6 +226,17 @@ app.post('/upload-nii', uploadNii.single('niiFile'), async (req, res) => {
 
         console.log('Returning slice data:', result);
 
+        // 提取 CT 元数据（体素大小、物理尺寸、中心坐标）
+        let ctMetadata = null;
+        try {
+            const metaScript = path.join(__dirname, 'ct_metadata.py');
+            const { stdout: metaOut } = await execAsync(`"${PYTHON_PATH}" "${metaScript}" "${niiPath}"`);
+            ctMetadata = JSON.parse(metaOut.trim());
+            console.log('CT metadata extracted:', ctMetadata);
+        } catch (metaErr) {
+            console.warn('CT metadata extraction failed (non-fatal):', metaErr.message);
+        }
+
         // 响应前端
         res.json({
             success: true,
@@ -233,6 +244,7 @@ app.post('/upload-nii', uploadNii.single('niiFile'), async (req, res) => {
             folderName: req.uploadFolder,
             niiPath,
             npyPath,
+            ctMetadata,
             ...result // 包含生成的切片和最大切片数
         });
 

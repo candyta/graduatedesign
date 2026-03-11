@@ -1601,7 +1601,15 @@
               </div>
 
               <div class="ds-field-group">
-                <label class="ds-label">肿瘤位置（相对体模中心，cm）</label>
+                <div class="ds-label-row">
+                  <label class="ds-label">肿瘤位置（相对体模中心，cm）</label>
+                  <button
+                    class="ds-ct-locate-btn"
+                    :disabled="!ctMetadata"
+                    :title="ctMetadata ? '将肿瘤定位到CT体积中心' : '请先上传CT文件'"
+                    @click="dsLocateToCtCenter"
+                  >从CT定位</button>
+                </div>
                 <div class="ds-xyz-row">
                   <span class="ds-axis">X</span>
                   <input v-model.number="dsPhantom.tumor_position[0]" type="number" step="0.5" class="ds-input" @input="dsOnParamChange" />
@@ -1610,6 +1618,9 @@
                   <span class="ds-axis">Z</span>
                   <input v-model.number="dsPhantom.tumor_position[2]" type="number" step="0.5" class="ds-input" @input="dsOnParamChange" />
                 </div>
+                <p v-if="ctMetadata" class="ds-ct-hint-small">
+                  CT 物理尺寸：{{ ctMetadata.phys_size_cm[0].toFixed(1) }} × {{ ctMetadata.phys_size_cm[1].toFixed(1) }} × {{ ctMetadata.phys_size_cm[2].toFixed(1) }} cm
+                </p>
               </div>
 
               <div class="ds-row2">
@@ -1665,11 +1676,37 @@
 
           <!-- ── 中间：几何可视化 ── -->
           <section class="ds-viz-panel">
-            <h3 class="ds-viz-title">几何示意图</h3>
-            <div class="ds-canvas-wrap">
+            <!-- 标题 + 视图切换 -->
+            <div class="ds-viz-header">
+              <h3 class="ds-viz-title">几何可视化</h3>
+              <div class="ds-viz-mode-tabs">
+                <button
+                  :class="['ds-mode-tab', dsVizMode === 'schematic' ? 'active' : '']"
+                  @click="dsVizMode = 'schematic'"
+                >示意图</button>
+                <button
+                  :class="['ds-mode-tab', dsVizMode === 'ct' ? 'active' : '']"
+                  :disabled="!slices.coronal.length"
+                  :title="slices.coronal.length ? 'CT/轮廓视图' : '请先上传CT文件'"
+                  @click="dsVizMode = 'ct'"
+                >CT 图像</button>
+              </div>
+            </div>
+
+            <!-- ── 模式A：传统示意图 ── -->
+            <div v-if="dsVizMode === 'schematic'" class="ds-canvas-wrap">
               <svg ref="dsCanvas" class="ds-svg" viewBox="0 0 420 460" xmlns="http://www.w3.org/2000/svg">
                 <!-- 背景 -->
                 <rect width="420" height="460" fill="#f8fafc" rx="8"/>
+
+                <!-- CT 冠状切片背景（若已加载则半透明叠加） -->
+                <image
+                  v-if="dsCTVizSlice"
+                  :href="dsCTVizSlice"
+                  x="110" y="60" width="200" height="360"
+                  preserveAspectRatio="xMidYMid meet"
+                  opacity="0.45"
+                />
 
                 <!-- 坐标轴 -->
                 <line x1="30" y1="430" x2="390" y2="430" stroke="#cbd5e0" stroke-width="1"/>
@@ -1677,21 +1714,25 @@
                 <text x="395" y="434" font-size="11" fill="#718096">Z</text>
                 <text x="32"  y="14"  font-size="11" fill="#718096">Y</text>
 
-                <!-- 体模轮廓（椭圆人体近似） -->
+                <!-- 体模轮廓（无CT时显示椭圆；有CT时为半透明辅助线） -->
                 <g :transform="`translate(${dsVizPhantomX}, ${dsVizPhantomY}) rotate(${dsPhantom.rotation_deg[1]})`">
                   <!-- 躯干 -->
-                  <ellipse cx="0" cy="0" rx="50" ry="90" fill="rgba(100,180,255,0.18)" stroke="#4299e1" stroke-width="2"/>
+                  <ellipse cx="0" cy="0" rx="50" ry="90"
+                    :fill="dsCTVizSlice ? 'rgba(100,180,255,0.05)' : 'rgba(100,180,255,0.18)'"
+                    stroke="#4299e1" :stroke-width="dsCTVizSlice ? 1 : 2" stroke-dasharray="6,3"/>
                   <!-- 头部 -->
-                  <ellipse cx="0" cy="-112" rx="28" ry="24" fill="rgba(100,180,255,0.25)" stroke="#4299e1" stroke-width="1.5"/>
+                  <ellipse cx="0" cy="-112" rx="28" ry="24"
+                    :fill="dsCTVizSlice ? 'rgba(100,180,255,0.05)' : 'rgba(100,180,255,0.25)'"
+                    stroke="#4299e1" :stroke-width="dsCTVizSlice ? 1 : 1.5" stroke-dasharray="4,3"/>
                   <!-- 肿瘤 -->
                   <circle
                     :cx="dsPhantom.tumor_position[2] * 2"
                     :cy="-dsPhantom.tumor_position[1] * 2"
                     :r="Math.max(4, dsPhantom.tumor_radius * 4)"
-                    fill="rgba(229,62,62,0.55)" stroke="#e53e3e" stroke-width="2"
+                    fill="rgba(229,62,62,0.65)" stroke="#e53e3e" stroke-width="2"
                   />
-                  <text x="0" y="-106" text-anchor="middle" font-size="10" fill="#2b6cb0">HEAD</text>
-                  <text x="0" y="4"   text-anchor="middle" font-size="10" fill="#2b6cb0">BODY</text>
+                  <text v-if="!dsCTVizSlice" x="0" y="-106" text-anchor="middle" font-size="10" fill="#2b6cb0">HEAD</text>
+                  <text v-if="!dsCTVizSlice" x="0" y="4"   text-anchor="middle" font-size="10" fill="#2b6cb0">BODY</text>
                   <text
                     :x="dsPhantom.tumor_position[2] * 2 + 8"
                     :y="-dsPhantom.tumor_position[1] * 2 - 6"
@@ -1759,9 +1800,54 @@
               </svg>
             </div>
 
-            <!-- 深度滑块 -->
+            <!-- ── 模式B：CT 图像交互定位 ── -->
+            <div v-else-if="dsVizMode === 'ct'" class="ds-ct-viz-wrap">
+              <div
+                ref="dsCTCanvas"
+                class="ds-ct-canvas"
+                @click="dsSetTumorFromCTClick"
+                title="点击设置肿瘤 X-Z 位置"
+              >
+                <!-- CT切片（或带轮廓的叠加图） -->
+                <img v-if="dsCTVizSlice" :src="dsCTVizSlice" class="ds-ct-bg-img" draggable="false" />
+                <div v-else class="ds-ct-no-img">暂无CT影像</div>
+
+                <!-- 肿瘤位置标记 -->
+                <div class="ds-ct-tumor-ring" :style="dsCTTumorStyle">
+                  <span class="ds-ct-tumor-label">肿瘤</span>
+                </div>
+
+                <!-- 束流方向指示箭头（从左侧进入，代表 X 正方向束流） -->
+                <div class="ds-ct-beam-indicator">
+                  <span class="ds-ct-beam-arrow">→</span>
+                  <span class="ds-ct-beam-text">束流方向</span>
+                </div>
+
+                <!-- 坐标十字线 -->
+                <div class="ds-ct-crosshair-h"></div>
+                <div class="ds-ct-crosshair-v"></div>
+              </div>
+
+              <!-- 切片选择（Y 方向，即冠状位） -->
+              <div class="ds-ct-slice-ctrl">
+                <label class="ds-label">冠状切片 (Y方向)</label>
+                <input
+                  type="range"
+                  v-model.number="dsVizCtSliceIdx"
+                  :min="0" :max="dsCTVizMaxIdx"
+                  class="ds-slider"
+                  @input="dsOnCtSliceChange"
+                />
+                <span class="ds-ct-slice-num">{{ dsVizCtSliceIdx + 1 }} / {{ dsCTVizMaxIdx + 1 }}</span>
+              </div>
+              <p class="ds-ct-interact-hint">
+                点击图像 → 设置肿瘤 X-Z 位置 &nbsp;|&nbsp; 拖动滑块 → 调整 Y 深度（同步更新肿瘤坐标）
+              </p>
+            </div>
+
+            <!-- 深度滑块（两种模式下均显示） -->
             <div class="ds-depth-ctrl">
-              <label class="ds-label">肿瘤深度</label>
+              <label class="ds-label">肿瘤深度（沿束流轴）</label>
               <input v-model.number="dsTumorDepth" type="range" min="0" max="25" step="0.5" class="ds-slider" @input="dsOnParamChange" />
               <span class="ds-depth-val">{{ dsTumorDepth }} cm</span>
             </div>
@@ -2087,6 +2173,11 @@ export default {
       niiPath: '',
       npyPath: '',
       folderName: '',
+      ctMetadata: null,        // CT 体积元数据（体素大小、物理尺寸、中心坐标）
+
+      // 剂量组分几何可视化模式
+      dsVizMode: 'schematic',  // 'schematic' | 'ct'
+      dsVizCtSliceIdx: 0,      // 当前冠状CT切片索引（用于几何可视化）
 
       // 剂量数据
       doseFiles: [],
@@ -2332,6 +2423,48 @@ export default {
       return 40 + (idx / (profile.length - 1)) * 350;
     },
 
+    // ── CT几何可视化计算属性 ──
+    // 用于几何可视化面板的冠状切片（叠加轮廓优先，否则使用原始CT）
+    dsCTVizSlice() {
+      const src = this.showContourOverlay && this.overlaySlices.coronal.length
+        ? this.overlaySlices.coronal
+        : this.slices.coronal;
+      if (!src.length) return null;
+      const idx = Math.max(0, Math.min(src.length - 1, this.dsVizCtSliceIdx));
+      return this.getImageUrl(src[idx]);
+    },
+
+    // 冠状切片最大索引
+    dsCTVizMaxIdx() {
+      const src = this.showContourOverlay && this.overlaySlices.coronal.length
+        ? this.overlaySlices.coronal : this.slices.coronal;
+      return Math.max(0, src.length - 1);
+    },
+
+    // 肿瘤在CT可视化面板上的像素位置（百分比）
+    dsCTTumorStyle() {
+      if (!this.ctMetadata) return { display: 'none' };
+      const meta = this.ctMetadata;
+      // tumor_position 是相对体模中心的偏移（cm）
+      // CT物理坐标: origin=左上角, 物理中心在 phys_size/2
+      // X(lateral): tumor_position[0], 映射到冠状图像水平方向
+      // Z(sup-inf): tumor_position[2], 映射到冠状图像垂直方向（Y轴翻转）
+      const xRel = (this.dsPhantom.tumor_position[0] + meta.phys_size_cm[0] / 2) / meta.phys_size_cm[0];
+      const zRel = (meta.phys_size_cm[2] / 2 - this.dsPhantom.tumor_position[2]) / meta.phys_size_cm[2];
+      const rRel = this.dsPhantom.tumor_radius / meta.phys_size_cm[0];
+      const leftPct  = Math.max(0, Math.min(100, xRel * 100));
+      const topPct   = Math.max(0, Math.min(100, zRel * 100));
+      const diam = Math.max(1, rRel * 2 * 100);
+      return {
+        left:       `${leftPct}%`,
+        top:        `${topPct}%`,
+        width:      `${diam}%`,
+        height:     `${diam}%`,
+        marginLeft: `-${diam / 2}%`,
+        marginTop:  `-${diam / 2}%`
+      };
+    },
+
     canGenerateDVH() {
       return this.organFiles.length > 0 && this.hasDoseData;
     },
@@ -2382,6 +2515,44 @@ export default {
 
     dsOnIntensityChange() {
       this.dsSource.intensity = Math.pow(10, Number(this.dsIntensityExp));
+      this.dsOnParamChange();
+    },
+
+    // 将肿瘤位置重置到CT体积中心（相对体模中心=0,0,0）
+    dsLocateToCtCenter() {
+      this.dsPhantom.tumor_position = [0, 0, 0];
+      if (this.slices.coronal.length) {
+        this.dsVizCtSliceIdx = Math.floor(this.slices.coronal.length / 2);
+      }
+      if (this.ctMetadata) {
+        this.dsTumorDepth = parseFloat((this.ctMetadata.phys_size_cm[2] / 4).toFixed(1));
+      }
+      this.dsOnParamChange();
+    },
+
+    // 点击CT图像设置肿瘤 X-Z 位置
+    dsSetTumorFromCTClick(event) {
+      if (!this.ctMetadata) return;
+      const canvas = this.$refs.dsCTCanvas;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      const relX = (event.clientX - rect.left) / rect.width;
+      const relZ = (event.clientY - rect.top) / rect.height;
+      const meta = this.ctMetadata;
+      const tumorX = relX * meta.phys_size_cm[0] - meta.phys_size_cm[0] / 2;
+      const tumorZ = meta.phys_size_cm[2] / 2 - relZ * meta.phys_size_cm[2];
+      this.$set(this.dsPhantom.tumor_position, 0, parseFloat(tumorX.toFixed(1)));
+      this.$set(this.dsPhantom.tumor_position, 2, parseFloat(tumorZ.toFixed(1)));
+      this.dsOnParamChange();
+    },
+
+    // 拖动冠状切片滑块时同步肿瘤 Y 位置
+    dsOnCtSliceChange() {
+      if (!this.ctMetadata) return;
+      const meta = this.ctMetadata;
+      const total = this.slices.coronal.length || 1;
+      const tumorY = (this.dsVizCtSliceIdx / total) * meta.phys_size_cm[1] - meta.phys_size_cm[1] / 2;
+      this.$set(this.dsPhantom.tumor_position, 1, parseFloat(tumorY.toFixed(1)));
       this.dsOnParamChange();
     },
 
@@ -2528,6 +2699,18 @@ export default {
         this.npyPath = response.data.npyPath;
         this.folderName = response.data.folderName;
         this.sliceIndices = { axial: 0, coronal: 0, sagittal: 0 };
+
+        // 保存 CT 元数据并将肿瘤默认定位到 CT 体积中心
+        if (response.data.ctMetadata && !response.data.ctMetadata.error) {
+          this.ctMetadata = response.data.ctMetadata;
+          // 肿瘤默认位置：相对体模中心 (0,0,0) = CT 物理中心
+          this.dsPhantom.tumor_position = [0, 0, 0];
+          // 初始肿瘤深度：CT Z 轴长度的 1/4（粗略起点，供用户调整）
+          this.dsTumorDepth = parseFloat((this.ctMetadata.phys_size_cm[2] / 4).toFixed(1));
+          // 几何可视化自动跳到冠状面中间切片
+          this.dsVizCtSliceIdx = Math.floor(this.slices.coronal.length / 2);
+          this.dsOnParamChange();
+        }
 
         // 启用第一个MCNP步骤
         this.mcnpSteps[0].disabled = false;
@@ -5743,13 +5926,43 @@ export default {
   flex-direction: column;
   align-items: center;
 }
+/* ── 几何可视化面板标题行 ── */
+.ds-viz-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin-bottom: 0.5rem;
+}
 .ds-viz-title {
   font-size: 0.88rem;
   font-weight: 700;
   color: #4a5568;
-  margin-bottom: 0.5rem;
-  align-self: flex-start;
 }
+.ds-viz-mode-tabs {
+  display: flex;
+  gap: 4px;
+}
+.ds-mode-tab {
+  padding: 3px 10px;
+  font-size: 0.78rem;
+  border: 1px solid #cbd5e0;
+  border-radius: 4px;
+  background: #f7fafc;
+  color: #4a5568;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.ds-mode-tab.active {
+  background: #4299e1;
+  color: #fff;
+  border-color: #4299e1;
+}
+.ds-mode-tab:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .ds-canvas-wrap {
   width: 100%;
   border: 1px solid #e2e8f0;
@@ -5757,6 +5970,145 @@ export default {
   overflow: hidden;
 }
 .ds-svg { width: 100%; display: block; }
+
+/* ── CT 图像交互模式 ── */
+.ds-ct-viz-wrap {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ds-ct-canvas {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1.2;
+  background: #0d1117;
+  border: 1px solid #2d3748;
+  border-radius: 6px;
+  overflow: hidden;
+  cursor: crosshair;
+}
+.ds-ct-bg-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  user-select: none;
+}
+.ds-ct-no-img {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #718096;
+  font-size: 0.85rem;
+}
+.ds-ct-tumor-ring {
+  position: absolute;
+  border: 2.5px solid #e53e3e;
+  border-radius: 50%;
+  background: rgba(229,62,62,0.25);
+  box-shadow: 0 0 0 1px rgba(229,62,62,0.5);
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+.ds-ct-tumor-label {
+  position: absolute;
+  bottom: calc(100% + 3px);
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.65rem;
+  color: #fc8181;
+  white-space: nowrap;
+  background: rgba(0,0,0,0.6);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+.ds-ct-beam-indicator {
+  position: absolute;
+  left: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  color: #f6ad55;
+  font-size: 0.7rem;
+  gap: 2px;
+  pointer-events: none;
+}
+.ds-ct-beam-arrow {
+  font-size: 1.3rem;
+  line-height: 1;
+  color: #f6ad55;
+}
+.ds-ct-beam-text {
+  font-size: 0.6rem;
+  color: #f6ad55;
+  writing-mode: vertical-rl;
+  letter-spacing: 1px;
+}
+.ds-ct-crosshair-h {
+  position: absolute;
+  top: 50%; left: 0; right: 0;
+  height: 1px;
+  background: rgba(255,255,255,0.12);
+  pointer-events: none;
+}
+.ds-ct-crosshair-v {
+  position: absolute;
+  left: 50%; top: 0; bottom: 0;
+  width: 1px;
+  background: rgba(255,255,255,0.12);
+  pointer-events: none;
+}
+.ds-ct-slice-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ds-ct-slice-num {
+  font-size: 0.78rem;
+  color: #718096;
+  min-width: 56px;
+}
+.ds-ct-interact-hint {
+  font-size: 0.72rem;
+  color: #718096;
+  text-align: center;
+  margin: 0;
+}
+
+/* ── 从CT定位按钮 ── */
+.ds-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.ds-ct-locate-btn {
+  padding: 2px 8px;
+  font-size: 0.72rem;
+  border: 1px solid #4299e1;
+  border-radius: 4px;
+  background: #ebf8ff;
+  color: #2b6cb0;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.ds-ct-locate-btn:hover:not(:disabled) {
+  background: #4299e1;
+  color: #fff;
+}
+.ds-ct-locate-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.ds-ct-hint-small {
+  font-size: 0.7rem;
+  color: #718096;
+  margin: 3px 0 0 0;
+}
 
 .ds-depth-ctrl {
   display: flex;
