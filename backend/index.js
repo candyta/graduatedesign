@@ -33,6 +33,7 @@ app.use(cors({
 }));
 // 提供静态文件服务
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/wholebody_phantom', express.static(path.join(__dirname, 'wholebody_phantom')));
 
 // 目录配置
 const DIRS = {
@@ -340,6 +341,35 @@ app.post('/build-wholebody-phantom', async (req, res) => {
         }
         console.log(`检测到的解剖区域: ${anatomicalRegion}`);
 
+        // 生成全身体模可视化切片图像（异步，不阻塞主响应）
+        const phantomPreviewDir = path.join(outputDir, 'preview_slices');
+        const phantomPreviewScript = path.join(__dirname, 'phantom_preview.py');
+        const phantomPreviewResult = { axial: [], coronal: [], sagittal: [] };
+
+        try {
+            const phantomType = gender === 'female' ? 'AF' : 'AM';
+            const previewCmd = `"${PYTHON_PATH}" "${phantomPreviewScript}" "${phantomPreviewDir}" --type "${phantomType}"`;
+            const { stdout: pvOut } = await execAsync(previewCmd, {
+                maxBuffer: 20 * 1024 * 1024,
+                env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
+            });
+            const pvJson = JSON.parse(pvOut.trim().split('\n').pop());
+            if (pvJson.success) {
+                for (const view of ['axial', 'coronal', 'sagittal']) {
+                    const vDir = path.join(phantomPreviewDir, view);
+                    if (fs.existsSync(vDir)) {
+                        const files = fs.readdirSync(vDir).sort();
+                        phantomPreviewResult[view] = files.map(f =>
+                            `/wholebody_phantom/preview_slices/${view}/${f}`
+                        );
+                    }
+                }
+                console.log(`体模预览切片生成完成: axial=${phantomPreviewResult.axial.length}, coronal=${phantomPreviewResult.coronal.length}, sagittal=${phantomPreviewResult.sagittal.length}`);
+            }
+        } catch (pvErr) {
+            console.warn('体模预览切片生成失败（非致命）:', pvErr.message);
+        }
+
         res.json({
             success: true,
             message: '全身体模构建完成',
@@ -347,7 +377,8 @@ app.post('/build-wholebody-phantom', async (req, res) => {
             mcnpInputFile: mcnpInputFile,
             mcnpInputFileInI: targetFilePath,
             mcnpFileName: targetFileName,
-            anatomicalRegion: anatomicalRegion
+            anatomicalRegion: anatomicalRegion,
+            phantomSlices: phantomPreviewResult
         });
 
     } catch (err) {

@@ -1693,50 +1693,68 @@
               </div>
             </div>
 
-            <!-- ── 模式A：传统示意图 ── -->
+            <!-- ── 模式A：全身体模示意图 ── -->
             <div v-if="dsVizMode === 'schematic'" class="ds-canvas-wrap">
+              <!-- 全身体模矢状切片滑块（有体模/CT时显示） -->
+              <div v-if="dsHasPhantomBg" class="ds-phantom-slice-ctrl">
+                <span class="ds-phantom-slice-label">
+                  {{ phantomSlices.sagittal.length ? '体模矢状面' : 'CT矢状面' }}
+                </span>
+                <input
+                  type="range" v-model.number="dsVizPhantomSliceIdx"
+                  :min="0" :max="dsPhantomBgMaxIdx"
+                  class="ds-slider ds-phantom-slider"
+                />
+                <span class="ds-phantom-slice-num">{{ dsVizPhantomSliceIdx + 1 }}/{{ dsPhantomBgMaxIdx + 1 }}</span>
+              </div>
+
               <svg ref="dsCanvas" class="ds-svg" viewBox="0 0 420 460" xmlns="http://www.w3.org/2000/svg">
                 <!-- 背景 -->
-                <rect width="420" height="460" fill="#f8fafc" rx="8"/>
+                <rect width="420" height="460"
+                  :fill="dsPhantomBgSlice ? '#0d1117' : '#f8fafc'" rx="8"/>
 
-                <!-- CT 冠状切片背景（若已加载则半透明叠加） -->
+                <!-- 全身体模矢状切片背景 -->
                 <image
-                  v-if="dsCTVizSlice"
-                  :href="dsCTVizSlice"
-                  x="110" y="60" width="200" height="360"
+                  v-if="dsPhantomBgSlice"
+                  :href="dsPhantomBgSlice"
+                  x="30" y="10" width="360" height="440"
                   preserveAspectRatio="xMidYMid meet"
-                  opacity="0.45"
+                  opacity="0.85"
                 />
 
                 <!-- 坐标轴 -->
-                <line x1="30" y1="430" x2="390" y2="430" stroke="#cbd5e0" stroke-width="1"/>
-                <line x1="30" y1="430" x2="30"  y2="20"  stroke="#cbd5e0" stroke-width="1"/>
-                <text x="395" y="434" font-size="11" fill="#718096">Z</text>
-                <text x="32"  y="14"  font-size="11" fill="#718096">Y</text>
+                <line x1="30" y1="430" x2="390" y2="430"
+                  :stroke="dsPhantomBgSlice ? 'rgba(255,255,255,0.3)' : '#cbd5e0'" stroke-width="1"/>
+                <line x1="30" y1="430" x2="30"  y2="20"
+                  :stroke="dsPhantomBgSlice ? 'rgba(255,255,255,0.3)' : '#cbd5e0'" stroke-width="1"/>
+                <text x="395" y="434" font-size="11" :fill="dsPhantomBgSlice ? '#94a3b8' : '#718096'">Z</text>
+                <text x="32"  y="14"  font-size="11" :fill="dsPhantomBgSlice ? '#94a3b8' : '#718096'">Y</text>
 
-                <!-- 体模轮廓（无CT时显示椭圆；有CT时为半透明辅助线） -->
+                <!-- 体模轮廓辅助线（有背景图时淡化为参考线） -->
                 <g :transform="`translate(${dsVizPhantomX}, ${dsVizPhantomY}) rotate(${dsPhantom.rotation_deg[1]})`">
-                  <!-- 躯干 -->
                   <ellipse cx="0" cy="0" rx="50" ry="90"
-                    :fill="dsCTVizSlice ? 'rgba(100,180,255,0.05)' : 'rgba(100,180,255,0.18)'"
-                    stroke="#4299e1" :stroke-width="dsCTVizSlice ? 1 : 2" stroke-dasharray="6,3"/>
-                  <!-- 头部 -->
+                    :fill="dsPhantomBgSlice ? 'none' : 'rgba(100,180,255,0.18)'"
+                    :stroke="dsPhantomBgSlice ? 'rgba(100,180,255,0.4)' : '#4299e1'"
+                    :stroke-width="dsPhantomBgSlice ? 1 : 2"
+                    stroke-dasharray="6,3"/>
                   <ellipse cx="0" cy="-112" rx="28" ry="24"
-                    :fill="dsCTVizSlice ? 'rgba(100,180,255,0.05)' : 'rgba(100,180,255,0.25)'"
-                    stroke="#4299e1" :stroke-width="dsCTVizSlice ? 1 : 1.5" stroke-dasharray="4,3"/>
+                    :fill="dsPhantomBgSlice ? 'none' : 'rgba(100,180,255,0.25)'"
+                    :stroke="dsPhantomBgSlice ? 'rgba(100,180,255,0.4)' : '#4299e1'"
+                    :stroke-width="dsPhantomBgSlice ? 1 : 1.5"
+                    stroke-dasharray="4,3"/>
                   <!-- 肿瘤 -->
                   <circle
                     :cx="dsPhantom.tumor_position[2] * 2"
                     :cy="-dsPhantom.tumor_position[1] * 2"
                     :r="Math.max(4, dsPhantom.tumor_radius * 4)"
-                    fill="rgba(229,62,62,0.65)" stroke="#e53e3e" stroke-width="2"
+                    fill="rgba(229,62,62,0.70)" stroke="#fc8181" stroke-width="2"
                   />
-                  <text v-if="!dsCTVizSlice" x="0" y="-106" text-anchor="middle" font-size="10" fill="#2b6cb0">HEAD</text>
-                  <text v-if="!dsCTVizSlice" x="0" y="4"   text-anchor="middle" font-size="10" fill="#2b6cb0">BODY</text>
+                  <text v-if="!dsPhantomBgSlice" x="0" y="-106" text-anchor="middle" font-size="10" fill="#2b6cb0">HEAD</text>
+                  <text v-if="!dsPhantomBgSlice" x="0" y="4"   text-anchor="middle" font-size="10" fill="#2b6cb0">BODY</text>
                   <text
                     :x="dsPhantom.tumor_position[2] * 2 + 8"
                     :y="-dsPhantom.tumor_position[1] * 2 - 6"
-                    font-size="9" fill="#c53030">肿瘤</text>
+                    font-size="9" :fill="dsPhantomBgSlice ? '#fc8181' : '#c53030'">肿瘤</text>
                 </g>
 
                 <!-- 中子源 -->
@@ -1774,17 +1792,13 @@
                 <text
                   :x="(dsVizSourceX + dsVizPhantomX) / 2 + 6"
                   :y="(dsVizSourceY + dsVizPhantomY) / 2 - 8"
-                  font-size="9" fill="#555" text-anchor="middle">
+                  font-size="9" :fill="dsPhantomBgSlice ? '#cbd5e0' : '#555'" text-anchor="middle">
                   {{ dsVizDistance.toFixed(1) }}cm
                 </text>
 
-                <!-- 源坐标标注 -->
-                <text :x="dsVizSourceX" :y="dsVizSourceY + 24" text-anchor="middle" font-size="9" fill="#92400e">
-                  ({{ dsSource.position[0] }},{{ dsSource.position[1] }},{{ dsSource.position[2] }})
-                </text>
-
                 <!-- 体模坐标标注 -->
-                <text :x="dsVizPhantomX" :y="dsVizPhantomY + 110" text-anchor="middle" font-size="9" fill="#2b6cb0">
+                <text :x="dsVizPhantomX" :y="dsVizPhantomY + 110" text-anchor="middle" font-size="9"
+                  :fill="dsPhantomBgSlice ? '#7dd3fc' : '#2b6cb0'">
                   中心({{ dsPhantom.center[0] }},{{ dsPhantom.center[1] }},{{ dsPhantom.center[2] }})
                 </text>
 
@@ -1792,23 +1806,40 @@
                 <line
                   :x1="dsVizPhantomX - 50" :y1="dsVizPhantomY - dsTumorDepth * 4"
                   :x2="dsVizPhantomX + 50" :y2="dsVizPhantomY - dsTumorDepth * 4"
-                  stroke="#e53e3e" stroke-width="1" stroke-dasharray="4,3"
+                  stroke="#fc8181" stroke-width="1" stroke-dasharray="4,3"
                 />
                 <text
                   :x="dsVizPhantomX + 54" :y="dsVizPhantomY - dsTumorDepth * 4 + 4"
-                  font-size="9" fill="#c53030">深{{ dsTumorDepth }}cm</text>
+                  font-size="9" fill="#fc8181">深{{ dsTumorDepth }}cm</text>
               </svg>
             </div>
 
-            <!-- ── 模式B：CT 图像交互定位 ── -->
+            <!-- ── 模式B：CT 图像交互定位（三视图）── -->
             <div v-else-if="dsVizMode === 'ct'" class="ds-ct-viz-wrap">
+              <!-- 视图切换标签 -->
+              <div class="ds-ct-view-tabs">
+                <button
+                  v-for="v in [{k:'axial',l:'轴向'},{k:'coronal',l:'冠状'},{k:'sagittal',l:'矢状'}]"
+                  :key="v.k"
+                  :class="['ds-ct-view-tab', dsVizCtView === v.k ? 'active' : '']"
+                  :disabled="!slices[v.k].length"
+                  @click="dsVizCtView = v.k"
+                >{{ v.l }}</button>
+                <span class="ds-ct-view-hint">
+                  {{
+                    dsVizCtView === 'axial' ? '轴向：点击设X-Y' :
+                    dsVizCtView === 'coronal' ? '冠状：点击设X-Z' : '矢状：点击设Y-Z'
+                  }}
+                </span>
+              </div>
+
+              <!-- CT 图像画布 -->
               <div
                 ref="dsCTCanvas"
                 class="ds-ct-canvas"
                 @click="dsSetTumorFromCTClick"
-                title="点击设置肿瘤 X-Z 位置"
+                title="点击设置肿瘤位置"
               >
-                <!-- CT切片（或带轮廓的叠加图） -->
                 <img v-if="dsCTVizSlice" :src="dsCTVizSlice" class="ds-ct-bg-img" draggable="false" />
                 <div v-else class="ds-ct-no-img">暂无CT影像</div>
 
@@ -1817,7 +1848,7 @@
                   <span class="ds-ct-tumor-label">肿瘤</span>
                 </div>
 
-                <!-- 束流方向指示箭头（从左侧进入，代表 X 正方向束流） -->
+                <!-- 束流方向指示 -->
                 <div class="ds-ct-beam-indicator">
                   <span class="ds-ct-beam-arrow">→</span>
                   <span class="ds-ct-beam-text">束流方向</span>
@@ -1828,20 +1859,24 @@
                 <div class="ds-ct-crosshair-v"></div>
               </div>
 
-              <!-- 切片选择（Y 方向，即冠状位） -->
+              <!-- 切片滑块（绑定当前视图的切片索引） -->
               <div class="ds-ct-slice-ctrl">
-                <label class="ds-label">冠状切片 (Y方向)</label>
+                <label class="ds-label">
+                  {{ dsVizCtView === 'axial' ? '轴向切片 (Z方向)' : dsVizCtView === 'coronal' ? '冠状切片 (Y方向)' : '矢状切片 (X方向)' }}
+                </label>
                 <input
                   type="range"
-                  v-model.number="dsVizCtSliceIdx"
+                  :value="dsVizCtSliceIndices[dsVizCtView]"
                   :min="0" :max="dsCTVizMaxIdx"
                   class="ds-slider"
-                  @input="dsOnCtSliceChange"
+                  @input="e => { dsVizCtSliceIndices[dsVizCtView] = +e.target.value; dsOnCtSliceChange(); }"
                 />
-                <span class="ds-ct-slice-num">{{ dsVizCtSliceIdx + 1 }} / {{ dsCTVizMaxIdx + 1 }}</span>
+                <span class="ds-ct-slice-num">
+                  {{ dsVizCtSliceIndices[dsVizCtView] + 1 }} / {{ dsCTVizMaxIdx + 1 }}
+                </span>
               </div>
               <p class="ds-ct-interact-hint">
-                点击图像 → 设置肿瘤 X-Z 位置 &nbsp;|&nbsp; 拖动滑块 → 调整 Y 深度（同步更新肿瘤坐标）
+                点击图像 → 设置肿瘤平面位置 &nbsp;|&nbsp; 拖动滑块 → 调整第三轴坐标
               </p>
             </div>
 
@@ -2176,8 +2211,13 @@ export default {
       ctMetadata: null,        // CT 体积元数据（体素大小、物理尺寸、中心坐标）
 
       // 剂量组分几何可视化模式
-      dsVizMode: 'schematic',  // 'schematic' | 'ct'
-      dsVizCtSliceIdx: 0,      // 当前冠状CT切片索引（用于几何可视化）
+      dsVizMode: 'schematic',     // 'schematic' | 'ct'
+      dsVizCtView: 'coronal',     // CT图像模式中当前视图: 'axial'|'coronal'|'sagittal'
+      dsVizCtSliceIdx: 0,         // 保留（向后兼容）
+      dsVizCtSliceIndices: { axial: 0, coronal: 0, sagittal: 0 },
+      // 全身体模预览切片（构建体模后填入）
+      phantomSlices: { axial: [], coronal: [], sagittal: [] },
+      dsVizPhantomSliceIdx: 0,    // 示意图模式中体模切片索引（矢状面）
 
       // 剂量数据
       doseFiles: [],
@@ -2423,46 +2463,74 @@ export default {
       return 40 + (idx / (profile.length - 1)) * 350;
     },
 
-    // ── CT几何可视化计算属性 ──
-    // 用于几何可视化面板的冠状切片（叠加轮廓优先，否则使用原始CT）
+    // ── CT 图像模式：当前切片图像 ──
     dsCTVizSlice() {
-      const src = this.showContourOverlay && this.overlaySlices.coronal.length
-        ? this.overlaySlices.coronal
-        : this.slices.coronal;
-      if (!src.length) return null;
-      const idx = Math.max(0, Math.min(src.length - 1, this.dsVizCtSliceIdx));
+      const view = this.dsVizCtView;
+      const overlay = this.showContourOverlay && this.overlaySlices[view] && this.overlaySlices[view].length;
+      const src = overlay ? this.overlaySlices[view] : this.slices[view];
+      if (!src || !src.length) return null;
+      const idx = Math.max(0, Math.min(src.length - 1, this.dsVizCtSliceIndices[view]));
       return this.getImageUrl(src[idx]);
     },
 
-    // 冠状切片最大索引
+    // CT 图像模式：当前视图最大切片索引
     dsCTVizMaxIdx() {
-      const src = this.showContourOverlay && this.overlaySlices.coronal.length
-        ? this.overlaySlices.coronal : this.slices.coronal;
-      return Math.max(0, src.length - 1);
+      const view = this.dsVizCtView;
+      const overlay = this.showContourOverlay && this.overlaySlices[view] && this.overlaySlices[view].length;
+      const src = overlay ? this.overlaySlices[view] : this.slices[view];
+      return src ? Math.max(0, src.length - 1) : 0;
     },
 
-    // 肿瘤在CT可视化面板上的像素位置（百分比）
+    // CT 图像模式：肿瘤标记位置（百分比，随视图变化）
     dsCTTumorStyle() {
       if (!this.ctMetadata) return { display: 'none' };
       const meta = this.ctMetadata;
-      // tumor_position 是相对体模中心的偏移（cm）
-      // CT物理坐标: origin=左上角, 物理中心在 phys_size/2
-      // X(lateral): tumor_position[0], 映射到冠状图像水平方向
-      // Z(sup-inf): tumor_position[2], 映射到冠状图像垂直方向（Y轴翻转）
-      const xRel = (this.dsPhantom.tumor_position[0] + meta.phys_size_cm[0] / 2) / meta.phys_size_cm[0];
-      const zRel = (meta.phys_size_cm[2] / 2 - this.dsPhantom.tumor_position[2]) / meta.phys_size_cm[2];
-      const rRel = this.dsPhantom.tumor_radius / meta.phys_size_cm[0];
-      const leftPct  = Math.max(0, Math.min(100, xRel * 100));
-      const topPct   = Math.max(0, Math.min(100, zRel * 100));
-      const diam = Math.max(1, rRel * 2 * 100);
-      return {
-        left:       `${leftPct}%`,
-        top:        `${topPct}%`,
-        width:      `${diam}%`,
-        height:     `${diam}%`,
-        marginLeft: `-${diam / 2}%`,
-        marginTop:  `-${diam / 2}%`
-      };
+      const pos = this.dsPhantom.tumor_position;
+      const r = this.dsPhantom.tumor_radius;
+      let xRel, yRel, rRelX;
+
+      if (this.dsVizCtView === 'axial') {
+        // width=X, height=Y(inverted)
+        xRel  = (pos[0] + meta.phys_size_cm[0] / 2) / meta.phys_size_cm[0];
+        yRel  = (meta.phys_size_cm[1] / 2 - pos[1]) / meta.phys_size_cm[1];
+        rRelX = r / meta.phys_size_cm[0];
+      } else if (this.dsVizCtView === 'coronal') {
+        // width=X, height=Z(inverted)
+        xRel  = (pos[0] + meta.phys_size_cm[0] / 2) / meta.phys_size_cm[0];
+        yRel  = (meta.phys_size_cm[2] / 2 - pos[2]) / meta.phys_size_cm[2];
+        rRelX = r / meta.phys_size_cm[0];
+      } else {
+        // sagittal: width=Y, height=Z(inverted)
+        xRel  = (pos[1] + meta.phys_size_cm[1] / 2) / meta.phys_size_cm[1];
+        yRel  = (meta.phys_size_cm[2] / 2 - pos[2]) / meta.phys_size_cm[2];
+        rRelX = r / meta.phys_size_cm[1];
+      }
+      const left = Math.max(0, Math.min(100, xRel * 100));
+      const top  = Math.max(0, Math.min(100, yRel * 100));
+      const diam = Math.max(1, rRelX * 2 * 100);
+      return { left: `${left}%`, top: `${top}%`, width: `${diam}%`, height: `${diam}%`, marginLeft: `-${diam/2}%`, marginTop: `-${diam/2}%` };
+    },
+
+    // ── 示意图模式：全身体模切片（矢状面背景）──
+    dsPhantomBgSlice() {
+      // 优先使用构建好的全身体模矢状切片，回退到 CT 矢状切片
+      const src = this.phantomSlices.sagittal.length
+        ? this.phantomSlices.sagittal
+        : this.slices.sagittal;
+      if (!src.length) return null;
+      const idx = Math.max(0, Math.min(src.length - 1, this.dsVizPhantomSliceIdx));
+      return this.getImageUrl(src[idx]);
+    },
+
+    dsPhantomBgMaxIdx() {
+      const src = this.phantomSlices.sagittal.length
+        ? this.phantomSlices.sagittal : this.slices.sagittal;
+      return Math.max(0, src.length - 1);
+    },
+
+    // 示意图模式：是否有任何背景图像可用
+    dsHasPhantomBg() {
+      return this.phantomSlices.sagittal.length > 0 || this.slices.sagittal.length > 0;
     },
 
     canGenerateDVH() {
@@ -2521,8 +2589,11 @@ export default {
     // 将肿瘤位置重置到CT体积中心（相对体模中心=0,0,0）
     dsLocateToCtCenter() {
       this.dsPhantom.tumor_position = [0, 0, 0];
-      if (this.slices.coronal.length) {
-        this.dsVizCtSliceIdx = Math.floor(this.slices.coronal.length / 2);
+      // 各视图切片跳到中间
+      for (const v of ['axial', 'coronal', 'sagittal']) {
+        if (this.slices[v].length) {
+          this.dsVizCtSliceIndices[v] = Math.floor(this.slices[v].length / 2);
+        }
       }
       if (this.ctMetadata) {
         this.dsTumorDepth = parseFloat((this.ctMetadata.phys_size_cm[2] / 4).toFixed(1));
@@ -2537,22 +2608,46 @@ export default {
       if (!canvas) return;
       const rect = canvas.getBoundingClientRect();
       const relX = (event.clientX - rect.left) / rect.width;
-      const relZ = (event.clientY - rect.top) / rect.height;
+      const relY = (event.clientY - rect.top) / rect.height;
       const meta = this.ctMetadata;
-      const tumorX = relX * meta.phys_size_cm[0] - meta.phys_size_cm[0] / 2;
-      const tumorZ = meta.phys_size_cm[2] / 2 - relZ * meta.phys_size_cm[2];
-      this.$set(this.dsPhantom.tumor_position, 0, parseFloat(tumorX.toFixed(1)));
-      this.$set(this.dsPhantom.tumor_position, 2, parseFloat(tumorZ.toFixed(1)));
+      const view = this.dsVizCtView;
+      const pos = [...this.dsPhantom.tumor_position];
+
+      if (view === 'axial') {
+        // axial: image width=X, image height=Y (inverted)
+        pos[0] = parseFloat((relX * meta.phys_size_cm[0] - meta.phys_size_cm[0] / 2).toFixed(1));
+        pos[1] = parseFloat((meta.phys_size_cm[1] / 2 - relY * meta.phys_size_cm[1]).toFixed(1));
+      } else if (view === 'coronal') {
+        // coronal: image width=X, image height=Z (inverted)
+        pos[0] = parseFloat((relX * meta.phys_size_cm[0] - meta.phys_size_cm[0] / 2).toFixed(1));
+        pos[2] = parseFloat((meta.phys_size_cm[2] / 2 - relY * meta.phys_size_cm[2]).toFixed(1));
+      } else {
+        // sagittal: image width=Y, image height=Z (inverted)
+        pos[1] = parseFloat((relX * meta.phys_size_cm[1] - meta.phys_size_cm[1] / 2).toFixed(1));
+        pos[2] = parseFloat((meta.phys_size_cm[2] / 2 - relY * meta.phys_size_cm[2]).toFixed(1));
+      }
+      this.dsPhantom.tumor_position = pos;
       this.dsOnParamChange();
     },
 
-    // 拖动冠状切片滑块时同步肿瘤 Y 位置
+    // 拖动切片滑块时同步肿瘤对应方向坐标
     dsOnCtSliceChange() {
       if (!this.ctMetadata) return;
       const meta = this.ctMetadata;
-      const total = this.slices.coronal.length || 1;
-      const tumorY = (this.dsVizCtSliceIdx / total) * meta.phys_size_cm[1] - meta.phys_size_cm[1] / 2;
-      this.$set(this.dsPhantom.tumor_position, 1, parseFloat(tumorY.toFixed(1)));
+      const view = this.dsVizCtView;
+      const pos = [...this.dsPhantom.tumor_position];
+
+      if (view === 'axial') {
+        const total = this.slices.axial.length || 1;
+        pos[2] = parseFloat(((this.dsVizCtSliceIndices.axial / total) * meta.phys_size_cm[2] - meta.phys_size_cm[2] / 2).toFixed(1));
+      } else if (view === 'coronal') {
+        const total = this.slices.coronal.length || 1;
+        pos[1] = parseFloat(((this.dsVizCtSliceIndices.coronal / total) * meta.phys_size_cm[1] - meta.phys_size_cm[1] / 2).toFixed(1));
+      } else {
+        const total = this.slices.sagittal.length || 1;
+        pos[0] = parseFloat(((this.dsVizCtSliceIndices.sagittal / total) * meta.phys_size_cm[0] - meta.phys_size_cm[0] / 2).toFixed(1));
+      }
+      this.dsPhantom.tumor_position = pos;
       this.dsOnParamChange();
     },
 
@@ -2707,8 +2802,12 @@ export default {
           this.dsPhantom.tumor_position = [0, 0, 0];
           // 初始肿瘤深度：CT Z 轴长度的 1/4（粗略起点，供用户调整）
           this.dsTumorDepth = parseFloat((this.ctMetadata.phys_size_cm[2] / 4).toFixed(1));
-          // 几何可视化自动跳到冠状面中间切片
-          this.dsVizCtSliceIdx = Math.floor(this.slices.coronal.length / 2);
+          // 各视图切片跳到中间
+          this.dsVizCtSliceIndices = {
+            axial:    Math.floor(this.slices.axial.length / 2),
+            coronal:  Math.floor(this.slices.coronal.length / 2),
+            sagittal: Math.floor(this.slices.sagittal.length / 2)
+          };
           this.dsOnParamChange();
         }
 
@@ -2845,6 +2944,13 @@ export default {
         this.mcnpSteps[1].disabled = false;
         this.phantomBuilt = true;
         this.detectedRegion = response.data.anatomicalRegion || '';
+
+        // 保存全身体模预览切片（供几何可视化使用）
+        if (response.data.phantomSlices) {
+          this.phantomSlices = response.data.phantomSlices;
+          // 示意图模式默认跳到矢状面中间切片
+          this.dsVizPhantomSliceIdx = Math.floor((this.phantomSlices.sagittal.length || 0) / 2);
+        }
 
         this.addLog('全身体模构建成功', 'success');
         this.showMessage('全身体模构建成功，可以开始MCNP计算或直接进行风险评估', 'success');
@@ -5926,6 +6032,60 @@ export default {
   flex-direction: column;
   align-items: center;
 }
+/* ── 全身体模切片滑块 ── */
+.ds-phantom-slice-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin-bottom: 4px;
+}
+.ds-phantom-slice-label {
+  font-size: 0.72rem;
+  color: #718096;
+  white-space: nowrap;
+  min-width: 68px;
+}
+.ds-phantom-slider { flex: 1; }
+.ds-phantom-slice-num {
+  font-size: 0.72rem;
+  color: #718096;
+  min-width: 46px;
+  text-align: right;
+}
+
+/* ── CT三视图标签 ── */
+.ds-ct-view-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.ds-ct-view-tab {
+  padding: 3px 9px;
+  font-size: 0.75rem;
+  border: 1px solid #4a5568;
+  border-radius: 4px;
+  background: #2d3748;
+  color: #a0aec0;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.ds-ct-view-tab.active {
+  background: #4299e1;
+  color: #fff;
+  border-color: #4299e1;
+}
+.ds-ct-view-tab:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.ds-ct-view-hint {
+  font-size: 0.68rem;
+  color: #718096;
+  margin-left: 6px;
+}
+
 /* ── 几何可视化面板标题行 ── */
 .ds-viz-header {
   display: flex;
