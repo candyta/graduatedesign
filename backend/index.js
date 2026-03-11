@@ -396,7 +396,14 @@ app.post('/generate-wholebody-dose-map', async (req, res) => {
     try {
         console.log('Received request to generate whole-body dose map');
 
-        const { axialImagePath } = req.body;
+        const {
+            axialImagePath,
+            source_position, source_direction, beam_radius,
+            phantom_type, tumor_position, tumor_radius
+        } = req.body || {};
+
+        if (source_position) console.log(`剂量图生成参数 - 源位置: [${source_position.join(', ')}] cm`);
+        if (tumor_position) console.log(`剂量图生成参数 - 肿瘤位置: [${tumor_position.join(', ')}] cm, 半径: ${tumor_radius} cm`);
 
         // 剂量数据目录 - 检查多个可能的位置
         const dosePngDir = DIRS.DOSE_PNG;
@@ -730,7 +737,17 @@ app.post('/run-mcnp-computation', async (req, res) => {
         const outputDir = DIRS.OUTPUT;
         const batchFile = 'ccmd.bat';
 
+        // 接收前端传来的剂量组分参数设置
+        const {
+            source_position, source_direction, beam_radius,
+            phantom_type, tumor_position, tumor_radius,
+            height_cm, weight_kg, intensity, cbe_rbe, boron_conc
+        } = req.body || {};
+
         console.log('MCNP computation request received');
+        if (source_position) console.log(`源位置: [${source_position.join(', ')}] cm, 束流半径: ${beam_radius} cm`);
+        if (tumor_position) console.log(`肿瘤位置: [${tumor_position.join(', ')}] cm, 半径: ${tumor_radius} cm`);
+        if (phantom_type) console.log(`体模类型: ${phantom_type}, 身高: ${height_cm}cm, 体重: ${weight_kg}kg`);
         console.log(`Input directory: ${inputDir}`);
         console.log(`Output directory: ${outputDir}`);
         console.log(`Using batch file: ${batchFile}`);

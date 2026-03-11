@@ -1679,22 +1679,10 @@
             <!-- 标题 + 视图切换 -->
             <div class="ds-viz-header">
               <h3 class="ds-viz-title">几何可视化</h3>
-              <div class="ds-viz-mode-tabs">
-                <button
-                  :class="['ds-mode-tab', dsVizMode === 'schematic' ? 'active' : '']"
-                  @click="dsVizMode = 'schematic'"
-                >示意图</button>
-                <button
-                  :class="['ds-mode-tab', dsVizMode === 'ct' ? 'active' : '']"
-                  :disabled="!slices.coronal.length"
-                  :title="slices.coronal.length ? 'CT/轮廓视图' : '请先上传CT文件'"
-                  @click="dsVizMode = 'ct'"
-                >CT 图像</button>
-              </div>
             </div>
 
-            <!-- ── 模式A：全身体模示意图 ── -->
-            <div v-if="dsVizMode === 'schematic'" class="ds-canvas-wrap">
+            <!-- ── 全身体模三视图 ── -->
+            <div class="ds-canvas-wrap">
 
               <!-- 三视图标签（有体模切片时显示） -->
               <div v-if="dsHasPhantomBg" class="ds-ct-view-tabs">
@@ -1877,73 +1865,7 @@
               </div>
             </div>
 
-            <!-- ── 模式B：CT 图像交互定位（三视图）── -->
-            <div v-else-if="dsVizMode === 'ct'" class="ds-ct-viz-wrap">
-              <!-- 视图切换标签 -->
-              <div class="ds-ct-view-tabs">
-                <button
-                  v-for="v in [{k:'axial',l:'轴向'},{k:'coronal',l:'冠状'},{k:'sagittal',l:'矢状'}]"
-                  :key="v.k"
-                  :class="['ds-ct-view-tab', dsVizCtView === v.k ? 'active' : '']"
-                  :disabled="!slices[v.k].length"
-                  @click="dsVizCtView = v.k"
-                >{{ v.l }}</button>
-                <span class="ds-ct-view-hint">
-                  {{
-                    dsVizCtView === 'axial' ? '轴向：点击设X-Y' :
-                    dsVizCtView === 'coronal' ? '冠状：点击设X-Z' : '矢状：点击设Y-Z'
-                  }}
-                </span>
-              </div>
-
-              <!-- CT 图像画布 -->
-              <div
-                ref="dsCTCanvas"
-                class="ds-ct-canvas"
-                @click="dsSetTumorFromCTClick"
-                title="点击设置肿瘤位置"
-              >
-                <img v-if="dsCTVizSlice" :src="dsCTVizSlice" class="ds-ct-bg-img" draggable="false" />
-                <div v-else class="ds-ct-no-img">暂无CT影像</div>
-
-                <!-- 肿瘤位置标记 -->
-                <div class="ds-ct-tumor-ring" :style="dsCTTumorStyle">
-                  <span class="ds-ct-tumor-label">肿瘤</span>
-                </div>
-
-                <!-- 束流方向指示 -->
-                <div class="ds-ct-beam-indicator">
-                  <span class="ds-ct-beam-arrow">→</span>
-                  <span class="ds-ct-beam-text">束流方向</span>
-                </div>
-
-                <!-- 坐标十字线 -->
-                <div class="ds-ct-crosshair-h"></div>
-                <div class="ds-ct-crosshair-v"></div>
-              </div>
-
-              <!-- 切片滑块（绑定当前视图的切片索引） -->
-              <div class="ds-ct-slice-ctrl">
-                <label class="ds-label">
-                  {{ dsVizCtView === 'axial' ? '轴向切片 (Z方向)' : dsVizCtView === 'coronal' ? '冠状切片 (Y方向)' : '矢状切片 (X方向)' }}
-                </label>
-                <input
-                  type="range"
-                  :value="dsVizCtSliceIndices[dsVizCtView]"
-                  :min="0" :max="dsCTVizMaxIdx"
-                  class="ds-slider"
-                  @input="e => { dsVizCtSliceIndices[dsVizCtView] = +e.target.value; dsOnCtSliceChange(); }"
-                />
-                <span class="ds-ct-slice-num">
-                  {{ dsVizCtSliceIndices[dsVizCtView] + 1 }} / {{ dsCTVizMaxIdx + 1 }}
-                </span>
-              </div>
-              <p class="ds-ct-interact-hint">
-                点击图像 → 设置肿瘤平面位置 &nbsp;|&nbsp; 拖动滑块 → 调整第三轴坐标
-              </p>
-            </div>
-
-            <!-- 深度滑块（两种模式下均显示） -->
+            <!-- 深度滑块 -->
             <div class="ds-depth-ctrl">
               <label class="ds-label">肿瘤深度（沿束流轴）</label>
               <input v-model.number="dsTumorDepth" type="range" min="0" max="25" step="0.5" class="ds-slider" @input="dsOnParamChange" />
@@ -3182,6 +3104,29 @@ export default {
       this.addLog('开始MCNP蒙特卡洛模拟...');
       this.progress = 0;
 
+      // 收集当前剂量组分参数设置
+      const mcnpParams = {
+        source_position:  [...this.dsSource.position],
+        source_direction: [...this.dsSource.direction],
+        beam_radius:      this.dsSource.beam_radius,
+        source_type:      this.dsSource.source_type,
+        energy_mono:      this.dsSource.energy_mono,
+        energy_spectrum:  this.dsSource.source_type !== 'mono' ? this.dsSource.energy_spectrum : null,
+        intensity:        this.dsSource.intensity,
+        phantom_center:   [...this.dsPhantom.center],
+        phantom_rotation: [...this.dsPhantom.rotation_deg],
+        phantom_type:     this.dsPhantom.phantom_type,
+        height_cm:        this.dsPhantom.height_cm,
+        weight_kg:        this.dsPhantom.weight_kg,
+        tumor_position:   [...this.dsPhantom.tumor_position],
+        tumor_radius:     this.dsPhantom.tumor_radius,
+        tumor_depth_cm:   this.dsTumorDepth,
+        cbe_rbe:          JSON.parse(JSON.stringify(this.dsCbeRbe)),
+        boron_conc:       { ...this.dsBoronConc }
+      };
+      this.addLog(`源位置: [${mcnpParams.source_position.join(', ')}] cm, 束流半径: ${mcnpParams.beam_radius} cm`);
+      this.addLog(`肿瘤位置: [${mcnpParams.tumor_position.join(', ')}] cm, 半径: ${mcnpParams.tumor_radius} cm`);
+
       // 轮询后端实时进度
       const progressInterval = setInterval(async () => {
         try {
@@ -3196,7 +3141,7 @@ export default {
       }, 1000);
 
       try {
-        const response = await axios.post(`${API_BASE}/run-mcnp-computation`);
+        const response = await axios.post(`${API_BASE}/run-mcnp-computation`, mcnpParams);
 
         clearInterval(progressInterval);
         this.progress = 100;
@@ -3205,8 +3150,11 @@ export default {
         this.mcnpSteps[1].result = response.data.message || '计算完成';
         this.mcnpSteps[2].disabled = false;
 
-        this.addLog('MCNP计算完成', 'success');
-        this.showMessage('MCNP计算完成', 'success');
+        this.addLog('MCNP计算完成，自动生成剂量分布图...', 'success');
+        this.showMessage('MCNP计算完成，正在生成剂量分布图...', 'success');
+
+        // MCNP完成后自动触发剂量分布图生成
+        await this.generateWholeBodyDoseMap(mcnpParams);
       } catch (error) {
         clearInterval(progressInterval);
         this.mcnpSteps[1].status = 'error';
@@ -3220,18 +3168,33 @@ export default {
       }
     },
 
-    async generateWholeBodyDoseMap() {
+    async generateWholeBodyDoseMap(mcnpParams) {
       this.loading = true;
       this.currentStep = 2;
       this.mcnpSteps[2].status = 'active';
       this.loadingMessage = '生成全身剂量分布图...';
       this.addLog('开始生成全身剂量可视化...');
 
+      // 如果没有传入参数，使用当前面板设置
+      const params = mcnpParams || {
+        source_position:  [...this.dsSource.position],
+        source_direction: [...this.dsSource.direction],
+        beam_radius:      this.dsSource.beam_radius,
+        phantom_type:     this.dsPhantom.phantom_type,
+        tumor_position:   [...this.dsPhantom.tumor_position],
+        tumor_radius:     this.dsPhantom.tumor_radius,
+      };
+
       try {
-        // 调用后端API生成剂量分布图
-        // 后端会自动查找dose.npy和CT.nii文件
+        // 调用后端API生成剂量分布图，传入源和肿瘤参数用于可视化叠加
         const response = await axios.post(`${API_BASE}/generate-wholebody-dose-map`, {
-          axialImagePath: this.slices.axial[0] || ''  // 传递CT切片路径作为参考
+          axialImagePath:   this.slices.axial[0] || '',
+          source_position:  params.source_position,
+          source_direction: params.source_direction,
+          beam_radius:      params.beam_radius,
+          phantom_type:     params.phantom_type,
+          tumor_position:   params.tumor_position,
+          tumor_radius:     params.tumor_radius,
         });
 
         if (response.data.success) {
