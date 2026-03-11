@@ -1718,7 +1718,7 @@
                   v-if="dsPhantomBgSlice"
                   :href="dsPhantomBgSlice"
                   x="30" y="10" width="360" height="440"
-                  preserveAspectRatio="xMidYMid meet"
+                  preserveAspectRatio="none"
                   opacity="0.85"
                 />
 
@@ -1730,17 +1730,17 @@
                 <text x="395" y="434" font-size="11" :fill="dsPhantomBgSlice ? '#94a3b8' : '#718096'">Z</text>
                 <text x="32"  y="14"  font-size="11" :fill="dsPhantomBgSlice ? '#94a3b8' : '#718096'">Y</text>
 
-                <!-- 体模轮廓辅助线（有背景图时淡化为参考线） -->
+                <!-- 体模轮廓辅助线（有背景图时隐藏，仅无背景时显示简略示意） -->
                 <g :transform="`translate(${dsVizPhantomX}, ${dsVizPhantomY}) rotate(${dsPhantom.rotation_deg[1]})`">
-                  <ellipse cx="0" cy="0" rx="50" ry="90"
-                    :fill="dsPhantomBgSlice ? 'none' : 'rgba(100,180,255,0.18)'"
-                    :stroke="dsPhantomBgSlice ? 'rgba(100,180,255,0.4)' : '#4299e1'"
-                    :stroke-width="dsPhantomBgSlice ? 1 : 2"
+                  <ellipse v-if="!dsPhantomBgSlice" cx="0" cy="0" rx="50" ry="90"
+                    fill="rgba(100,180,255,0.18)"
+                    stroke="#4299e1"
+                    stroke-width="2"
                     stroke-dasharray="6,3"/>
-                  <ellipse cx="0" cy="-112" rx="28" ry="24"
-                    :fill="dsPhantomBgSlice ? 'none' : 'rgba(100,180,255,0.25)'"
-                    :stroke="dsPhantomBgSlice ? 'rgba(100,180,255,0.4)' : '#4299e1'"
-                    :stroke-width="dsPhantomBgSlice ? 1 : 1.5"
+                  <ellipse v-if="!dsPhantomBgSlice" cx="0" cy="-112" rx="28" ry="24"
+                    fill="rgba(100,180,255,0.25)"
+                    stroke="#4299e1"
+                    stroke-width="1.5"
                     stroke-dasharray="4,3"/>
                   <!-- 肿瘤 -->
                   <circle
@@ -2432,11 +2432,11 @@ export default {
     },
     dsVizSourceX() {
       const z = this.dsSource.position[2];
-      return Math.max(20, Math.min(400, 210 + z * 0.6));
+      return Math.max(20, Math.min(400, 210 + z * 1.5));
     },
     dsVizSourceY() {
       const y = this.dsSource.position[1];
-      return Math.max(20, Math.min(420, 80 - y * 1.0));
+      return Math.max(20, Math.min(430, 250 - y * 1.5));
     },
     dsVizDistance() {
       const s = this.dsSource.position;
