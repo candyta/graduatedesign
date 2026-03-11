@@ -792,23 +792,34 @@ app.post('/run-mcnp-computation', async (req, res) => {
                     time: fs.statSync(path.join(DIRS.UPLOADS, f)).mtime.getTime()
                 }))
                 .sort((a, b) => b.time - a.time);
-            
+
             if (niiFolders.length > 0) {
                 const latestFolder = niiFolders[0];
                 const files = await fs.readdir(latestFolder.path);
                 const niiFile = files.find(f => f.endsWith('.nii'));
-                
+
                 if (niiFile) {
                     const ctNiiPath = path.join(latestFolder.path, niiFile);
+
+                    // 解析第一个 inp 文件中的源几何参数
+                    const firstInp = path.join(DIRS.INPUT, sortedInputFiles[0]);
+                    const mcnpGeom = parseMcnpGeometry(firstInp);
+
                     const sessionInfoPath = path.join(outputDir, 'session_info.json');
                     const sessionInfo = {
                         ct_nii_path: ctNiiPath,
                         upload_folder: latestFolder.name,
                         timestamp: new Date().toISOString(),
-                        mcnp_files: sortedInputFiles
+                        mcnp_files: sortedInputFiles,
+                        mcnp_geometry: mcnpGeom   // ← 源/体模几何参数
                     };
                     await fs.writeJson(sessionInfoPath, sessionInfo, { spaces: 2 });
                     console.log('[Session] 已保存session信息:', sessionInfoPath);
+                    if (mcnpGeom) {
+                        console.log('[Session] 源位置:', mcnpGeom.sdef_pos,
+                                    '方向:', mcnpGeom.sdef_axs,
+                                    '束流半径:', mcnpGeom.beam_radius);
+                    }
                 }
             }
         } catch (sessionErr) {
@@ -2056,6 +2067,138 @@ app.post('/auto-segment', async (req, res) => {
 console.log('[轮廓功能] API端点已加载:');
 console.log('  - POST /generate-contour-slices');
 console.log('  - POST /auto-segment');
+
+// ==================== MCNP 几何解析 ====================
+
+/**
+ * 从 MCNP .inp 文件中解析源位置、方向、束流半径等参数
+ * 返回:
+ *   sdef_pos      : [x, y, z] (cm)  — 束流焦点/治疗靶点在 MCNP 坐标中的绝对位置
+ *   sdef_axs      : [ux, uy, uz]    — 束流轴方向（单位向量）
+ *   beam_radius   : float (cm)      — 束流半径
+ *   tumor_depth_cm: float (cm)      — 靶点到入射面的估算深度
+ *   source_position: [x, y, z] (cm) — 建议的束流起点（靶点沿轴方向向外 offset）
+ */
+function parseMcnpGeometry(inpFilePath) {
+    try {
+        if (!fs.existsSync(inpFilePath)) return null;
+        const text = fs.readFileSync(inpFilePath, { encoding: 'latin1' });
+
+        // 解析 sdef pos=X Y Z axs=UX UY UZ ...
+        const sdefMatch = text.match(/sdef\s+pos\s*=\s*([\d.\-+eE]+)\s+([\d.\-+eE]+)\s+([\d.\-+eE]+)/i);
+        const axsMatch  = text.match(/axs\s*=\s*([\d.\-+eE]+)\s+([\d.\-+eE]+)\s+([\d.\-+eE]+)/i);
+        // 解析 si1 lo hi → 束流半径 = hi
+        const si1Match  = text.match(/si1\s+([\d.\-+eE]+)\s+([\d.\-+eE]+)/i);
+        // 解析能量 erg=XX
+        const ergMatch  = text.match(/erg\s*=\s*([\d.\-+eE]+)/i);
+
+        if (!sdefMatch) return null;
+
+        const sdef_pos = [
+            parseFloat(sdefMatch[1]),
+            parseFloat(sdefMatch[2]),
+            parseFloat(sdefMatch[3])
+        ];
+        const sdef_axs = axsMatch ? [
+            parseFloat(axsMatch[1]),
+            parseFloat(axsMatch[2]),
+            parseFloat(axsMatch[3])
+        ] : [0, 0, -1];
+
+        const beam_radius = si1Match ? parseFloat(si1Match[2]) : 5.0;
+        const energy_MeV  = ergMatch ? parseFloat(ergMatch[1]) : 0.025e-3;
+
+        // ICRP-110 AM 体模尺寸（下采样后）：Z 约 177.6 cm，XY 约 54.3 cm
+        // 靶点到入射面深度：沿 -axs 方向到体表的距离
+        // 简化估算：若轴向为 ±Z，深度 = 最近 Z 面到靶点的距离
+        const PHANTOM_Z_MAX = 177.6;  // cm，AM 体模高度
+        const PHANTOM_Z_MIN = 0;
+        let tumor_depth_cm = 7.0;     // 默认值
+
+        const az = sdef_axs[2];
+        if (Math.abs(az) > 0.5) {
+            // 束流沿 Z 轴方向
+            if (az < 0) {
+                // 束流向 -Z（从头部入射）：入射面在 Z_MAX，深度 = Z_MAX - Z_target
+                tumor_depth_cm = Math.max(1, Math.round((PHANTOM_Z_MAX - sdef_pos[2]) * 10) / 10);
+            } else {
+                // 束流向 +Z（从足部入射）：入射面在 Z_MIN
+                tumor_depth_cm = Math.max(1, Math.round((sdef_pos[2] - PHANTOM_Z_MIN) * 10) / 10);
+            }
+        }
+        // 合理范围截断
+        tumor_depth_cm = Math.min(tumor_depth_cm, 25);
+
+        // 建议源位置：靶点沿轴反方向移出体外 100 cm
+        const SOURCE_OFFSET = 100;  // cm
+        const source_position = [
+            sdef_pos[0] - sdef_axs[0] * SOURCE_OFFSET,
+            sdef_pos[1] - sdef_axs[1] * SOURCE_OFFSET,
+            sdef_pos[2] - sdef_axs[2] * SOURCE_OFFSET
+        ];
+
+        return {
+            sdef_pos,
+            sdef_axs,
+            beam_radius,
+            energy_MeV,
+            tumor_depth_cm,
+            source_position,
+            // 体模中心 = MCNP 靶点绝对坐标（做为剂量计算坐标系原点）
+            phantom_center: [
+                parseFloat(sdef_pos[0].toFixed(3)),
+                parseFloat(sdef_pos[1].toFixed(3)),
+                parseFloat(sdef_pos[2].toFixed(3))
+            ],
+            // 肿瘤相对体模中心 = [0,0,0]（靶点即中心）
+            tumor_position_rel: [0, 0, 0]
+        };
+    } catch (e) {
+        console.warn('[parseMcnpGeometry] 解析失败:', e.message);
+        return null;
+    }
+}
+
+/**
+ * GET /dose-components/mcnp-geometry
+ * 返回最近一次 MCNP 计算的源/体模几何参数，供剂量组分面板自动填充
+ */
+app.get('/dose-components/mcnp-geometry', async (req, res) => {
+    try {
+        const sessionPath = path.join(DIRS.OUTPUT, 'session_info.json');
+
+        // 优先从 session_info.json 读取已解析的几何（无需再次读 inp）
+        if (fs.existsSync(sessionPath)) {
+            const session = await fs.readJson(sessionPath);
+            if (session.mcnp_geometry) {
+                return res.json({ success: true, geometry: session.mcnp_geometry });
+            }
+        }
+
+        // 兜底：直接解析 INPUT 目录下的最新 inp 文件
+        const inpFiles = (await fs.readdir(DIRS.INPUT))
+            .filter(f => f.endsWith('.inp'))
+            .map(f => ({
+                name: f,
+                mtime: fs.statSync(path.join(DIRS.INPUT, f)).mtime.getTime()
+            }))
+            .sort((a, b) => b.mtime - a.mtime);
+
+        if (inpFiles.length === 0) {
+            return res.json({ success: false, message: '未找到 MCNP 输入文件，请先完成 MCNP 计算' });
+        }
+
+        const geom = parseMcnpGeometry(path.join(DIRS.INPUT, inpFiles[0].name));
+        if (!geom) {
+            return res.json({ success: false, message: '无法从 inp 文件解析源几何参数' });
+        }
+        res.json({ success: true, geometry: geom });
+
+    } catch (err) {
+        console.error('[mcnp-geometry]', err.message);
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
 
 // ==================== 剂量组分计算 ====================
 
