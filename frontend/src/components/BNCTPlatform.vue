@@ -1868,7 +1868,7 @@
             <!-- 深度滑块 -->
             <div class="ds-depth-ctrl">
               <label class="ds-label">肿瘤深度（沿束流轴）</label>
-              <input v-model.number="dsTumorDepth" type="range" min="0" max="25" step="0.5" class="ds-slider" @input="dsOnParamChange" />
+              <input v-model.number="dsTumorDepth" type="range" min="0" max="25" step="0.5" class="ds-slider" @input="dsOnTumorDepthChange" />
               <span class="ds-depth-val">{{ dsTumorDepth }} cm</span>
             </div>
           </section>
@@ -2706,6 +2706,18 @@ export default {
       if (!this.dsAutoCalc) return;
       clearTimeout(this.dsAutoTimer);
       this.dsAutoTimer = setTimeout(() => { this.dsCalculate(); }, 800);
+    },
+
+    // 肿瘤深度滑块专用handler：同步dsTumorDepth到tumor_position[2]
+    // 束流沿-Z方向入射，深度从体模+Z面（顶部）向内计算：
+    //   tumor_position[2] = phys_size_cm[2]/2 - dsTumorDepth
+    dsOnTumorDepthChange() {
+      if (this.ctMetadata && this.ctMetadata.phys_size_cm) {
+        this.dsPhantom.tumor_position[2] = parseFloat(
+          (this.ctMetadata.phys_size_cm[2] / 2 - this.dsTumorDepth).toFixed(1)
+        );
+      }
+      this.dsOnParamChange();
     },
 
     dsOnIntensityChange() {

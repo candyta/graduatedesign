@@ -777,6 +777,57 @@ app.post('/run-mcnp-computation', async (req, res) => {
 
         console.log(`Sorted input files: ${sortedInputFiles}`);
 
+        // 【修复】在运行MCNP前，将前端传来的源参数写入.inp文件
+        // 原始.inp由ct_phantom_fusion.py生成，源位置硬编码在体模内部，
+        // 需替换为用户在可视化界面设置的源位置和束流半径
+        if (source_position && source_position.length === 3) {
+            console.log('Updating MCNP input files with user-specified source parameters...');
+            for (const filePath of sortedInputFiles) {
+                const fullFilePath = path.join(inputDir, filePath);
+                try {
+                    let content = await fs.readFile(fullFilePath, 'utf8');
+
+                    // 从RPP边界卡解析体模绝对尺寸: "20 RPP 0 {x_max}  0 {y_max}  0 {z_max}"
+                    const rppMatch = content.match(/20\s+RPP\s+0\s+([\d.]+)\s+0\s+([\d.]+)\s+0\s+([\d.]+)/);
+                    if (!rppMatch) {
+                        console.warn(`[sdef update] RPP card not found in ${filePath}, skipping`);
+                        continue;
+                    }
+
+                    const x_max = parseFloat(rppMatch[1]);
+                    const y_max = parseFloat(rppMatch[2]);
+                    const z_max = parseFloat(rppMatch[3]);
+
+                    // 前端坐标以体模中心为原点，转换为MCNP绝对坐标
+                    const cx = x_max / 2, cy = y_max / 2, cz = z_max / 2;
+                    const sp = source_position;
+                    const sd = source_direction || [0, 0, -1];
+                    const br = beam_radius || 5.0;
+                    const sx = cx + sp[0];
+                    const sy = cy + sp[1];
+                    const sz = cz + sp[2];
+
+                    // 替换sdef行（源位置、束流方向）
+                    content = content.replace(
+                        /^sdef\s+pos=.*$/m,
+                        `sdef pos=${sx.toFixed(3)} ${sy.toFixed(3)} ${sz.toFixed(3)} axs=${sd[0]} ${sd[1]} ${sd[2]} ext=0 rad=d1 erg=0.025e-3 par=1`
+                    );
+                    // 替换si1束流半径行
+                    content = content.replace(
+                        /^si1\s+0\s+[\d.]+/m,
+                        `si1 0 ${br}`
+                    );
+
+                    await fs.writeFile(fullFilePath, content, 'utf8');
+                    console.log(`[sdef update] ${filePath}: pos=[${sx.toFixed(2)}, ${sy.toFixed(2)}, ${sz.toFixed(2)}] axs=[${sd}] radius=${br}`);
+                } catch (updateErr) {
+                    console.error(`[sdef update] Failed to update ${filePath}: ${updateErr.message}`);
+                }
+            }
+        } else {
+            console.warn('[sdef update] source_position not provided, using existing .inp source definition');
+        }
+
         // 初始化进度状态
         mcnpState.running = true;
         mcnpState.progress = 0;
