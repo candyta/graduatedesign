@@ -1717,8 +1717,8 @@
                 <template v-if="dsPhantomBgSlice">
                   <img :src="dsPhantomBgSlice" class="ds-phantom-bg-img" alt="体模切片" />
 
-                  <!-- SVG 覆盖层：束流几何（在矢状/冠状面下有意义） -->
-                  <svg v-if="dsVizPhantomView !== 'axial'"
+                  <!-- SVG 覆盖层：肿瘤位置（全三视图均显示） -->
+                  <svg
                     class="ds-phantom-overlay"
                     viewBox="0 0 420 460"
                     xmlns="http://www.w3.org/2000/svg">
@@ -1727,55 +1727,55 @@
                         <polygon points="0 0, 8 3, 0 6" fill="#d97706"/>
                       </marker>
                     </defs>
-                    <!-- 肿瘤标记 -->
-                    <g :transform="`translate(${dsVizPhantomX}, ${dsVizPhantomY})`">
-                      <circle
-                        :cx="dsPhantom.tumor_position[2] * 2"
-                        :cy="-dsPhantom.tumor_position[1] * 2"
-                        :r="Math.max(5, dsPhantom.tumor_radius * 4)"
-                        fill="rgba(229,62,62,0.75)" stroke="#fc8181" stroke-width="2"
-                      />
-                      <text
-                        :x="dsPhantom.tumor_position[2] * 2 + 8"
-                        :y="-dsPhantom.tumor_position[1] * 2 - 6"
-                        font-size="10" fill="#fc8181">肿瘤</text>
-                    </g>
-                    <!-- 中子源 -->
-                    <g :transform="`translate(${dsVizSourceX}, ${dsVizSourceY})`">
-                      <circle r="14" fill="#fefce8" stroke="#d97706" stroke-width="2.5"/>
-                      <text text-anchor="middle" y="4" font-size="11" fill="#92400e" font-weight="bold">n</text>
-                    </g>
-                    <!-- 束流箭头 -->
-                    <line
-                      :x1="dsVizSourceX" :y1="dsVizSourceY"
-                      :x2="dsVizPhantomX" :y2="dsVizPhantomY"
-                      stroke="#d97706" stroke-width="2" stroke-dasharray="8,4"
-                      marker-end="url(#arrowhead2)"
+                    <!-- 肿瘤标记（使用解剖坐标精确定位） -->
+                    <circle
+                      :cx="dsTumorInPhantomSvg.x"
+                      :cy="dsTumorInPhantomSvg.y"
+                      :r="Math.max(5, dsPhantom.tumor_radius * 4)"
+                      fill="rgba(229,62,62,0.75)" stroke="#fc8181" stroke-width="2"
                     />
-                    <!-- 束流半径标注 -->
-                    <line
-                      :x1="dsVizSourceX - dsSource.beam_radius * 2" :y1="dsVizSourceY - 18"
-                      :x2="dsVizSourceX + dsSource.beam_radius * 2" :y2="dsVizSourceY - 18"
-                      stroke="#d97706" stroke-width="1" stroke-dasharray="3,2"
-                    />
-                    <text :x="dsVizSourceX" :y="dsVizSourceY - 22" text-anchor="middle" font-size="9" fill="#92400e">
-                      r={{ dsSource.beam_radius }}cm
-                    </text>
-                    <!-- 距离标注 -->
                     <text
-                      :x="(dsVizSourceX + dsVizPhantomX) / 2 + 6"
-                      :y="(dsVizSourceY + dsVizPhantomY) / 2 - 8"
+                      :x="dsTumorInPhantomSvg.x + 8"
+                      :y="dsTumorInPhantomSvg.y - 6"
+                      font-size="10" fill="#fc8181">肿瘤</text>
+                    <!-- 中子源 + 束流（矢状/冠状面有意义，轴向面隐藏） -->
+                    <template v-if="dsVizPhantomView !== 'axial'">
+                      <g :transform="`translate(${dsVizSourceX}, ${dsVizSourceY})`">
+                        <circle r="14" fill="#fefce8" stroke="#d97706" stroke-width="2.5"/>
+                        <text text-anchor="middle" y="4" font-size="11" fill="#92400e" font-weight="bold">n</text>
+                      </g>
+                      <!-- 束流箭头 -->
+                      <line
+                        :x1="dsVizSourceX" :y1="dsVizSourceY"
+                        :x2="dsTumorInPhantomSvg.x" :y2="dsTumorInPhantomSvg.y"
+                        stroke="#d97706" stroke-width="2" stroke-dasharray="8,4"
+                        marker-end="url(#arrowhead2)"
+                      />
+                      <!-- 束流半径标注 -->
+                      <line
+                        :x1="dsVizSourceX - dsSource.beam_radius * 2" :y1="dsVizSourceY - 18"
+                        :x2="dsVizSourceX + dsSource.beam_radius * 2" :y2="dsVizSourceY - 18"
+                        stroke="#d97706" stroke-width="1" stroke-dasharray="3,2"
+                      />
+                      <text :x="dsVizSourceX" :y="dsVizSourceY - 22" text-anchor="middle" font-size="9" fill="#92400e">
+                        r={{ dsSource.beam_radius }}cm
+                      </text>
+                    </template>
+                    <!-- 距离标注（束流视图） -->
+                    <text v-if="dsVizPhantomView !== 'axial'"
+                      :x="(dsVizSourceX + dsTumorInPhantomSvg.x) / 2 + 6"
+                      :y="(dsVizSourceY + dsTumorInPhantomSvg.y) / 2 - 8"
                       font-size="9" fill="#cbd5e0" text-anchor="middle">
                       {{ dsVizDistance.toFixed(1) }}cm
                     </text>
-                    <!-- 深度标注线 -->
+                    <!-- 深度标注（当前肿瘤深度，水平辅助线） -->
                     <line
-                      :x1="dsVizPhantomX - 50" :y1="dsVizPhantomY - dsTumorDepth * 4"
-                      :x2="dsVizPhantomX + 50" :y2="dsVizPhantomY - dsTumorDepth * 4"
+                      :x1="dsTumorInPhantomSvg.x - 40" :y1="dsTumorInPhantomSvg.y"
+                      :x2="dsTumorInPhantomSvg.x + 40" :y2="dsTumorInPhantomSvg.y"
                       stroke="#fc8181" stroke-width="1" stroke-dasharray="4,3"
                     />
                     <text
-                      :x="dsVizPhantomX + 54" :y="dsVizPhantomY - dsTumorDepth * 4 + 4"
+                      :x="dsTumorInPhantomSvg.x + 44" :y="dsTumorInPhantomSvg.y + 4"
                       font-size="9" fill="#fc8181">深{{ dsTumorDepth }}cm</text>
                   </svg>
                 </template>
@@ -2432,7 +2432,7 @@ export default {
         rotation_deg:   [0, 0, 0],
         height_cm:      170,
         weight_kg:      70,
-        tumor_position: [0, 0, 7],
+        tumor_position: [0, 0, 0],
         tumor_radius:   2.0
       },
 
@@ -2539,6 +2539,77 @@ export default {
       const src = overlay ? this.overlaySlices[view] : this.slices[view];
       return src ? Math.max(0, src.length - 1) : 0;
     },
+
+    // ── 全身体模肿瘤定位：CT坐标系 → 体模解剖坐标系 ──────────────────────────
+
+    // 根据检测到的解剖区域，计算CT图像中心相对于ICRP体模几何中心的偏移量（cm）
+    // 偏移量 = (体模CT目标中心体素 - 体模几何中心体素) × 体素尺寸
+    // 基于 ct_phantom_fusion.py 中 ANATOMICAL_REGIONS 的 z_range，AM体模：222×8mm=177.6cm
+    dsCtToPhantomOffset() {
+      // [X_offset, Y_offset, Z_offset] in cm, relative to phantom geometric center
+      // Computed from: target_center_voxel - (shape/2), then × voxel_size
+      const offsets = {
+        brain:       [0,    0,    76.8],   // z: (207-111)*0.8
+        nasopharynx: [0,   -2.7,  63.2],  // z: (190-111)*0.8, y: (50.8-63.5)*0.2137
+        chest:       [0,    0,    45.6],   // z: (168-111)*0.8
+        abdomen:     [0,    0,    19.2],   // z: (135-111)*0.8
+        liver:       [2.7,  0,    22.4],   // z: (139-111)*0.8, x: (139.7-127)*0.2137
+        pelvis:      [0,    0,   -14.4],   // z: (93-111)*0.8
+        legs:        [0,    0,   -57.6],   // z: (39-111)*0.8
+        wholebody:   [0,    0,    -0.8],   // z: (110-111)*0.8
+      };
+      return offsets[this.detectedRegion] || [0, 0, 0];
+    },
+
+    // 肿瘤在体模物理空间中的位置（相对于体模几何中心，单位 cm）
+    dsTumorInPhantomCm() {
+      const tp = this.dsPhantom.tumor_position;
+      const off = this.dsCtToPhantomOffset;
+      return [tp[0] + off[0], tp[1] + off[1], tp[2] + off[2]];
+    },
+
+    // ICRP体模物理尺寸（cm）及几何中心（cm，从边缘量起）
+    dsPhantomPhysDims() {
+      const isAF = this.dsPhantom.phantom_type === 'AF';
+      // AF: 299×1.775, 137×1.775, 348×4.84 mm
+      if (isAF) return { x:53.08, xc:26.54, y:24.32, yc:12.16, z:168.43, zc:84.22 };
+      // AM: 254×2.137, 127×2.137, 222×8.0 mm
+      return { x:54.28, xc:27.14, y:27.14, yc:13.57, z:177.6, zc:88.8 };
+    },
+
+    // 肿瘤在体模切片图像上的 SVG 坐标（全画布映射，0-420 × 0-460）
+    dsTumorInPhantomSvg() {
+      const t = this.dsTumorInPhantomCm;   // offsets from phantom geometric center
+      const d = this.dsPhantomPhysDims;
+      const view = this.dsVizPhantomView;
+
+      // 将偏移量转为从体模边缘的绝对坐标（cm）
+      const ax = d.xc + t[0];   // X from left edge
+      const ay = d.yc + t[1];   // Y from front edge
+      const az = d.zc + t[2];   // Z from feet (height)
+
+      let svgX, svgY;
+      if (view === 'coronal') {
+        // 冠状面 (XZ): 水平=X(左右), 垂直=Z(高度，头顶=顶部)
+        svgX = (ax / d.x) * 420;
+        svgY = (1 - az / d.z) * 460;
+      } else if (view === 'axial') {
+        // 轴向面 (XY): 水平=X(左右), 垂直=Y(前后，前面=顶部)
+        svgX = (ax / d.x) * 420;
+        svgY = (ay / d.y) * 460;
+      } else {
+        // 矢状面 (YZ): 水平=Y(前后), 垂直=Z(高度，头顶=顶部)
+        svgX = (ay / d.y) * 420;
+        svgY = (1 - az / d.z) * 460;
+      }
+
+      return {
+        x: Math.max(10, Math.min(410, svgX)),
+        y: Math.max(10, Math.min(450, svgY)),
+      };
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
 
     // CT 图像模式：肿瘤标记位置（百分比，随视图变化）
     dsCTTumorStyle() {
