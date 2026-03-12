@@ -2416,14 +2416,15 @@ export default {
       const y = this.dsPhantom.center[1];
       return Math.max(140, Math.min(320, 250 - y * 1.5));
     },
-    // SVG viewBox以物理cm为单位，顶部预留25cm缓冲放置体外中子源
+    // SVG viewBox以物理cm为单位，四周预留缓冲以显示体外中子源
     dsPhantomSvgViewBox() {
       const d = this.dsPhantomPhysDims;
-      const buf = 25;  // cm，体模顶部缓冲区（用于显示体外中子源）
+      const bufV = 25;  // cm，顶部/底部缓冲
+      const bufH = 35;  // cm，左右缓冲（确保水平源 X≈-40 可见）
       const view = this.dsVizPhantomView;
-      if (view === 'coronal')  return `0 -${buf} ${d.x} ${d.z + buf}`;
-      if (view === 'sagittal') return `0 -${buf} ${d.y} ${d.z + buf}`;
-      return `0 0 ${d.x} ${d.y}`;  // 轴向面无需顶部缓冲
+      if (view === 'coronal')  return `-${bufH} -${bufV} ${d.x + 2*bufH} ${d.z + bufV}`;
+      if (view === 'sagittal') return `-${bufH} -${bufV} ${d.y + 2*bufH} ${d.z + bufV}`;
+      return `-${bufH} -${bufH} ${d.x + 2*bufH} ${d.y + 2*bufH}`;  // 轴向面四周缓冲
     },
     // 中子源在体模SVG坐标系中的位置（物理cm，各视图使用正确轴）
     dsVizSourceX() {
@@ -3119,7 +3120,8 @@ export default {
         // 肿瘤在体模坐标系中的实际Z（包含CT区域偏移，如chest→+45.6cm）
         // 源Z与肿瘤体模Z保持一致，确保可视化中两者在同一水平线上
         const tumorPhantomZ = this.dsTumorInPhantomCm[2];
-        this.dsSource.position    = [-20, 0, tumorPhantomZ];
+        // 源必须在体外：AM体模半宽27.14cm，取-40cm确保距体表≥12cm
+        this.dsSource.position    = [-40, 0, tumorPhantomZ];
         this.dsSource.direction   = [1, 0, 0];
         this.dsSource.beam_radius = 5.0;
         this.dsSource.intensity   = 1e12;
