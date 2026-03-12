@@ -2420,10 +2420,11 @@ export default {
     // 水平方向体外中子源通过 overflow:visible 渲染在viewBox外侧
     dsPhantomSvgViewBox() {
       const d = this.dsPhantomPhysDims;
-      const buf = 25;  // cm，顶部缓冲（与背景图像预留空间一致）
       const view = this.dsVizPhantomView;
-      if (view === 'coronal')  return `0 -${buf} ${d.x} ${d.z + buf}`;
-      if (view === 'sagittal') return `0 -${buf} ${d.y} ${d.z + buf}`;
+      // viewBox 精确匹配体模物理尺寸，确保 SVG 覆盖层与背景图像完全对齐。
+      // 横向体外中子源（x<0）通过 overflow:visible 渲染在 viewBox 外侧，无需顶部缓冲。
+      if (view === 'coronal')  return `0 0 ${d.x} ${d.z}`;
+      if (view === 'sagittal') return `0 0 ${d.y} ${d.z}`;
       return `0 0 ${d.x} ${d.y}`;  // 轴向面
     },
     // 中子源在体模SVG坐标系中的位置（物理cm，各视图使用正确轴）
