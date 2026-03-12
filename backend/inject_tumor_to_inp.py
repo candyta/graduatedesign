@@ -50,8 +50,8 @@ TUMOR_MAT_CARD = (
     "     11023.66c -0.002000\n"   # Na
     "     15031.66c -0.003000\n"   # P
     "     16032.66c -0.003000\n"   # S
-    "     17035.66c -0.002000\n"   # Cl
-    "     19039.66c -0.003000\n"   # K
+    "     17000.66c -0.002000\n"   # Cl (natural, consistent with ZAID_MAP)
+    "     19000.66c -0.003000\n"   # K  (natural, consistent with ZAID_MAP)
     "c\n"
 )
 
