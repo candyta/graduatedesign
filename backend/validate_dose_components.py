@@ -395,8 +395,8 @@ def validate_clinical_cases(user_params: Dict = None) -> Dict:
         boron_conc_override["tumor"] = p.get("tumor_boron_ppm", 60.0)
 
         src = SourceConfig(
-            position    = user_params.get("source_position", [0, 0, 100]) if user_params else [0, 0, 100],
-            direction   = user_params.get("source_direction", [0, 0, -1]) if user_params else [0, 0, -1],
+            position    = [0, 0, 100],   # 临床基准使用标准几何位置，不受UI源位置影响
+            direction   = [0, 0, -1],
             beam_radius = p["beam_radius"],
             source_type = p["source_type"],
             intensity   = p["intensity"]
