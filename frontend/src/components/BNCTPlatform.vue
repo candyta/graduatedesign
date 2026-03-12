@@ -3115,13 +3115,15 @@ export default {
         this.dsPhantom.weight_kg    = 70;
         this.dsPhantom.tumor_position = [0, 0, 0];
         this.dsPhantom.tumor_radius   = 2.0;
-        // 源位于肿瘤同一Z高度（Z=0，即体模中心），从左侧水平射入
-        this.dsSource.position    = [-20, 0, 0];
+        this.dsTumorDepth = 7.0;
+        // 肿瘤在体模坐标系中的实际Z（包含CT区域偏移，如chest→+45.6cm）
+        // 源Z与肿瘤体模Z保持一致，确保可视化中两者在同一水平线上
+        const tumorPhantomZ = this.dsTumorInPhantomCm[2];
+        this.dsSource.position    = [-20, 0, tumorPhantomZ];
         this.dsSource.direction   = [1, 0, 0];
         this.dsSource.beam_radius = 5.0;
         this.dsSource.intensity   = 1e12;
         this.dsSource.energy_spectrum.weights = [0.00, 0.05, 0.15, 0.25, 0.25, 0.15, 0.10, 0.04, 0.01];
-        this.dsTumorDepth = 7.0;
         this.dsCbeRbe = {
           tumor:        { boron_cbe: 3.8,  nitrogen_rbe: 3.2, hydrogen_rbe: 3.2, gamma_rbe: 1.0 },
           normal_tissue:{ boron_cbe: 1.35, nitrogen_rbe: 3.2, hydrogen_rbe: 3.2, gamma_rbe: 1.0 },
