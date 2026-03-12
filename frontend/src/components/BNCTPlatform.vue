@@ -27,9 +27,9 @@
           <aside class="control-panel">
             <div class="panel-section">
               <h3>📁 文件管理</h3>
-              <button @click="$refs.fileInput.click()" class="btn btn-primary">
+              <button @click="$refs.fileInput.click()" :disabled="niiUploading" class="btn btn-primary">
                 <span class="icon">📤</span>
-                上传NIfTI文件 (.nii.gz)
+                {{ niiUploading ? '正在上传...' : '上传NIfTI文件 (.nii.gz)' }}
               </button>
               <input 
                 ref="fileInput" 
@@ -257,7 +257,7 @@
                   :disabled="step.disabled || loading"
                   class="btn btn-primary"
                 >
-                  {{ loading && currentStep === index ? '处理中...' : step.buttonText }}
+                  {{ loading && currentStep === index ? step.loadingText : step.buttonText }}
                 </button>
                 <div v-if="step.status === 'active' && loading" class="progress-bar">
                   <div class="progress-fill" :style="{ width: progress + '%' }"></div>
@@ -306,9 +306,9 @@
       <div class="panel-section">
         <h3>📊 剂量数据上传</h3>
         <div class="upload-area" @drop.prevent="handleDoseDrop" @dragover.prevent>
-          <button @click="$refs.doseInput.click()" class="btn btn-primary">
+          <button @click="$refs.doseInput.click()" :disabled="doseUploading" class="btn btn-primary">
             <span class="icon">📁</span>
-            选择剂量文件 (.npy)
+            {{ doseUploading ? '正在上传...' : '选择剂量文件 (.npy)' }}
           </button>
           <input 
             ref="doseInput" 
@@ -2138,11 +2138,7 @@
       </div>
     </transition>
 
-    <!-- 加载遮罩 -->
-    <div v-if="loading" class="loading-overlay">
-      <div class="spinner"></div>
-      <p>{{ loadingMessage }}</p>
-    </div>
+    <!-- 加载遮罩已移除：各按钮自行显示加载状态 -->
   </div>
 </template>
 
@@ -2244,6 +2240,7 @@ export default {
           title: '构建全身多材料体模',
           description: '缩放ICRP体模 → 融合CT(含过渡带) → 生成多材料体素lattice MCNP输入',
           buttonText: '构建体模',
+          loadingText: '正在构建...',
           action: null,
           status: 'pending',
           disabled: false,
@@ -2253,6 +2250,7 @@ export default {
           title: '运行MCNP全身计算',
           description: '在多材料体素几何中执行蒙特卡洛中子输运(耗时较长)',
           buttonText: '开始计算',
+          loadingText: '正在计算...',
           action: null,
           status: 'pending',
           disabled: true,
@@ -2262,6 +2260,7 @@ export default {
           title: '生成全身剂量分布图',
           description: '从MCNP全身meshtal提取剂量数据，生成三视图可视化',
           buttonText: '生成剂量图',
+          loadingText: '正在生成...',
           action: null,
           status: 'pending',
           disabled: true,
@@ -2329,6 +2328,8 @@ export default {
 
       // 体模构建参数
       phantomBuilt: false,
+      niiUploading: false,
+      doseUploading: false,
 
       // ========== 剂量组分设置 Tab ==========
       dsLoading:   false,
@@ -2341,43 +2342,43 @@ export default {
 
       dsSource: {
         source_type:      'epithermal',
-        position:         [0, 0, 100],
-        direction:        [0, 0, -1],
-        beam_radius:      5.0,
-        energy_mono:      0.001,
+        position:         [0, 0, 0],
+        direction:        [0, 0, 0],
+        beam_radius:      0,
+        energy_mono:      0,
         energy_spectrum: {
           energies: [5e-7, 1e-6, 1e-5, 1e-4, 1e-3, 0.01, 0.1, 1.0, 10.0],
-          weights:  [0.00, 0.05, 0.15, 0.25, 0.25,  0.15, 0.10, 0.04, 0.01]
+          weights:  [0.00, 0.00, 0.00, 0.00, 0.00,  0.00, 0.00, 0.00, 0.00]
         },
-        intensity: 1e12
+        intensity: 0
       },
 
       dsPhantom: {
         phantom_type:   'AM',
         center:         [0, 0, 0],
         rotation_deg:   [0, 0, 0],
-        height_cm:      170,
-        weight_kg:      70,
+        height_cm:      0,
+        weight_kg:      0,
         tumor_position: [0, 0, 0],
-        tumor_radius:   2.0
+        tumor_radius:   0
       },
 
-      dsTumorDepth: 7.0,
+      dsTumorDepth: 0,
 
       dsCbeRbe: {
         tumor: {
-          boron_cbe: 3.8, nitrogen_rbe: 3.2, hydrogen_rbe: 3.2, gamma_rbe: 1.0
+          boron_cbe: 0, nitrogen_rbe: 0, hydrogen_rbe: 0, gamma_rbe: 0
         },
         normal_tissue: {
-          boron_cbe: 1.35, nitrogen_rbe: 3.2, hydrogen_rbe: 3.2, gamma_rbe: 1.0
+          boron_cbe: 0, nitrogen_rbe: 0, hydrogen_rbe: 0, gamma_rbe: 0
         },
         skin: {
-          boron_cbe: 2.5, nitrogen_rbe: 3.2, hydrogen_rbe: 3.2, gamma_rbe: 1.0
+          boron_cbe: 0, nitrogen_rbe: 0, hydrogen_rbe: 0, gamma_rbe: 0
         }
       },
 
       dsBoronConc: {
-        tumor: 60, skin: 25, blood: 25, normal_tissue: 18
+        tumor: 0, skin: 0, blood: 0, normal_tissue: 0
       },
 
       dsTissueLabel: {
@@ -2922,8 +2923,7 @@ export default {
       const file = e.target.files[0];
       if (!file) return;
 
-      this.loading = true;
-      this.loadingMessage = '上传并处理NIfTI文件...';
+      this.niiUploading = true;
       this.uploadedFile = file;
 
       const formData = new FormData();
@@ -2970,7 +2970,7 @@ export default {
         console.error('Upload error:', error);
         this.showMessage('上传失败: ' + (error.response && error.response.data && error.response.data.message || error.message), 'error');
       } finally {
-        this.loading = false;
+        this.niiUploading = false;
         this.progress = 0;
       }
     },
@@ -3109,6 +3109,27 @@ export default {
 
         this.addLog('全身体模构建成功', 'success');
         this.showMessage('全身体模构建成功，可以开始MCNP计算或直接进行风险评估', 'success');
+
+        // 体模构建完成后设置默认参数：源与肿瘤高度一致、侧向水平入射
+        this.dsPhantom.height_cm    = 170;
+        this.dsPhantom.weight_kg    = 70;
+        this.dsPhantom.tumor_position = [0, 0, 0];
+        this.dsPhantom.tumor_radius   = 2.0;
+        // 源位于肿瘤同一Z高度（Z=0，即体模中心），从左侧水平射入
+        this.dsSource.position    = [-20, 0, 0];
+        this.dsSource.direction   = [1, 0, 0];
+        this.dsSource.beam_radius = 5.0;
+        this.dsSource.intensity   = 1e12;
+        this.dsSource.energy_spectrum.weights = [0.00, 0.05, 0.15, 0.25, 0.25, 0.15, 0.10, 0.04, 0.01];
+        this.dsTumorDepth = 7.0;
+        this.dsCbeRbe = {
+          tumor:        { boron_cbe: 3.8,  nitrogen_rbe: 3.2, hydrogen_rbe: 3.2, gamma_rbe: 1.0 },
+          normal_tissue:{ boron_cbe: 1.35, nitrogen_rbe: 3.2, hydrogen_rbe: 3.2, gamma_rbe: 1.0 },
+          skin:         { boron_cbe: 2.5,  nitrogen_rbe: 3.2, hydrogen_rbe: 3.2, gamma_rbe: 1.0 }
+        };
+        this.dsBoronConc = { tumor: 60, skin: 25, blood: 25, normal_tissue: 18 };
+        // 触发右侧数据面板更新
+        this.$nextTick(() => { this.dsCalculate(); });
       } catch (error) {
         this.mcnpSteps[0].status = 'error';
         this.mcnpSteps[0].result = '构建失败';
@@ -3270,8 +3291,7 @@ export default {
       const files = Array.from(e.target.files);
       if (files.length === 0) return;
 
-      this.loading = true;
-      this.loadingMessage = '上传剂量文件...';
+      this.doseUploading = true;
 
       const formData = new FormData();
       files.forEach(file => {
@@ -3306,7 +3326,7 @@ export default {
         this.showMessage(fullMessage, 'error');
         this.addLog('剂量文件处理失败: ' + errorMsg, 'error');
       } finally {
-        this.loading = false;
+        this.doseUploading = false;
       }
     },
 
