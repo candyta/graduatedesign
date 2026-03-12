@@ -2416,15 +2416,15 @@ export default {
       const y = this.dsPhantom.center[1];
       return Math.max(140, Math.min(320, 250 - y * 1.5));
     },
-    // SVG viewBox以物理cm为单位，四周预留缓冲以显示体外中子源
+    // SVG viewBox以物理cm为单位，保持与背景图像相同的宽高比，确保覆盖层对齐
+    // 水平方向体外中子源通过 overflow:visible 渲染在viewBox外侧
     dsPhantomSvgViewBox() {
       const d = this.dsPhantomPhysDims;
-      const bufV = 25;  // cm，顶部/底部缓冲
-      const bufH = 35;  // cm，左右缓冲（确保水平源 X≈-40 可见）
+      const buf = 25;  // cm，顶部缓冲（与背景图像预留空间一致）
       const view = this.dsVizPhantomView;
-      if (view === 'coronal')  return `-${bufH} -${bufV} ${d.x + 2*bufH} ${d.z + bufV}`;
-      if (view === 'sagittal') return `-${bufH} -${bufV} ${d.y + 2*bufH} ${d.z + bufV}`;
-      return `-${bufH} -${bufH} ${d.x + 2*bufH} ${d.y + 2*bufH}`;  // 轴向面四周缓冲
+      if (view === 'coronal')  return `0 -${buf} ${d.x} ${d.z + buf}`;
+      if (view === 'sagittal') return `0 -${buf} ${d.y} ${d.z + buf}`;
+      return `0 0 ${d.x} ${d.y}`;  // 轴向面
     },
     // 中子源在体模SVG坐标系中的位置（物理cm，各视图使用正确轴）
     dsVizSourceX() {
@@ -6374,6 +6374,7 @@ export default {
   align-items: center;
   justify-content: center;
   min-height: 260px;
+  overflow: visible;  /* 允许体外中子源标记渲染到画布左侧 */
 }
 .ds-phantom-bg-img {
   display: block;
@@ -6389,6 +6390,7 @@ export default {
   width: 100%;
   height: 100%;
   pointer-events: none;
+  overflow: visible;  /* 允许水平体外中子源渲染在体模图像左侧 */
 }
 
 /* ── CT 图像交互模式 ── */
