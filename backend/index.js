@@ -803,9 +803,15 @@ app.post('/run-mcnp-computation', async (req, res) => {
                     const sp = source_position;
                     const sd = source_direction || [0, 0, -1];
                     const br = beam_radius || 5.0;
-                    const sx = cx + sp[0];
-                    const sy = cy + sp[1];
-                    const sz = cz + sp[2];
+                    const sx = Math.max(0.001, Math.min(cx + sp[0], x_max - 0.001));
+                    const sy = Math.max(0.001, Math.min(cy + sp[1], y_max - 0.001));
+                    // 源Z坐标钳位至容器RPP内部（[0.001, z_max-0.001]），
+                    // 防止源位于 imp:n=0 的外部虚空区导致 MCNP fatal error
+                    const sz_raw = cz + sp[2];
+                    const sz = Math.max(0.001, Math.min(sz_raw, z_max - 0.001));
+                    if (sz_raw !== sz) {
+                        console.warn(`[sdef update] source z=${sz_raw.toFixed(3)} outside container [0, ${z_max}], clamped to ${sz.toFixed(3)}`);
+                    }
 
                     // 替换sdef行（源位置、束流方向）
                     content = content.replace(
