@@ -766,17 +766,14 @@
                 </div>
               </div>
 
-              <button @click="exportRiskReport" class="btn btn-primary">
-                导出评估报告（JSON）
-              </button>
             </div>
           </div>
 
         </div>
       </div>
 
-      <!-- Tab 6: ICRP标准体模对比 -->
-      <div v-show="activeTab === 'icrp-compare'" class="tab-content">
+      <!-- ICRP标准体模对比（合并至风险评估页） -->
+      <div v-show="activeTab === 'risk'" class="tab-content">
         <div class="icrp-compare-workspace">
           <div class="icrp-compare-header">
             <h2>📋 ICRP-110 标准体模 vs 参考数据对比</h2>
@@ -989,8 +986,8 @@
           </div>
         </div>
       </div>
-      <!-- Tab: BEIR VII 验证 -->
-      <div v-show="activeTab === 'beir7-validate'" class="tab-content">
+      <!-- BEIR VII 验证（合并至风险评估页） -->
+      <div v-show="activeTab === 'risk'" class="tab-content">
         <div class="bv-workspace">
           <div class="bv-header">
             <h2>🔬 BEIR VII 风险模型参数验证</h2>
@@ -2158,9 +2155,7 @@ export default {
         { id: 'mcnp', name: 'MCNP计算', icon: '⚛️' },
         { id: 'dose', name: '剂量分析', icon: '📊' },
         { id: 'dvh', name: 'DVH分析', icon: '📈' },
-        { id: 'risk', name: '风险评估', icon: '🏥' },
-        { id: 'icrp-compare', name: 'ICRP对比', icon: '📋' },
-        { id: 'beir7-validate', name: 'BEIR VII验证', icon: '🔬' }
+        { id: 'risk', name: '风险评估', icon: '🏥' }
       ],
 
       // 全屏
@@ -3147,6 +3142,8 @@ export default {
     },
 
     async runMcnpCalculation() {
+      // 每次重新计算时清空二次癌风险评估界面
+      this.riskResults = null;
       this.loading = true;
       this.currentStep = 1;
       this.mcnpSteps[1].status = 'active';
@@ -3685,6 +3682,9 @@ export default {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
+  position: sticky;
+  top: 0;
+  z-index: 100;
 }
 
 .logo-section {
