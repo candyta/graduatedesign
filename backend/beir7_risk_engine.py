@@ -157,6 +157,10 @@ class BEIRVII_RiskEngine:
     
     # DDREF (Dose and Dose-Rate Effectiveness Factor)
     DDREF = 1.5  # 用于低剂量（< 100 mGy）
+
+    # BEIR VII 线性模型有效剂量上限（Sv）
+    # 超过此值时模型外推误差显著，自动截断并发出警告
+    BEIR7_MAX_DOSE_SV = 2.0
     
     def __init__(self, patient_age: int, patient_gender: str):
         """
@@ -216,17 +220,24 @@ class BEIRVII_RiskEngine:
         beta = gender_params['beta']
         gamma = gender_params['gamma']
         eta = gender_params['eta']
-        
+
+        # BEIR VII 有效范围截断：模型为低剂量线性外推，超过 2 Sv 时不确定性极大
+        if dose_sv > self.BEIR7_MAX_DOSE_SV:
+            print(f"  [BEIR VII] {organ} 剂量 {dose_sv:.2f} Sv 超出模型有效范围"
+                  f"（≤{self.BEIR7_MAX_DOSE_SV} Sv），截断至 {self.BEIR7_MAX_DOSE_SV} Sv",
+                  file=sys.stderr)
+            dose_sv = self.BEIR7_MAX_DOSE_SV
+
         # 应用DDREF（如果剂量 < 0.1 Sv）
         if dose_sv < 0.1:
             dose_sv = dose_sv / self.DDREF
-        
+
         # 年龄调整
         age_factor = np.exp(gamma * (age_at_exposure - 30) / 10)
-        
+
         # 计算ERR
         err = beta * dose_sv * age_factor
-        
+
         return err
     
     def calculate_ear(self,
@@ -270,18 +281,22 @@ class BEIRVII_RiskEngine:
         beta = gender_params['beta']
         gamma = gender_params['gamma']
         eta = gender_params['eta']
-        
+
+        # BEIR VII 有效范围截断
+        if dose_sv > self.BEIR7_MAX_DOSE_SV:
+            dose_sv = self.BEIR7_MAX_DOSE_SV
+
         # 应用DDREF
         if dose_sv < 0.1:
             dose_sv = dose_sv / self.DDREF
-        
+
         # 年龄调整因子
         age_at_exp_factor = np.exp(gamma * (age_at_exposure - 30) / 10)
         attained_age_factor = (attained_age / 60) ** eta
-        
+
         # 计算EAR（每10,000人年）
         ear = beta * dose_sv * age_at_exp_factor * attained_age_factor
-        
+
         return ear
     
     def get_risk_level(self, lar_percent: float) -> str:
@@ -525,6 +540,7 @@ class BEIRVII_RiskEngine:
         
         results = {}
         total_risk = 0.0
+        prob_no_cancer = 1.0  # 用于独立概率合并：P(无任何二次癌) = ∏(1 - pᵢ)
         
         # 器官名称映射（简化版）
         organ_mapping = {
@@ -583,14 +599,18 @@ class BEIRVII_RiskEngine:
                         'risk_level': self.get_risk_level(lar)
                     }
 
-                    total_risk += lar
-        
+                    # 用独立事件概率合并更新累积风险
+                    # P(至少患一种二次癌) = 1 - ∏(1 - pᵢ)，保证总风险 ≤ 100%
+                    prob_no_cancer *= (1.0 - lar / 100.0)
+
+        total_risk = (1.0 - prob_no_cancer) * 100.0
+
         # 添加总风险
         results['total'] = {
             'lar_percent': total_risk,
             'description': '全身累积二次癌风险'
         }
-        
+
         print(f"\n✓ 风险评估完成")
         print(f"  评估器官/部位: {len(results) - 1}")
         print(f"  总体风险: {total_risk:.4f}%")
