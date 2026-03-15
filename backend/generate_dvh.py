@@ -6,7 +6,6 @@ import numpy as np
 import nibabel as nib
 import matplotlib.pyplot as plt  # Import matplotlib for plotting
 from scipy.ndimage import zoom
-from scipy.stats import gaussian_kde
 def load_npy_dose(npy_path):
     """加载剂量数据 (.npy 文件)"""
     dose = np.load(npy_path)
@@ -33,38 +32,72 @@ def resize_mask_to_dose(mask, dose_shape):
     print(f'[INFO] Resized mask to shape: {mask_resized.shape}')  # 打印调整后的掩膜数据尺寸
     return mask_resized
 
+def _cumulative_dvh(dose_values, n_bins=200):
+    """
+    计算累积 DVH：对于每个剂量值 d，返回"至少接受 d 剂量的体积百分比"。
+    返回 (bin_centers, volume_pct)，长度均为 n_bins。
+    """
+    if len(dose_values) == 0:
+        return np.array([0.0, 0.0]), np.array([100.0, 0.0])
+    max_dose = float(dose_values.max())
+    if max_dose <= 0:
+        return np.array([0.0, 0.0]), np.array([100.0, 0.0])
+    bin_edges = np.linspace(0, max_dose * 1.05, n_bins + 1)
+    counts, _ = np.histogram(dose_values, bins=bin_edges)
+    # 累积：从高剂量到低剂量累加，再归一化为百分比
+    cumulative = np.flip(np.cumsum(np.flip(counts)))
+    volume_pct = cumulative / len(dose_values) * 100.0
+    # 在 bin_centers 和 0 起点各加一个点，使曲线从 (0, 100%) 开始
+    bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+    dose_pts   = np.concatenate([[0.0], bin_centers])
+    volume_pts = np.concatenate([[100.0], volume_pct])
+    return dose_pts, volume_pts
+
+
 def generate_dvh_image(dose, masks, spacing, out_path):
-    """生成DVH图像，并为每个结构绘制单独的DVH"""
-    # 设置绘图
-    fig, ax = plt.subplots(figsize=(6, 4))
+    """
+    生成标准累积 DVH 图像。
+    累积 DVH：X 轴 = 剂量 (Gy)，Y 轴 = 至少接受该剂量的体积百分比 (%)。
+    """
+    # 解决 matplotlib 中文字体问题
+    plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial', 'sans-serif']
+    plt.rcParams['axes.unicode_minus'] = False
 
-    # 为每个掩膜文件生成对应结构的DVH
-    for structure_name, (mask, _) in masks.items():
-        structure_mask = (mask > 0)  # 提取该结构的掩膜
-        structure_dose = dose[structure_mask]  # 获取该结构的剂量
-        ax.hist(structure_dose, bins=200, histtype='step', label=structure_name)  # 增加 bins 数量
+    fig, ax = plt.subplots(figsize=(7, 5))
 
-    # 绘制总的DVH： 这里只需要将所有结构掩膜合并
+    # 收集所有结构的最大剂量，用于统一 X 轴
+    all_max_dose = 0.0
     combined_mask = np.zeros_like(dose, dtype=bool)
-    for mask, _ in masks.values():
-        combined_mask = np.logical_or(combined_mask, mask > 0)
 
-    total_dose = dose[combined_mask]  # 获取所有掩膜区域的剂量
-    ax.hist(total_dose, bins=200, color='C0', histtype='step', label='Total Dose')  # 增加 bins 数量
+    for structure_name, (mask, _) in masks.items():
+        structure_mask = (mask > 0)
+        structure_dose = dose[structure_mask]
+        combined_mask = np.logical_or(combined_mask, structure_mask)
+        if len(structure_dose) == 0:
+            continue
+        d, v = _cumulative_dvh(structure_dose)
+        ax.plot(d, v, linewidth=1.5, label=structure_name)
+        all_max_dose = max(all_max_dose, float(structure_dose.max()))
 
-    # 设置x轴范围为 0-10 Gy（放大显示剂量集中区）
-    ax.set_xlim(0, 10)  # 调整 x 轴范围为 0 到 10 Gy
+    # 绘制所有掩膜合并区域的总 DVH
+    total_dose = dose[combined_mask]
+    if len(total_dose) > 0:
+        d, v = _cumulative_dvh(total_dose)
+        ax.plot(d, v, linewidth=2.0, linestyle='--', color='black', label='Total (all structures)')
+        all_max_dose = max(all_max_dose, float(total_dose.max()))
 
-    ax.set_xlabel('剂量 (Gy)')
-    ax.set_ylabel('频率')
-    ax.set_title('DVH for Different Structures')
+    ax.set_xlim(left=0, right=all_max_dose * 1.05 if all_max_dose > 0 else 10.0)
+    ax.set_ylim(0, 105)
+    ax.set_xlabel('Dose (Gy)')
+    ax.set_ylabel('Volume (%)')
+    ax.set_title('Cumulative DVH for Different Structures')
+    ax.legend(loc='upper right', fontsize=8)
+    ax.grid(True, alpha=0.3)
 
-    ax.legend()  # 显示图例
-
-    # 保存DVH图像
-    plt.savefig(out_path)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=120)
     plt.close(fig)
-    print(f'[INFO] Saved DVH plot: {out_path}')
+    print(f'[INFO] Saved cumulative DVH plot: {out_path}')
 
 
 
