@@ -663,8 +663,9 @@ def process_dose_3d(npy_path, output_dir, ref_nii_path,
     if is_wholebody_phantom:
         body_mask_3d = (ref_array != 0)
         # 闭运算填充盆骨与大腿之间的体素间隙，消除冠状/矢状视图中的横向缝线
+        # Z方向体素为8mm，盆骨-大腿间隙可达2-4个体素，需要更大的核（Z轴用11）
         from numpy import ones
-        body_mask_3d = binary_closing(body_mask_3d, structure=ones((3, 3, 3), dtype=bool))
+        body_mask_3d = binary_closing(body_mask_3d, structure=ones((11, 5, 5), dtype=bool))
     else:
         raw_hu = ref_array.astype(np.float32)
         body_mask_3d = (raw_hu > -900)
