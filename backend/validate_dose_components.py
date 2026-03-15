@@ -139,8 +139,8 @@ CLINICAL_BENCHMARK_CASES = [
             "irr_time_min":     60.0
         },
         "expected": {
-            "tumor_total_weighted_cgy_range":  [100, 10000],
-            "skin_total_weighted_cgy_range":   [100, 10000],
+            "tumor_total_weighted_cgy_range":  [100, 5000],
+            "skin_total_weighted_cgy_range":   [100, 5000],
             "therapeutic_ratio_range":         [0.8, 5.0],
             "dominant_component":              "boron"
         }
@@ -203,7 +203,7 @@ CLINICAL_BENCHMARK_CASES = [
         "expected": {
             "dominant_component":              "boron",
             "boron_fraction_min_pct":          50.0,   # 硼剂量至少占50%
-            "tumor_total_weighted_cgy_range":  [1, 1e8]
+            "tumor_total_weighted_cgy_range":  [100, 5000]
         }
     }
 ]
@@ -329,7 +329,7 @@ def validate_dose_formula_analytic() -> Dict:
         # 由于计算器内部有几何衰减因子，仅验证量级（同数量级）
         ratio = computed_cgy / analytic_cgy if analytic_cgy > 0 else float("inf")
         # 允许较宽容差：解析公式假设均匀通量，计算器含几何衰减因子
-        passed = 1e-6 < ratio < 1e3
+        passed = 1e-3 < ratio < 1e3
 
     except Exception as e:
         computed_cgy = None
@@ -344,7 +344,7 @@ def validate_dose_formula_analytic() -> Dict:
             "computed_cgy": round(computed_cgy, 6) if computed_cgy else None,
             "ratio":        round(ratio, 4) if ratio else None,
             "passed":       passed,
-            "note":         "计算器含几何衰减因子，比值应在合理物理范围内（1e-3~1e3）"
+            "note":         "计算器含几何衰减因子，比值应在合理物理范围内（1e-3~1e3），已使用此范围"
         },
         {
             "name":    "硼截面参考值验证",

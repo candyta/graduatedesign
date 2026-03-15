@@ -1627,7 +1627,7 @@
                 </div>
                 <div class="ds-field-group">
                   <label class="ds-label">肿瘤深度 (cm) <span class="ds-hint-tag" title="影响右侧剂量数值：深度决定中子在组织中的衰减程度">影响剂量计算</span></label>
-                  <input v-model.number="dsTumorDepth" type="number" step="0.5" min="0" max="30" class="ds-input-full" @input="dsOnTumorDepthChange" />
+                  <input v-model.number="dsTumorDepth" type="number" step="0.5" min="0" max="25" class="ds-input-full" @input="dsOnTumorDepthChange" />
                 </div>
               </div>
             </div>
@@ -1641,10 +1641,10 @@
                 </div>
                 <div v-for="tissue in ['tumor','normal_tissue','skin']" :key="tissue" class="ds-cbe-row">
                   <span class="ds-cbe-tissue">{{ dsTissueLabel[tissue] }}</span>
-                  <input v-model.number="dsCbeRbe[tissue].boron_cbe"    type="number" step="0.05" min="0.1" max="10" class="ds-cbe-input" @input="dsOnParamChange" />
-                  <input v-model.number="dsCbeRbe[tissue].nitrogen_rbe" type="number" step="0.1"  min="0.1" max="10" class="ds-cbe-input" @input="dsOnParamChange" />
-                  <input v-model.number="dsCbeRbe[tissue].hydrogen_rbe" type="number" step="0.1"  min="0.1" max="10" class="ds-cbe-input" @input="dsOnParamChange" />
-                  <input v-model.number="dsCbeRbe[tissue].gamma_rbe"    type="number" step="0.05" min="0.1" max="5"  class="ds-cbe-input" @input="dsOnParamChange" />
+                  <input v-model.number="dsCbeRbe[tissue].boron_cbe"    type="number" step="0.05" min="0.1" max="6" class="ds-cbe-input" @input="dsOnParamChange" />
+                  <input v-model.number="dsCbeRbe[tissue].nitrogen_rbe" type="number" step="0.1"  min="0.1" max="6" class="ds-cbe-input" @input="dsOnParamChange" />
+                  <input v-model.number="dsCbeRbe[tissue].hydrogen_rbe" type="number" step="0.1"  min="0.1" max="6" class="ds-cbe-input" @input="dsOnParamChange" />
+                  <input v-model.number="dsCbeRbe[tissue].gamma_rbe"    type="number" step="0.05" min="0.1" max="2" class="ds-cbe-input" @input="dsOnParamChange" />
                 </div>
               </div>
             </div>
@@ -1655,7 +1655,7 @@
               <div class="ds-boron-grid">
                 <template v-for="(label, key) in dsBoronLabel" :key="key">
                   <span class="ds-boron-label">{{ label }}</span>
-                  <input v-model.number="dsBoronConc[key]" type="number" step="1" min="0" max="200" class="ds-boron-input" @input="dsOnParamChange" />
+                  <input v-model.number="dsBoronConc[key]" type="number" step="1" min="0" max="100" class="ds-boron-input" @input="dsOnParamChange" />
                 </template>
               </div>
             </div>
