@@ -96,40 +96,56 @@ LITERATURE_CROSS_SECTIONS = {
 
 # ─────────────────────────────────────────────────────────────────
 # 临床基准案例
-# 来源：IAEA TECDOC-1683 附录 A，JRR-4 临床数据
+# 来源：IAEA TECDOC-1683 附录 A，JRR-4 / Petten / MIT 临床数据
+#
+# 验证策略说明：
+#   本模型为简化解析模型（非全 MCNP），存在以下系统性差异：
+#     · 使用归一化强度 1e12 n/cm²/s（真实临床束流约 5e8~1e9 n/cm²/s）
+#     · 几何模型为 πR²/r² 近似，非真实体素传输
+#   因此各案例期望值区分两类来源：
+#     · 治疗比 (therapeutic_ratio)：与文献报告值 ±30% 直接对比（相对指标，模型计算准确）
+#     · 绝对剂量 (cGy)：基于本模型计算值 ±50% 的回归测试范围，并标注文献参考值供参考
 # ─────────────────────────────────────────────────────────────────
 
 CLINICAL_BENCHMARK_CASES = [
     {
         "id": "CASE_JRR4_GBM",
         "name": "JRR-4 多形性胶质母细胞瘤",
-        "description": "日本 JRR-4 反应堆 BNCT 临床病例（脑肿瘤）。"
+        "description": "日本 JRR-4 反应堆 BNCT 临床病例（脑肿瘤，深度 7 cm）。"
                        "参考自 Nakagawa et al. (2009)。"
-                       "本模型使用等效等中子通量参数（束流强度归一到解析模型体系），"
-                       "验证相对剂量分布与治疗比，而非绝对临床剂量值。",
+                       "文献报告肿瘤 RBE 加权剂量约 20~30 Gy-Eq（2000~3000 cGy-Eq），"
+                       "正常脑组织约 10~15 Gy-Eq，治疗比 2.5~3.5。"
+                       "绝对剂量范围为本简化模型计算值 ±50%（回归测试）；"
+                       "治疗比范围来自文献。",
         "ref": "Nakagawa et al., Appl. Radiat. Isot. 67(7-8 Suppl):S8–S10, 2009",
+        # 文献参考值（供查阅）：tumor ~2000-3000 cGy-Eq，ratio 2.5~3.5
         "params": {
             "source_type":      "epithermal",
             "beam_radius":      6.0,
-            "intensity":        1.0e12,    # 归一化到解析模型体系
+            "intensity":        1.0e12,    # 归一化强度，非真实临床束流值
             "tumor_depth_cm":   7.0,
             "tumor_boron_ppm":  60.0,
             "irr_time_min":     30.0
         },
         "expected": {
-            "tumor_total_weighted_cgy_range":  [100, 5000],
-            "skin_total_weighted_cgy_range":   [50,  5000],
-            "therapeutic_ratio_range":         [1.5, 5.0],
+            # 绝对剂量：模型计算值 ±50%（回归）；文献值约 2000~3000 cGy-Eq
+            "tumor_total_weighted_cgy_range":  [550,  1700],
+            "skin_total_weighted_cgy_range":   [190,  580],
+            # 治疗比：文献参考值 2.5~3.5，±30% 裕量 → [1.75, 4.55]
+            "therapeutic_ratio_range":         [1.8,  4.5],
             "dominant_component":              "boron"
         }
     },
     {
         "id": "CASE_PETTEN_HFR",
         "name": "Petten HFR 黑色素瘤（浅表）",
-        "description": "荷兰 HFR 超热中子束，浅表皮肤黑色素瘤治疗。"
-                       "参考自 Raaijmakers et al. (1995)。"
-                       "本案例验证浅表肿瘤（2 cm）的治疗比应较深部肿瘤低。",
+        "description": "荷兰 HFR 超热中子束，浅表皮肤黑色素瘤（深度 2 cm）。"
+                       "参考自 Raaijmakers et al. (1995)，Med. Phys. 剂量测量研究。"
+                       "浅表肿瘤皮肤与肿瘤剂量相近，治疗比典型值 1.5~3.5（低于深部肿瘤）。"
+                       "绝对剂量范围为本简化模型计算值 ±50%（回归测试）；"
+                       "治疗比范围来自文献。",
         "ref": "Raaijmakers et al., Med. Phys. 22(12):1977–1984, 1995",
+        # 文献参考值（供查阅）：浅表黑色素瘤 tumor ~1500~3500 cGy-Eq，ratio 1.5~3.5
         "params": {
             "source_type":      "epithermal",
             "beam_radius":      5.0,
@@ -139,18 +155,25 @@ CLINICAL_BENCHMARK_CASES = [
             "irr_time_min":     60.0
         },
         "expected": {
-            "tumor_total_weighted_cgy_range":  [100, 5000],
-            "skin_total_weighted_cgy_range":   [100, 5000],
-            "therapeutic_ratio_range":         [0.8, 5.0],
+            # 绝对剂量：模型计算值 ±50%（回归）；文献值约 1500~3500 cGy-Eq
+            "tumor_total_weighted_cgy_range":  [500,  1600],
+            "skin_total_weighted_cgy_range":   [130,  420],
+            # 治疗比：文献参考值 1.5~3.5，±30% 裕量 → [1.05, 4.55]；浅表肿瘤治疗比偏低
+            "therapeutic_ratio_range":         [1.5,  5.0],
             "dominant_component":              "boron"
         }
     },
     {
         "id": "CASE_MIT_HEAD_NECK",
         "name": "MIT MITR-II 头颈部肿瘤",
-        "description": "美国 MIT 核反应堆 BNCT，头颈部鳞状细胞癌。"
-                       "参考自 Busse et al. (2003)。",
+        "description": "美国 MIT 核反应堆 BNCT，头颈部鳞状细胞癌（深度 4 cm）。"
+                       "参考自 Busse et al. (2003)，J. Neurooncol.。"
+                       "文献报告肿瘤剂量 15~25 Gy-Eq（1500~2500 cGy-Eq），"
+                       "治疗比 2.5~5.0（头颈部 BNCT 治疗效果良好）。"
+                       "绝对剂量范围为本简化模型计算值 ±50%（回归测试）；"
+                       "治疗比范围来自文献。",
         "ref": "Busse et al., J. Neurooncol. 62:111–121, 2003",
+        # 文献参考值（供查阅）：tumor ~1500~2500 cGy-Eq，ratio 2.5~5.0
         "params": {
             "source_type":      "epithermal",
             "beam_radius":      8.0,
@@ -160,9 +183,11 @@ CLINICAL_BENCHMARK_CASES = [
             "irr_time_min":     45.0
         },
         "expected": {
-            "tumor_total_weighted_cgy_range":  [100, 5000],
-            "skin_total_weighted_cgy_range":   [50,  5000],
-            "therapeutic_ratio_range":         [1.5, 6.0],
+            # 绝对剂量：模型计算值 ±50%（回归）；文献值约 1500~2500 cGy-Eq
+            "tumor_total_weighted_cgy_range":  [1600, 5000],
+            "skin_total_weighted_cgy_range":   [340,  1050],
+            # 治疗比：文献参考值 2.5~5.0，±30% 裕量 → [1.75, 6.5]
+            "therapeutic_ratio_range":         [2.5,  6.5],
             "dominant_component":              "boron"
         }
     },
@@ -170,7 +195,9 @@ CLINICAL_BENCHMARK_CASES = [
         "id": "CASE_ANALYTICAL_BORON_ONLY",
         "name": "解析基准：纯硼剂量验证",
         "description": "固定通量下纯 ¹⁰B(n,α) 反应的解析剂量验证。"
-                       "已知：Φ_th=10⁸ n/cm²/s，C_B=60 ppm，t=30 min",
+                       "已知：Φ_th=10⁸ n/cm²/s，C_B=60 ppm，t=30 min，depth=0.5 cm。"
+                       "本简化模型在几何衰减后有效通量约 ~8×10⁴ n/cm²/s（源距50cm准直束），"
+                       "期望剂量约 0.01~0.04 cGy（模型计算值 ±50%）。",
         "ref": "IAEA TECDOC-1223 Eq. (3.1), p.47",
         "params": {
             "source_type":   "thermal",
@@ -181,16 +208,16 @@ CLINICAL_BENCHMARK_CASES = [
             "irr_time_min":  30.0
         },
         "expected": {
-            # 解析计算（下面 Level 2 验证）
             "dominant_component": "boron",
-            # 定性期望（通量低，剂量绝对值小）
-            "tumor_total_weighted_cgy_range": [0.001, 100.0]
+            # 模型计算值约 0.02 cGy（几何衰减后），±50% 回归范围
+            "tumor_total_weighted_cgy_range": [0.01, 0.04]
         }
     },
     {
         "id": "CASE_DOSE_FRACTION_CHECK",
         "name": "剂量组分比例基准",
-        "description": "正常超热束条件下，硼剂量应占主导（>50% 总生物剂量）",
+        "description": "正常超热束条件下，¹⁰B(n,α) 反应剂量应占总生物剂量的主导部分（>50%）。"
+                       "参考自 Barth et al. (2018) BNCT 剂量组分综述。",
         "ref": "Barth et al., Cancer Commun. 38:35, 2018",
         "params": {
             "source_type":      "epithermal",
@@ -202,8 +229,9 @@ CLINICAL_BENCHMARK_CASES = [
         },
         "expected": {
             "dominant_component":              "boron",
-            "boron_fraction_min_pct":          50.0,   # 硼剂量至少占50%
-            "tumor_total_weighted_cgy_range":  [100, 5000]
+            "boron_fraction_min_pct":          50.0,   # 文献：硼剂量至少占50%总加权剂量
+            # 模型计算值约 767 cGy，±50% 回归范围
+            "tumor_total_weighted_cgy_range":  [380, 1200]
         }
     }
 ]
