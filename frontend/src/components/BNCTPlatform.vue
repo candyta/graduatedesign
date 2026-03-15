@@ -2128,6 +2128,46 @@
 
     </main>
 
+    <!-- 剂量分布全屏遮罩 -->
+    <div v-if="doseFullscreenView" class="fullscreen-overlay" @click.self="doseFullscreenView = null">
+      <div class="fullscreen-panel dose-fullscreen-panel">
+        <div class="panel-header">
+          <h4>{{ viewNames[doseFullscreenView] }}剂量分布</h4>
+          <div class="panel-actions">
+            <button @click="previousDoseSlice(doseFullscreenView)"
+                    :disabled="doseSliceIndices[doseFullscreenView] === 0"
+                    class="btn-icon" title="上一张">◀</button>
+            <span class="dose-fs-slice-info">
+              {{ doseSliceIndices[doseFullscreenView] + 1 }} / {{ (slices[doseSliceKey(doseFullscreenView)] || []).length }}
+            </span>
+            <button @click="nextDoseSlice(doseFullscreenView)"
+                    :disabled="doseSliceIndices[doseFullscreenView] >= (slices[doseSliceKey(doseFullscreenView)] || []).length - 1"
+                    class="btn-icon" title="下一张">▶</button>
+            <button @click="doseFullscreenView = null" class="btn-icon" title="退出全屏">✕</button>
+          </div>
+        </div>
+        <div class="fullscreen-image-container">
+          <img
+            v-if="slices[doseSliceKey(doseFullscreenView)] && slices[doseSliceKey(doseFullscreenView)][doseSliceIndices[doseFullscreenView]]"
+            :src="getImageUrl(slices[doseSliceKey(doseFullscreenView)][doseSliceIndices[doseFullscreenView]])"
+            :alt="`${viewNames[doseFullscreenView]}剂量分布`"
+            class="fullscreen-image"
+          />
+          <div v-else class="placeholder">
+            <p>📈</p><p>等待剂量数据...</p>
+          </div>
+        </div>
+        <div class="viewer-slice-control" style="padding: 0 1.5rem 1rem;">
+          <input
+            v-model.number="doseSliceIndices[doseFullscreenView]"
+            type="range" min="0"
+            :max="Math.max(0, (slices[doseSliceKey(doseFullscreenView)] || []).length - 1)"
+            class="viewer-slider"
+          />
+        </div>
+      </div>
+    </div>
+
     <!-- 消息提示 -->
     <transition name="fade">
       <div v-if="message" :class="['message-toast', messageType]">
@@ -2325,6 +2365,7 @@ export default {
       doseOrgansDirty: false,
       doseOrganApplying: false,
       doseOrganExpanded: false,
+      doseFullscreenView: null,
 
       // 体模构建参数
       phantomBuilt: false,
@@ -2687,8 +2728,9 @@ export default {
   async mounted() {
     // 全屏 Escape 键退出
     window.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && this.fullscreenView) {
-        this.fullscreenView = null;
+      if (e.key === 'Escape') {
+        if (this.doseFullscreenView) this.doseFullscreenView = null;
+        else if (this.fullscreenView) this.fullscreenView = null;
       }
     });
 
@@ -3356,9 +3398,11 @@ export default {
       }
     },
 
-    toggleDoseFullscreen(_view) {
-      this.showMessage('全屏功能开发中...', 'info');
-      // TODO: 实现全屏显示
+    toggleDoseFullscreen(view) {
+      this.doseFullscreenView = view;
+    },
+    doseSliceKey(view) {
+      return 'dose' + view.charAt(0).toUpperCase() + view.slice(1);
     },
 
     removeDoseFile(index) {
@@ -5120,6 +5164,19 @@ export default {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
+}
+
+/* 剂量全屏面板：冠状/矢状为竖向图，允许更高 */
+.dose-fullscreen-panel {
+  max-width: 700px;
+  height: 92vh;
+}
+
+.dose-fs-slice-info {
+  color: #a0aec0;
+  font-size: 0.85rem;
+  min-width: 60px;
+  text-align: center;
 }
 
 /* ========== 加载遮罩 ========== */
