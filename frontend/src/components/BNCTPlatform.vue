@@ -2092,11 +2092,15 @@
             <details class="ds-val-detail">
               <summary>Level 3 ─ 临床基准案例验证 ({{ dsValidateResult.level3_clinical.n_pass }}/{{ dsValidateResult.level3_clinical.total }} 通过)</summary>
               <div v-for="cas in dsValidateResult.level3_clinical.cases" :key="cas.id" class="ds-val-case">
-                <div class="ds-val-case-header" :class="cas.passed ? 'case-pass' : 'case-fail'">
+                <div class="ds-val-case-header" :class="cas.passed ? 'case-pass' : 'case-fail'"
+                     @click="toggleDsCase(cas.id)" style="cursor:pointer;">
                   <span>{{ cas.passed ? '✓' : '✗' }} {{ cas.name }}</span>
-                  <span class="ds-val-case-ref">{{ cas.ref }}</span>
+                  <span style="display:flex;align-items:center;gap:8px;">
+                    <span class="ds-val-case-ref">{{ cas.ref }}</span>
+                    <span class="ds-val-expand-hint">{{ dsExpandedCases[cas.id] ? '▲ 收起' : '▼ 展开' }}</span>
+                  </span>
                 </div>
-                <div class="ds-val-case-body">
+                <div v-if="dsExpandedCases[cas.id]" class="ds-val-case-body">
                   <p class="ds-val-case-desc">{{ cas.description }}</p>
                   <table class="ds-val-table">
                     <thead><tr><th>检查项</th><th>计算值</th><th>期望范围</th><th>结果</th></tr></thead>
@@ -2217,6 +2221,7 @@ export default {
       bvResult: null,
       bvError: '',
       expandedCases: {},
+      dsExpandedCases: {},
 
       // 风险评估
       patientCtFile: null,
@@ -3582,6 +3587,9 @@ export default {
       }
     },
 
+    toggleDsCase(id) {
+      this.dsExpandedCases = { ...this.dsExpandedCases, [id]: !this.dsExpandedCases[id] };
+    },
     toggleCase(id) {
       this.expandedCases = { ...this.expandedCases, [id]: !this.expandedCases[id] };
     },
@@ -6729,6 +6737,7 @@ export default {
 .case-pass { background: #f0fff4; color: #22543d; }
 .case-fail { background: #fff5f5; color: #742a2a; }
 .ds-val-case-ref { font-size: 0.68rem; font-weight: 400; color: #718096; }
+.ds-val-expand-hint { font-size: 0.68rem; font-weight: 500; color: #718096; white-space: nowrap; }
 .ds-val-case-body { padding: 0.5rem; }
 .ds-val-case-desc { font-size: 0.75rem; color: #718096; margin-bottom: 6px; }
 
