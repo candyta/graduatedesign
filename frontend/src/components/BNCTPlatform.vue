@@ -1864,7 +1864,7 @@
             <!-- 深度滑块 -->
             <div class="ds-depth-ctrl">
               <label class="ds-label">肿瘤深度（沿束流轴）</label>
-              <input v-model.number="dsTumorDepth" type="range" min="0" max="25" step="0.5" class="ds-slider" @input="dsOnTumorDepthChange" />
+              <input v-model.number="dsTumorDepth" type="range" min="0" :max="ctMetadata ? ctMetadata.phys_size_cm[2] : 25" step="0.5" class="ds-slider" @input="dsOnTumorDepthChange" />
               <span class="ds-depth-val">{{ dsTumorDepth }} cm</span>
             </div>
           </section>
@@ -2705,13 +2705,7 @@ export default {
       console.warn('[初始化] 清除会话文件失败（可忽略）:', err.message);
     }
 
-    // 同步初始肿瘤深度到tumor_position[2]，确保可视化与深度值一致
-    // （不调用dsOnParamChange，避免页面刚加载就触发计算）
-    const d = this.dsPhantomPhysDims;
-    const offset = this.dsCtToPhantomOffset;
-    this.dsPhantom.tumor_position[2] = parseFloat(
-      (d.z - d.zc - offset[2] - this.dsTumorDepth).toFixed(1)
-    );
+    // mounted时尚无CT数据，tumor_position保持默认[0,0,0]（CT中心）
   },
 
   methods: {
@@ -2723,14 +2717,14 @@ export default {
     },
 
     // 肿瘤深度滑块专用handler：同步dsTumorDepth到tumor_position[2]
-    // 束流沿-Z方向从体模顶部(z=d.z)入射，深度depth → 肿瘤绝对z = d.z - depth
-    // 体模绝对z = d.zc + tumor_position[2] + ctToPhantomOffset[2]
-    // → tumor_position[2] = d.z - d.zc - ctToPhantomOffset[2] - depth
+    // depth 从 CT 区域顶面往下量（CT中心 = depth=ctHalfZ）
+    // tumor_position[2] 相对CT区域中心（即体素空间原点），tumor_position[2] = ctHalfZ - depth
     dsOnTumorDepthChange() {
-      const d = this.dsPhantomPhysDims;
-      const offset = this.dsCtToPhantomOffset;
+      const ctHalfZ = this.ctMetadata
+        ? this.ctMetadata.phys_size_cm[2] / 2
+        : (this.dsPhantomPhysDims.z - this.dsPhantomPhysDims.zc - this.dsCtToPhantomOffset[2]);
       this.dsPhantom.tumor_position[2] = parseFloat(
-        (d.z - d.zc - offset[2] - this.dsTumorDepth).toFixed(1)
+        (ctHalfZ - this.dsTumorDepth).toFixed(1)
       );
       this.dsOnParamChange();
     },
@@ -2951,10 +2945,10 @@ export default {
         // 保存 CT 元数据并将肿瘤默认定位到 CT 体积中心
         if (response.data.ctMetadata && !response.data.ctMetadata.error) {
           this.ctMetadata = response.data.ctMetadata;
-          // 肿瘤默认位置：相对体模中心 (0,0,0) = CT 物理中心
+          // 肿瘤默认位置：CT 物理中心（tumor_position相对CT中心，故[0,0,0]即CT中心）
           this.dsPhantom.tumor_position = [0, 0, 0];
-          // 初始肿瘤深度：CT Z 轴长度的 1/4（粗略起点，供用户调整）
-          this.dsTumorDepth = parseFloat((this.ctMetadata.phys_size_cm[2] / 4).toFixed(1));
+          // 深度与位置保持一致：depth=ctHalfZ 对应 tumor_position[2]=0（CT中心）
+          this.dsTumorDepth = parseFloat((this.ctMetadata.phys_size_cm[2] / 2).toFixed(1));
           // 各视图切片跳到中间
           this.dsVizCtSliceIndices = {
             axial:    Math.floor(this.slices.axial.length / 2),
@@ -3117,7 +3111,10 @@ export default {
         this.dsPhantom.weight_kg    = 70;
         this.dsPhantom.tumor_position = [0, 0, 0];
         this.dsPhantom.tumor_radius   = 2.0;
-        this.dsTumorDepth = 7.0;
+        // 默认深度 = CT半高，对应 tumor_position[2]=0（CT区域中心），保持两者一致
+        this.dsTumorDepth = this.ctMetadata
+          ? parseFloat((this.ctMetadata.phys_size_cm[2] / 2).toFixed(1))
+          : 7.0;
         // 肿瘤在体模坐标系中的实际Z（包含CT区域偏移，如chest→+45.6cm）
         // 源Z与肿瘤体模Z保持一致，确保可视化中两者在同一水平线上
         const tumorPhantomZ = this.dsTumorInPhantomCm[2];
