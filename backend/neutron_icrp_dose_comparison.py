@@ -289,6 +289,153 @@ def compute_effective_dose_from_organs(phantom_type: str = 'AM') -> dict:
     }
 
 
+# ======================================================================
+# 解析计算模块：基于 ICRP 110 组织成分 + 中子截面 → HT/Φ
+# 物理模型:
+#   K/Φ [Gy·cm²] = Σ_element n_e [atoms/g] × σ_e(E) [cm²] × T_e(E) [J] × 1e-3 [g→kg]
+#   H: 弹性散射，平均转移能 = E_n/2 (各向同性质心系)
+#   N: (n,p) 俘获，Q = 0.626 MeV（与中子能量无关）
+#   C,O: 快中子非弹性（仅 > 1 MeV）
+#   H_T/Φ = wR(E_n) × K/Φ × depth_f  [pSv·cm²]
+#   depth_f: AP 几何中器官深度对初级通量的衰减因子（基于 ICRP 110 体模尺寸）
+# ======================================================================
+
+# ICRP 110 参考组织元素质量分数 [H, C, N, O]
+# 来源: ICRP Publication 110 (2009) Appendix A, media.dat
+ICRP110_TISSUE_COMP = {
+    'Adrenals':        [0.1048, 0.2280, 0.0280, 0.6076],
+    'Brain':           [0.1070, 0.1445, 0.0220, 0.7120],
+    'Colon wall':      [0.1017, 0.1060, 0.0270, 0.7650],
+    'Oesophagus':      [0.1017, 0.1060, 0.0270, 0.7650],
+    'Kidneys':         [0.1030, 0.1320, 0.0300, 0.7140],
+    'Liver':           [0.1030, 0.1370, 0.0290, 0.7160],
+    'Lungs':           [0.1030, 0.1050, 0.0310, 0.7490],
+    'Pancreas':        [0.1060, 0.1690, 0.0220, 0.6600],
+    'Red bone marrow': [0.1050, 0.4040, 0.0250, 0.4390],
+    'Bone surface':    [0.0340, 0.1550, 0.0420, 0.4350],
+    'Salivary glands': [0.1040, 0.2720, 0.0640, 0.4970],
+    'Skin':            [0.1000, 0.2040, 0.0420, 0.6450],
+    'Spleen':          [0.1030, 0.1130, 0.0320, 0.7250],
+    'Stomach wall':    [0.1017, 0.1060, 0.0270, 0.7650],
+    'Testes':          [0.1060, 0.0990, 0.0200, 0.7730],
+    'Thyroid':         [0.1040, 0.1190, 0.0240, 0.7450],
+    'Bladder wall':    [0.1017, 0.1060, 0.0270, 0.7650],
+    'Breasts':         [0.1060, 0.3330, 0.0300, 0.5240],
+    'Ovaries':         [0.1050, 0.0910, 0.0240, 0.7680],
+    'Uterus':          [0.1060, 0.2840, 0.0810, 0.4930],
+}
+
+# AP 几何深度修正因子（基于 ICRP 110 成人体模解剖位置）
+# 衰减主要来自前向穿越体厚及多次散射的空间分布
+# 参考: ICRP 116 Table A.3 中各器官相对于皮肤的剂量比
+_AP_DEPTH_FACTOR = {
+    'Brain':           0.38,  'Lungs':           0.85,
+    'Liver':           0.72,  'Stomach wall':    0.68,
+    'Colon wall':      0.65,  'Oesophagus':      0.75,
+    'Kidneys':         0.62,  'Pancreas':        0.68,
+    'Red bone marrow': 0.55,  'Bone surface':    0.45,
+    'Salivary glands': 0.80,  'Skin':            1.05,
+    'Spleen':          0.70,  'Testes':          0.30,
+    'Thyroid':         0.82,  'Bladder wall':    0.50,
+    'Breasts':         1.10,  'Ovaries':         0.48,
+    'Adrenals':        0.65,  'Uterus':          0.48,
+}
+
+_NA = 6.022e23  # Avogadro
+
+
+def _sigma_H_el(E_MeV):
+    """H-1 弹性散射截面 [barn]，ENDF/B-VIII.0 数据对数插值"""
+    _E = np.array([1e-9, 1e-8, 2.53e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3,
+                   1e-2, 5e-2, 1e-1, 5e-1, 1.0, 2.0, 5.0, 10.0, 20.0])
+    _S = np.array([1656., 523.5, 330.0, 165.6, 52.35, 23.07, 20.76, 20.44,
+                   20.41, 15.80, 12.00, 5.50,  3.066, 2.462, 1.753, 1.110, 0.680])
+    return float(10 ** np.interp(np.log10(max(E_MeV, 1e-30)),
+                                 np.log10(_E), np.log10(_S)))
+
+
+def _sigma_N_cap(E_MeV):
+    """N-14(n,p)C-14 截面 [barn]；热区 1/v，含 0.43 eV 共振峰"""
+    _E = np.array([1e-9, 1e-8, 2.53e-8, 1e-7, 4.3e-7, 1e-6, 1e-5,
+                   1e-4, 1e-3, 1e-2, 1e-1, 1.0, 10.0])
+    _S = np.array([187.0, 59.13, 37.30, 18.70, 60.0, 15.40, 4.870,
+                   1.540, 0.487, 0.154, 0.022, 0.008, 0.001])
+    return float(10 ** np.interp(np.log10(max(E_MeV, 1e-30)),
+                                 np.log10(_E), np.log10(_S)))
+
+
+def _sigma_C_fast(E_MeV):
+    """C-12 非弹性/反应截面 [barn]，仅 > 1 MeV"""
+    if E_MeV < 1.0:
+        return 0.0
+    return float(np.interp(E_MeV, [1.0, 2.0, 5.0, 10.0, 20.0],
+                                   [0.0, 0.15, 0.35, 0.55, 0.70]))
+
+
+def _sigma_O_fast(E_MeV):
+    """O-16 非弹性截面 [barn]，仅 > 1 MeV"""
+    if E_MeV < 1.0:
+        return 0.0
+    return float(np.interp(E_MeV, [1.0, 2.0, 5.0, 10.0, 20.0],
+                                   [0.0, 0.30, 0.60, 0.90, 1.10]))
+
+
+def _wR(E_MeV):
+    """中子辐射权重因子 wR (ICRP 103 Annex A, Eq. A.1)"""
+    E = max(E_MeV, 1e-12)
+    if E < 1.0:
+        return 2.5 + 18.2 * np.exp(-(np.log(E)) ** 2 / 6.0)
+    elif E <= 50.0:
+        return 5.0 + 17.0 * np.exp(-(np.log(2 * E)) ** 2 / 6.0)
+    else:
+        return 2.5 + 18.2 * np.exp(-(np.log(E)) ** 2 / 6.0)
+
+
+def calculate_organ_dcc_analytical(phantom_type: str = 'AM') -> dict:
+    """
+    基于 ICRP 110 体模组织成分（H,C,N,O）和中子微观截面，
+    解析计算各器官当量剂量转换系数 HT/Φ (pSv·cm²)。
+
+    与 ICRP 116 蒙特卡洛参考值的偏差主要来源：
+      1. ICRP 116 使用全 3D 输运（多次散射贡献），本方法仅用初级通量
+      2. 深度衰减用近似因子代替精确空间积分
+      3. 部分次级过程（如 (n,γ) 光子剂量）未纳入
+
+    Returns
+    -------
+    dict: {organ: np.ndarray of HT/Phi at ORGAN_ENERGIES_MEV (pSv·cm²)}
+    """
+    pt = phantom_type.upper()
+    organ_ht_ref = ORGAN_HT_AM if pt == 'AM' else ORGAN_HT_AF
+    Q_N = 0.626  # MeV, N-14(n,p)C-14 Q 值
+
+    result = {}
+    for organ in organ_ht_ref.keys():
+        comp = ICRP110_TISSUE_COMP.get(organ)
+        if comp is None:
+            continue
+        f_H, f_C, f_N, f_O = comp
+        n_H = f_H / 1.008  * _NA   # atoms/g
+        n_C = f_C / 12.011 * _NA
+        n_N = f_N / 14.007 * _NA
+        n_O = f_O / 15.999 * _NA
+        df  = _AP_DEPTH_FACTOR.get(organ, 0.65)
+
+        dcc_arr = []
+        for E_MeV in ORGAN_ENERGIES_MEV:
+            wR = _wR(E_MeV)
+            # 各元素 kerma [Gy·cm²]: n [atoms/g] × σ [cm²] × T [J] × 1e3 [g/kg]
+            K_H = n_H * _sigma_H_el(E_MeV) * 1e-24 * (E_MeV / 2)      * 1.602e-13 * 1e3
+            K_N = n_N * _sigma_N_cap(E_MeV) * 1e-24 * Q_N              * 1.602e-13 * 1e3
+            K_C = n_C * _sigma_C_fast(E_MeV) * 1e-24 * (E_MeV / 3)    * 1.602e-13 * 1e3
+            K_O = n_O * _sigma_O_fast(E_MeV) * 1e-24 * (E_MeV / 4)    * 1.602e-13 * 1e3
+            # 当量剂量 [pSv·cm²] = wR × K_total [Gy·cm²] × 1e12 × depth_factor
+            HT_pSv = wR * (K_H + K_N + K_C + K_O) * 1e12 * df
+            dcc_arr.append(HT_pSv)
+        result[organ] = np.array(dcc_arr)
+    return result
+
+
 def get_all_quantities(phantom_type: str = 'AM') -> dict:
     """
     返回全量参考数据字典：
@@ -449,140 +596,189 @@ def plot_organ_ht_curves(phantom_type: str = 'AM',
 def plot_organ_bar_comparison(phantom_type: str = 'AM',
                                output_path: str = None):
     """
-    图3: 3 个代表性能量点下所有器官 HT/Φ 柱状图对比
-    选取: 热中子 (25.3 meV)、10 keV (超热上限)、1 MeV (快中子)
+    图3: 程序计算值 vs ICRP 116 参考值 — 全器官对比
+    ──────────────────────────────────────────────────
+    上部 3 子图: 热中子 / 10 keV / 1 MeV 各能量下
+        蓝色: ICRP 116 Table A.3 参考值
+        红色: 本程序 kerma 解析计算值（ICRP 110 组织成分 + ENDF 截面）
+    下部 3 子图: 对应能量的相对偏差 (计算-参考)/参考 × 100%
     """
-    plt, _ = _setup_matplotlib()
+    plt, mpl = _setup_matplotlib()
+    mpl.rcParams['axes.unicode_minus'] = False
 
     pt = phantom_type.upper()
-    organ_ht = ORGAN_HT_AM if pt == 'AM' else ORGAN_HT_AF
+    organ_ht_ref = ORGAN_HT_AM if pt == 'AM' else ORGAN_HT_AF
+    calc_dcc     = calculate_organ_dcc_analytical(pt)
 
-    key_energies = [2.53e-8, 1.00e-2, 1.00e0]   # MeV
-    key_labels   = ['Thermal (25.3 meV)', '10 keV', '1 MeV']
-    bar_colors   = ['#2196F3', '#FF9800', '#F44336']
+    key_energies = [2.53e-8, 1.00e-2, 1.00e0]
+    key_labels   = ['Thermal  25.3 meV', '10 keV (Epithermal)', '1 MeV (Fast)']
 
-    organs = list(organ_ht.keys())
+    # 只取两者都有数据的器官
+    organs = [o for o in organ_ht_ref.keys() if o in calc_dcc]
     x = np.arange(len(organs))
-    width = 0.25
+    short_names = [o.replace(' wall', '').replace(' marrow', '\nmarrow')
+                     .replace(' glands', '\nglands').replace(' surface', '\nsurf.')
+                   for o in organs]
+    width = 0.38
 
-    fig, ax = plt.subplots(figsize=(14, 7))
-
-    for i, (e_MeV, label, color) in enumerate(zip(key_energies, key_labels, bar_colors)):
-        vals = []
-        for organ in organs:
-            ht_arr = np.array(organ_ht[organ])
-            vals.append(_interp_log(ORGAN_ENERGIES_MEV, ht_arr, e_MeV))
-        ax.bar(x + (i - 1) * width, vals, width, label=label,
-               color=color, alpha=0.82, edgecolor='white', linewidth=0.4)
-
-    ax.set_yscale('log')
-    ax.set_xticks(x)
-    ax.set_xticklabels(
-        [o.replace(' wall', '').replace(' marrow', ' marrow\n') for o in organs],
-        rotation=38, ha='right', fontsize=8
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10),
+                             gridspec_kw={'height_ratios': [3, 1]})
+    fig.suptitle(
+        f'Neutron AP Geometry: Organ HT/Φ  —  Program Calculated vs ICRP 116 Reference\n'
+        f'ICRP 110 {pt} Phantom  |  Kerma Model (ENDF/B-VIII + ICRP 110 Tissue Comp.) vs MC (ICRP 116 Table A.3)',
+        fontsize=11, fontweight='bold', y=1.01
     )
-    ax.set_xlabel('Organ / Tissue', fontsize=10)
-    ax.set_ylabel('HT / Φ  (pSv·cm²)', fontsize=10)
-    ax.set_title(
-        f'Organ Equivalent Dose DCC at Key Neutron Energies — AP Geometry\n'
-        f'ICRP 110 {pt} Phantom  |  ICRP 116 Table A.3',
-        fontsize=11, fontweight='bold'
-    )
-    ax.legend(fontsize=9)
-    ax.grid(axis='y', alpha=0.25, which='both')
+
+    for col, (e_MeV, title) in enumerate(zip(key_energies, key_labels)):
+        ax_top = axes[0][col]
+        ax_bot = axes[1][col]
+
+        ref_vals  = [_interp_log(ORGAN_ENERGIES_MEV, np.array(organ_ht_ref[o]), e_MeV)
+                     for o in organs]
+        calc_vals = [float(_interp_log(ORGAN_ENERGIES_MEV, calc_dcc[o], e_MeV))
+                     for o in organs]
+        dev_pct   = [(c - r) / r * 100 if r > 0 else 0
+                     for c, r in zip(calc_vals, ref_vals)]
+
+        # ── 上图: 双柱 ──
+        ax_top.bar(x - width/2, ref_vals,  width, label='ICRP 116 Ref.',
+                   color='#1E88E5', alpha=0.85, edgecolor='white', lw=0.3)
+        ax_top.bar(x + width/2, calc_vals, width, label='Calc. (Kerma)',
+                   color='#E53935', alpha=0.85, edgecolor='white', lw=0.3)
+        ax_top.set_yscale('log')
+        ax_top.set_xticks(x)
+        ax_top.set_xticklabels(short_names, rotation=40, ha='right', fontsize=7)
+        ax_top.set_ylabel('HT / Φ  (pSv·cm²)', fontsize=9)
+        ax_top.set_title(title, fontsize=10, fontweight='bold')
+        ax_top.legend(fontsize=8, loc='upper right')
+        ax_top.grid(axis='y', alpha=0.2, which='both')
+
+        # ── 下图: 偏差 ──
+        bar_colors_dev = ['#43A047' if abs(d) <= 20
+                          else '#FB8C00' if abs(d) <= 40
+                          else '#E53935' for d in dev_pct]
+        ax_bot.bar(x, dev_pct, color=bar_colors_dev, alpha=0.85, edgecolor='white', lw=0.3)
+        ax_bot.axhline(0,   color='black', lw=0.8)
+        ax_bot.axhline(+20, color='#43A047', lw=0.8, ls='--', alpha=0.7)
+        ax_bot.axhline(-20, color='#43A047', lw=0.8, ls='--', alpha=0.7)
+        ax_bot.axhline(+40, color='#FB8C00', lw=0.8, ls=':',  alpha=0.7)
+        ax_bot.axhline(-40, color='#FB8C00', lw=0.8, ls=':',  alpha=0.7)
+        ax_bot.set_xticks(x)
+        ax_bot.set_xticklabels(short_names, rotation=40, ha='right', fontsize=7)
+        ax_bot.set_ylabel('Dev. (%)', fontsize=8)
+        ax_bot.set_ylim(-80, 80)
+        ax_bot.grid(axis='y', alpha=0.2)
+
+    fig.text(0.5, -0.03,
+             'Green dashed: ±20%  |  Orange dotted: ±40%\n'
+             'Deviations from ICRP 116 MC reference due to: (1) AP geometry depth '
+             'approximation  (2) primary-fluence-only kerma (no scatter buildup)  '
+             '(3) secondary gamma excluded',
+             ha='center', fontsize=8, color='#555555', style='italic')
+
     plt.tight_layout()
-
     if output_path:
         plt.savefig(output_path, dpi=150, bbox_inches='tight')
-        print(f"[图3] 器官柱状图 → {output_path}")
+        print(f"[图3] 计算 vs ICRP116 对比图 → {output_path}")
     plt.close()
 
 
 def plot_effective_dose_verification(phantom_type: str = 'AM',
                                       output_path: str = None):
     """
-    图4: 有效剂量验证
-      上图: ICRP 116 表格值 E/Φ  vs  Σ(wT × HT/Φ) 计算值
-      下图: 偏差 (%)
-
-    注: 因现有 HT/Φ 数据未涵盖全部 Remainder 组器官，
-        计算值通常低于表格值；本图用于展示覆盖器官的贡献与趋势。
+    图4: 有效剂量三方对比
+      ① ICRP 116 Table A.3 参考值 E/Φ（31点完整曲线）
+      ② 用 ICRP 116 HT/Φ 通过 Σ(wT×HT) 反推的有效剂量（验证内部一致性）
+      ③ 用 kerma 解析计算 HT/Φ 再通过 Σ(wT×HT) 得到的有效剂量（程序计算值）
+    下图: ②③ 相对 ① 的偏差
     """
-    plt, _ = _setup_matplotlib()
+    plt, mpl = _setup_matplotlib()
+    mpl.rcParams['axes.unicode_minus'] = False
 
-    verify = compute_effective_dose_from_organs(phantom_type)
+    pt = phantom_type.upper()
+    organ_wt = ORGAN_WT_AM if pt == 'AM' else ORGAN_WT_AF
+    organ_ht_ref = ORGAN_HT_AM if pt == 'AM' else ORGAN_HT_AF
+    calc_dcc = calculate_organ_dcc_analytical(pt)
+
     eff_arr = np.array(NEUTRON_AP_E_OVER_PHI)
-
-    e_MeV_organ = np.array(verify['energies_MeV'])
-    computed    = np.array(verify['computed_E_pSv_cm2'])
-    tabulated   = np.array(verify['tabulated_E_pSv_cm2'])
-    deviation   = np.array(verify['deviation_pct'])
-
     energies_eV_full = eff_arr[:, 0] * 1e6
-    e_phi_full       = eff_arr[:, 1]
+    e_phi_full = eff_arr[:, 1]
 
-    organ_contrib = verify['organ_contributions']
-    organ_wt = ORGAN_WT_AM if phantom_type.upper() == 'AM' else ORGAN_WT_AF
+    # 在 13 个器官节点上插值 ICRP116 有效剂量
+    tabulated_13 = np.array([_interp_log(eff_arr[:, 0], eff_arr[:, 1], e)
+                              for e in ORGAN_ENERGIES_MEV])
 
-    fig, axes = plt.subplots(2, 1, figsize=(12, 10),
+    # ② Σ(wT × HT_ref) — 用 ICRP116 器官 HT 数据
+    sum_ref = np.zeros(len(ORGAN_ENERGIES_MEV))
+    for organ, wt in organ_wt.items():
+        if organ in organ_ht_ref:
+            sum_ref += wt * np.array(organ_ht_ref[organ])
+
+    # ③ Σ(wT × HT_calc) — 用 kerma 计算的 HT
+    sum_calc = np.zeros(len(ORGAN_ENERGIES_MEV))
+    for organ, wt in organ_wt.items():
+        if organ in calc_dcc:
+            sum_calc += wt * calc_dcc[organ]
+
+    energies_eV_13 = ORGAN_ENERGIES_MEV * 1e6
+
+    dev_ref  = np.where(tabulated_13 > 0, (sum_ref  - tabulated_13) / tabulated_13 * 100, np.nan)
+    dev_calc = np.where(tabulated_13 > 0, (sum_calc - tabulated_13) / tabulated_13 * 100, np.nan)
+
+    fig, axes = plt.subplots(2, 1, figsize=(13, 10),
                              gridspec_kw={'height_ratios': [3, 1]})
+    fig.suptitle(
+        f'Effective Dose Conversion Coefficient — Three-Way Comparison\n'
+        f'ICRP 110 {pt} Phantom, AP Geometry, Neutron',
+        fontsize=12, fontweight='bold'
+    )
 
-    # ── 上图: 有效剂量曲线 ──────────────────────────────────────
+    # ── 上图 ──
     ax = axes[0]
-    ax.loglog(energies_eV_full, e_phi_full, 'b-',
-              lw=2.5, label='ICRP 116 Tabulated E/Φ (31 pts)', zorder=5)
-    ax.loglog(e_MeV_organ * 1e6, tabulated, 'bs',
-              markersize=7, markerfacecolor='none',
-              label='Tabulated (interpolated at 13 organ pts)', zorder=4)
-    ax.loglog(e_MeV_organ * 1e6, computed,  'r^',
-              markersize=7, lw=1.5,
-              label=r'Computed: $\Sigma(w_T \cdot H_T/\Phi)$', zorder=6)
+    ax.loglog(energies_eV_full, e_phi_full, 'b-', lw=2.5,
+              label='① ICRP 116 Table A.3  E/Φ  (31 pts, MC reference)', zorder=6)
+    ax.loglog(energies_eV_13, sum_ref,  'gs--', markersize=7, lw=1.5,
+              label=r'② $\Sigma(w_T \cdot H_T^{ICRP116}/\Phi)$  (consistency check)', zorder=5)
+    ax.loglog(energies_eV_13, sum_calc, 'r^-',  markersize=7, lw=1.8,
+              label=r'③ $\Sigma(w_T \cdot H_T^{Kerma}/\Phi)$  (program calculated)', zorder=7)
 
-    # 各器官贡献堆积面积（选关键器官）
-    key_organs_show = ['Red bone marrow', 'Colon wall', 'Lungs', 'Stomach wall',
-                       'Breasts' if phantom_type.upper() == 'AF' else 'Testes']
-    bottom = np.zeros(len(e_MeV_organ))
-    fill_colors = ['#BBDEFB', '#C8E6C9', '#FFECB3', '#FFCDD2', '#E8EAF6']
-    for org, fc in zip(key_organs_show, fill_colors):
-        if org in organ_contrib:
-            contrib = np.array(organ_contrib[org])
-            wt = organ_wt.get(org, 0)
-            ax.fill_between(e_MeV_organ * 1e6, bottom, bottom + contrib,
-                            alpha=0.3, color=fc, label=f'  {org} (wT={wt:.2f})')
-            bottom += contrib
+    ax.axvspan(5e-4, 5e-1,  alpha=0.05, color='green')
+    ax.axvspan(5e-1, 1e4,   alpha=0.05, color='orange')
+    ax.axvspan(1e4,  1e8,   alpha=0.05, color='red')
 
     ax.set_ylabel('E / Φ  (pSv·cm²)', fontsize=11)
     ax.set_title(
-        f'Effective Dose Verification: ICRP 116 Tabulated vs Σ(wT·HT/Φ)\n'
-        f'{phantom_type} Phantom, AP Geometry, Neutron',
-        fontsize=11, fontweight='bold'
+        '① ICRP 116 MC Reference  |  '
+        '② Σ(wT·HT_ICRP116)  |  '
+        '③ Σ(wT·HT_Kerma) — Program Calculated',
+        fontsize=9
     )
-    ax.legend(fontsize=8, ncol=2, loc='upper left')
+    ax.legend(fontsize=9, loc='upper left')
     ax.grid(True, which='both', alpha=0.2)
     ax.set_xlim(5e-4, 2e8)
 
-    # ── 下图: 偏差 ──────────────────────────────────────────────
+    # ── 下图: 偏差 ──
     ax2 = axes[1]
-    colors_dev = ['#4CAF50' if abs(d) <= 20 else '#FF9800' if abs(d) <= 40 else '#F44336'
-                  for d in deviation if not np.isnan(d)]
-    valid_mask = ~np.isnan(deviation)
-    ax2.bar(e_MeV_organ[valid_mask] * 1e6, deviation[valid_mask],
-            width=e_MeV_organ[valid_mask] * 0.5,
-            color=[('tab:blue' if d > 0 else 'tab:orange') for d in deviation[valid_mask]],
-            alpha=0.75)
-    ax2.axhline(0, color='black', lw=0.8)
+    valid = ~np.isnan(dev_ref) & ~np.isnan(dev_calc)
+    ax2.plot(energies_eV_13[valid], dev_ref[valid],
+             'gs--', markersize=6, lw=1.5, label='② Dev. (ICRP116 HT sum)', alpha=0.85)
+    ax2.plot(energies_eV_13[valid], dev_calc[valid],
+             'r^-', markersize=6, lw=1.8, label='③ Dev. (Kerma Calc.)', alpha=0.85)
+    ax2.axhline(0,   color='black', lw=0.8)
+    ax2.axhline(+20, color='grey', lw=0.8, ls='--', alpha=0.5)
+    ax2.axhline(-20, color='grey', lw=0.8, ls='--', alpha=0.5)
     ax2.set_xscale('log')
     ax2.set_xlabel('Neutron Energy (eV)', fontsize=10)
     ax2.set_ylabel('Deviation (%)', fontsize=10)
-    ax2.set_title('Deviation: (Computed − Tabulated) / Tabulated × 100%\n'
-                  '(Negative → uncovered Remainder organs reduce sum)', fontsize=9)
-    ax2.grid(axis='y', alpha=0.25)
+    ax2.set_title('Deviation from ICRP 116 Reference: (Value − Ref.) / Ref. × 100%', fontsize=9)
+    ax2.legend(fontsize=8, loc='lower right')
+    ax2.grid(axis='y', alpha=0.2)
     ax2.set_xlim(5e-4, 2e8)
 
     plt.tight_layout()
     if output_path:
         plt.savefig(output_path, dpi=150, bbox_inches='tight')
-        print(f"[图4] 有效剂量验证图 → {output_path}")
+        print(f"[图4] 有效剂量三方对比图 → {output_path}")
     plt.close()
 
 
