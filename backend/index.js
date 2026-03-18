@@ -2022,6 +2022,94 @@ app.post('/api/icrp-comparison', async (req, res) => {
 
 console.log('[ICRP对比] API端点已加载: POST /api/icrp-comparison');
 
+// ==================== 中子AP ICRP剂量对比 ====================
+
+const NEUTRON_ICRP_OUTPUT_DIR = path.join(__dirname, 'neutron_icrp_ap_results');
+fs.ensureDirSync(NEUTRON_ICRP_OUTPUT_DIR);
+app.use('/neutron_icrp_ap_results', express.static(NEUTRON_ICRP_OUTPUT_DIR));
+
+/**
+ * POST /api/neutron-icrp-dose-comparison
+ * 生成中子AP照射ICRP参考条件全量剂量转换系数对比图表
+ * Body: { phantom_type: 'AM' | 'AF' }
+ * 返回5张图表URL + JSON摘要数据
+ */
+app.post('/api/neutron-icrp-dose-comparison', async (req, res) => {
+    const { phantom_type = 'AM' } = req.body;
+    if (!['AM', 'AF'].includes(phantom_type.toUpperCase())) {
+        return res.status(400).json({ success: false, message: '体模类型必须为 AM 或 AF' });
+    }
+
+    const pt = phantom_type.toUpperCase();
+    const outDir = NEUTRON_ICRP_OUTPUT_DIR;
+    const pythonScript = path.join(__dirname, 'neutron_icrp_dose_comparison.py');
+    const pythonPath = PYTHON_PATH;
+
+    const command = `"${pythonPath}" "${pythonScript}" --phantom ${pt} --output-dir "${outDir}"`;
+
+    log(`[中子ICRP] 开始生成 ${pt} 体模 AP 剂量对比图表...`);
+
+    try {
+        const { stdout, stderr } = await execAsync(command, { timeout: 120000 });
+        if (stdout) log(`[中子ICRP] stdout: ${stdout}`);
+        if (stderr) log(`[中子ICRP] stderr: ${stderr}`);
+
+        // 读取生成的JSON数据
+        const jsonFile = path.join(outDir, `neutron_AP_${pt}_all_quantities.json`);
+        if (!fs.existsSync(jsonFile)) {
+            throw new Error('Python脚本未生成JSON结果文件');
+        }
+        const data = JSON.parse(fs.readFileSync(jsonFile, 'utf-8'));
+
+        // 构建5张图的URL
+        const figNames = [
+            `fig1_neutron_AP_${pt}_effective_dose_curve.png`,
+            `fig2_neutron_AP_${pt}_organ_HT_curves.png`,
+            `fig3_neutron_AP_${pt}_organ_bar_comparison.png`,
+            `fig4_neutron_AP_${pt}_effective_dose_verification.png`,
+            `fig5_neutron_AP_${pt}_wT_contribution_stack.png`,
+        ];
+        const figTitles = [
+            '有效剂量转换系数 E/Φ — 全能量曲线（31个能量点）',
+            '各器官当量剂量转换系数 HT/Φ — 多线曲线图',
+            '器官 HT/Φ 柱状图对比（热中子 / 10 keV / 1 MeV）',
+            '有效剂量验证：ICRP116表格值 vs Σ(wT·HT/Φ)',
+            '各器官 wT 加权贡献堆积面积图',
+        ];
+
+        const charts = figNames.map((fname, i) => ({
+            title: figTitles[i],
+            url: fs.existsSync(path.join(outDir, fname))
+                ? `/neutron_icrp_ap_results/${fname}`
+                : null,
+        }));
+
+        res.json({
+            success: true,
+            phantom_type: pt,
+            charts,
+            summary: {
+                n_energies: data.effective_dose.n_points,
+                n_organs: Object.keys(data.organ_ht).length,
+                source: data.source,
+                geometry: data.geometry,
+                radiation: data.radiation,
+            },
+            effective_dose: data.effective_dose,
+            verify: data.effective_dose_verify,
+        });
+    } catch (err) {
+        log(`[中子ICRP] 失败: ${err.message}`, 'error');
+        res.status(500).json({
+            success: false,
+            message: '中子ICRP剂量对比生成失败',
+            error: err.message,
+        });
+    }
+});
+
+console.log('[中子ICRP] API端点已加载: POST /api/neutron-icrp-dose-comparison');
+
 // ==================== BEIR VII 验证 ====================
 
 /**

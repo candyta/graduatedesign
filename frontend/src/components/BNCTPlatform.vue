@@ -1462,6 +1462,139 @@
         </div>
       </div>
 
+      <!-- 中子AP ICRP剂量对比（合并至风险评估页） -->
+      <div v-show="activeTab === 'risk'" class="tab-content">
+        <div class="nicrp-workspace">
+          <div class="nicrp-header">
+            <h2>☢️ 中子 AP 照射 ICRP 参考条件剂量对比</h2>
+            <p class="nicrp-desc">
+              基于 <strong>ICRP Publication 116 (2010) Table A.3</strong>，展示中子 AP 几何下
+              <strong>ICRP 110</strong> 参考体模的全量剂量转换系数对比。<br>
+              涵盖有效剂量 E/Φ（31个能量点）和各器官当量剂量 HT/Φ（含红骨髓、骨表面等，共18个器官），
+              并通过 Σ(wT·HT/Φ) 验证有效剂量的内部一致性。
+            </p>
+          </div>
+
+          <div class="nicrp-controls">
+            <div class="phantom-selector">
+              <span class="selector-label">体模类型：</span>
+              <button :class="['btn-phantom', { active: neutronPhantomType === 'AM' }]"
+                      @click="neutronPhantomType = 'AM'">AM（成人男）</button>
+              <button :class="['btn-phantom', { active: neutronPhantomType === 'AF' }]"
+                      @click="neutronPhantomType = 'AF'">AF（成人女）</button>
+            </div>
+            <button class="btn btn-primary nicrp-run-btn"
+                    @click="runNeutronIcrpComparison"
+                    :disabled="neutronLoading">
+              <span v-if="neutronLoading" class="spinner-sm"></span>
+              {{ neutronLoading ? '生成中（约30秒）...' : '▶ 生成对比图表' }}
+            </button>
+          </div>
+
+          <!-- 加载提示 -->
+          <div v-if="neutronLoading" class="nicrp-progress">
+            <div class="nicrp-progress-bar">
+              <div class="nicrp-progress-inner"></div>
+            </div>
+            <p>正在计算 {{ neutronPhantomType }} 体模中子 AP 剂量转换系数并生成图表...</p>
+          </div>
+
+          <!-- 结果展示 -->
+          <div v-if="neutronCharts.length > 0" class="nicrp-results">
+
+            <!-- 摘要卡片 -->
+            <div class="nicrp-summary-cards" v-if="neutronSummary">
+              <div class="nicrp-card">
+                <div class="nicrp-card-icon">☢️</div>
+                <div class="nicrp-card-label">辐射类型</div>
+                <div class="nicrp-card-value">中子 (Neutron)</div>
+              </div>
+              <div class="nicrp-card">
+                <div class="nicrp-card-icon">📐</div>
+                <div class="nicrp-card-label">照射几何</div>
+                <div class="nicrp-card-value">AP（前后向）</div>
+              </div>
+              <div class="nicrp-card">
+                <div class="nicrp-card-icon">👤</div>
+                <div class="nicrp-card-label">参考体模</div>
+                <div class="nicrp-card-value">ICRP 110 {{ neutronPhantomType }}</div>
+              </div>
+              <div class="nicrp-card">
+                <div class="nicrp-card-icon">⚡</div>
+                <div class="nicrp-card-label">能量点数</div>
+                <div class="nicrp-card-value">{{ neutronSummary.n_energies }} 个</div>
+              </div>
+              <div class="nicrp-card">
+                <div class="nicrp-card-icon">🫀</div>
+                <div class="nicrp-card-label">覆盖器官</div>
+                <div class="nicrp-card-value">{{ neutronSummary.n_organs }} 个</div>
+              </div>
+              <div class="nicrp-card">
+                <div class="nicrp-card-icon">📖</div>
+                <div class="nicrp-card-label">数据来源</div>
+                <div class="nicrp-card-value">ICRP Pub.116 Table A.3</div>
+              </div>
+            </div>
+
+            <!-- 图表选项卡 -->
+            <div class="nicrp-chart-tabs">
+              <button
+                v-for="(chart, idx) in neutronCharts"
+                :key="idx"
+                :class="['nicrp-tab-btn', { active: neutronActiveChart === idx }]"
+                @click="neutronActiveChart = idx">
+                图{{ idx + 1 }}
+              </button>
+            </div>
+
+            <!-- 当前图表展示 -->
+            <div class="nicrp-chart-section" v-if="neutronCharts[neutronActiveChart]">
+              <div class="nicrp-chart-title">
+                {{ neutronCharts[neutronActiveChart].title }}
+              </div>
+              <img
+                :src="getImageUrl(neutronCharts[neutronActiveChart].url)"
+                :alt="neutronCharts[neutronActiveChart].title"
+                class="nicrp-chart-img"
+              />
+            </div>
+
+            <!-- 图表缩略导航 -->
+            <div class="nicrp-thumbnails">
+              <div
+                v-for="(chart, idx) in neutronCharts"
+                :key="idx"
+                :class="['nicrp-thumb', { active: neutronActiveChart === idx }]"
+                @click="neutronActiveChart = idx">
+                <img :src="getImageUrl(chart.url)" :alt="chart.title" class="nicrp-thumb-img" />
+                <div class="nicrp-thumb-label">图{{ idx + 1 }}</div>
+              </div>
+            </div>
+
+            <!-- 说明文字 -->
+            <div class="nicrp-note">
+              <strong>图1</strong> E/Φ 全能量曲线（1 meV ~ 100 MeV，31点，含热/超热/快中子区域标注）&nbsp;|&nbsp;
+              <strong>图2</strong> 所有器官 HT/Φ 随能量变化（多线，wT≥0.04器官加粗）&nbsp;|&nbsp;
+              <strong>图3</strong> 热中子/10 keV/1 MeV 三能量点器官柱状图&nbsp;|&nbsp;
+              <strong>图4</strong> 有效剂量验证：ICRP116表格值 vs Σ(wT·HT/Φ)&nbsp;|&nbsp;
+              <strong>图5</strong> 各器官 wT 加权贡献堆积面积图<br>
+              <em>数据来源：ICRP Publication 116 (2010), Table A.3 | ICRP Publication 103 (2007) wT因子</em>
+            </div>
+          </div>
+
+          <!-- 空态提示 -->
+          <div v-else-if="!neutronLoading" class="nicrp-empty">
+            <p>☢️</p>
+            <p>选择体模类型后点击"生成对比图表"，将自动生成5张ICRP参考数据对比图</p>
+            <p class="nicrp-empty-sub">涵盖有效剂量曲线、器官HT曲线、柱状图、有效剂量验证、wT贡献堆积图</p>
+          </div>
+
+          <div v-if="neutronError" class="nicrp-error">
+            <p>错误：{{ neutronError }}</p>
+          </div>
+        </div>
+      </div>
+
       <!-- ── MCNP Tab：剂量组分参数（嵌入在MCNP页面中） ── -->
       <div v-show="activeTab === 'mcnp'" class="tab-content">
         <div class="ds-mcnp-title">
@@ -2255,6 +2388,14 @@ export default {
       icrcResult: null,
       icrcChartUrl: '',
       icrcError: '',
+
+      // 中子AP ICRP剂量对比
+      neutronPhantomType: 'AM',
+      neutronLoading: false,
+      neutronCharts: [],
+      neutronSummary: null,
+      neutronError: '',
+      neutronActiveChart: 0,
 
       // BEIR VII 验证
       bvLoading: false,
@@ -3657,6 +3798,30 @@ export default {
         this.icrcError = err.response?.data?.error || err.message || '请求失败';
       } finally {
         this.icrcLoading = false;
+      }
+    },
+
+    async runNeutronIcrpComparison() {
+      this.neutronLoading = true;
+      this.neutronCharts = [];
+      this.neutronSummary = null;
+      this.neutronError = '';
+      this.neutronActiveChart = 0;
+      try {
+        const response = await axios.post(`${API_BASE}/api/neutron-icrp-dose-comparison`, {
+          phantom_type: this.neutronPhantomType
+        }, { timeout: 120000 });
+
+        if (response.data.success) {
+          this.neutronCharts = response.data.charts.filter(c => c.url);
+          this.neutronSummary = response.data.summary;
+        } else {
+          this.neutronError = response.data.message || '图表生成失败';
+        }
+      } catch (err) {
+        this.neutronError = err.response?.data?.error || err.message || '请求失败';
+      } finally {
+        this.neutronLoading = false;
       }
     },
 
@@ -6802,4 +6967,96 @@ export default {
   font-size: 0.85rem;
 }
 .ds-validate-body { margin-top: 0.5rem; }
+
+/* ── 中子AP ICRP剂量对比 ── */
+.nicrp-workspace { padding: 1.5rem 2rem; max-width: 1300px; margin: 0 auto; }
+.nicrp-header { margin-bottom: 1.5rem; }
+.nicrp-header h2 { font-size: 1.3rem; font-weight: 700; color: #1a202c; margin-bottom: 0.5rem; }
+.nicrp-desc { font-size: 0.9rem; color: #4a5568; line-height: 1.6; }
+.nicrp-controls {
+  display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+  margin-bottom: 1.5rem; padding: 1rem 1.2rem;
+  background: #f7fafc; border-radius: 10px; border: 1px solid #e2e8f0;
+}
+.nicrp-run-btn { padding: 0.55rem 1.6rem; font-size: 0.95rem; }
+.nicrp-progress { text-align: center; padding: 2rem; color: #4a5568; }
+.nicrp-progress-bar {
+  width: 100%; max-width: 400px; height: 6px;
+  background: #e2e8f0; border-radius: 3px; margin: 0 auto 1rem;
+  overflow: hidden;
+}
+.nicrp-progress-inner {
+  height: 100%; width: 60%; background: linear-gradient(90deg, #3b82f6, #6366f1);
+  border-radius: 3px; animation: nicrp-slide 1.5s infinite;
+}
+@keyframes nicrp-slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(250%); }
+}
+
+/* 摘要卡片 */
+.nicrp-summary-cards {
+  display: flex; gap: 0.8rem; flex-wrap: wrap; margin-bottom: 1.5rem;
+}
+.nicrp-card {
+  flex: 1; min-width: 120px;
+  background: white; border: 1px solid #e2e8f0; border-radius: 10px;
+  padding: 0.8rem 1rem; text-align: center;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+.nicrp-card-icon { font-size: 1.3rem; margin-bottom: 4px; }
+.nicrp-card-label { font-size: 0.72rem; color: #718096; margin-bottom: 4px; }
+.nicrp-card-value { font-size: 0.9rem; font-weight: 700; color: #2d3748; }
+
+/* 图表选项卡 */
+.nicrp-chart-tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
+.nicrp-tab-btn {
+  padding: 0.4rem 1.1rem; border: 1px solid #cbd5e0;
+  border-radius: 6px; background: white; cursor: pointer;
+  font-size: 0.85rem; color: #4a5568; transition: all 0.15s;
+}
+.nicrp-tab-btn:hover { border-color: #3b82f6; color: #3b82f6; }
+.nicrp-tab-btn.active { background: #3b82f6; color: white; border-color: #3b82f6; }
+
+/* 主图区 */
+.nicrp-chart-section {
+  background: white; border: 1px solid #e2e8f0; border-radius: 12px;
+  padding: 1rem; margin-bottom: 1rem;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+.nicrp-chart-title {
+  font-size: 0.88rem; font-weight: 600; color: #2d3748;
+  margin-bottom: 0.8rem; padding-bottom: 0.5rem;
+  border-bottom: 1px solid #edf2f7;
+}
+.nicrp-chart-img { width: 100%; height: auto; border-radius: 6px; display: block; }
+
+/* 缩略图导航 */
+.nicrp-thumbnails { display: flex; gap: 0.8rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.nicrp-thumb {
+  width: 140px; cursor: pointer; border: 2px solid #e2e8f0; border-radius: 8px;
+  overflow: hidden; transition: border-color 0.15s;
+}
+.nicrp-thumb:hover { border-color: #3b82f6; }
+.nicrp-thumb.active { border-color: #3b82f6; }
+.nicrp-thumb-img { width: 100%; height: 88px; object-fit: cover; display: block; }
+.nicrp-thumb-label {
+  text-align: center; font-size: 0.75rem; color: #4a5568;
+  padding: 3px 0; background: #f7fafc;
+}
+
+/* 说明文字 */
+.nicrp-note {
+  font-size: 0.78rem; color: #718096; background: #f7fafc;
+  border-radius: 8px; padding: 0.8rem 1rem; line-height: 1.7;
+  border-left: 3px solid #3b82f6;
+}
+
+/* 空态 & 错误 */
+.nicrp-empty {
+  text-align: center; color: #a0aec0; padding: 3rem 1rem; font-size: 0.95rem;
+}
+.nicrp-empty p:first-child { font-size: 2.5rem; margin-bottom: 0.5rem; }
+.nicrp-empty-sub { font-size: 0.82rem; color: #cbd5e0; margin-top: 0.4rem; }
+.nicrp-error { color: #e53e3e; padding: 1rem; background: #fff5f5; border-radius: 8px; margin-top: 1rem; }
 </style>
