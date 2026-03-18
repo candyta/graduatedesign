@@ -2050,7 +2050,10 @@ app.post('/api/neutron-icrp-dose-comparison', async (req, res) => {
     log(`[中子ICRP] 开始生成 ${pt} 体模 AP 剂量对比图表...`);
 
     try {
-        const { stdout, stderr } = await execAsync(command, { timeout: 120000 });
+        const { stdout, stderr } = await execAsync(command, {
+            timeout: 120000,
+            env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+        });
         if (stdout) log(`[中子ICRP] stdout: ${stdout}`);
         if (stderr) log(`[中子ICRP] stderr: ${stderr}`);
 

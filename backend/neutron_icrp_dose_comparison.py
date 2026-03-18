@@ -33,11 +33,18 @@
 
 import json
 import os
+import sys
 import warnings
 import numpy as np
 from pathlib import Path
 
 warnings.filterwarnings('ignore')
+
+# Windows GBK 终端兼容：强制 stdout/stderr 使用 UTF-8
+if sys.platform == 'win32':
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 # ======================================================================
 # ICRP 116 Table A.3  ── 中子, AP 几何
