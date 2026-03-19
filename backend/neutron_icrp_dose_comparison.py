@@ -488,15 +488,30 @@ def _setup_matplotlib():
     import matplotlib.pyplot as plt
     import matplotlib as mpl
     import os
-    from matplotlib.font_manager import fontManager, FontProperties
+    from matplotlib.font_manager import fontManager, FontProperties, findfont
 
-    # 注册中文字体到 matplotlib（标准做法）
-    _CHINESE_FONT_PATH = '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc'
-    if os.path.exists(_CHINESE_FONT_PATH):
-        fontManager.addfont(_CHINESE_FONT_PATH)
-        _cn_name = FontProperties(fname=_CHINESE_FONT_PATH).get_name()
-        # 正确做法：设置 sans-serif 列表，再把 family 指向 sans-serif
-        mpl.rcParams['font.sans-serif'] = [_cn_name] + mpl.rcParams.get('font.sans-serif', [])
+    # 候选中文字体路径列表（按优先级排序）
+    _FONT_CANDIDATES = [
+        # matplotlib 内置目录（已预置 wqy-zenhei）
+        os.path.join(os.path.dirname(matplotlib.__file__),
+                     'mpl-data', 'fonts', 'ttf', 'wqy-zenhei.ttc'),
+        # 系统字体
+        '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',
+        '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+        '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
+    ]
+
+    _cn_font_path = None
+    for _p in _FONT_CANDIDATES:
+        if os.path.exists(_p):
+            _cn_font_path = _p
+            break
+
+    if _cn_font_path:
+        fontManager.addfont(_cn_font_path)
+        _cn_name = FontProperties(fname=_cn_font_path).get_name()
+        mpl.rcParams['font.sans-serif'] = [_cn_name] + list(mpl.rcParams['font.sans-serif'])
+
     mpl.rcParams['font.family'] = 'sans-serif'
     mpl.rcParams['axes.unicode_minus'] = False
     mpl.rcParams['font.size'] = 9
