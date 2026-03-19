@@ -514,15 +514,17 @@ def _setup_matplotlib():
             _cn_font_path = _p
             break
 
+    cn_fp = None
     if _cn_font_path:
         fontManager.addfont(_cn_font_path)
         _cn_name = FontProperties(fname=_cn_font_path).get_name()
         mpl.rcParams['font.sans-serif'] = [_cn_name] + list(mpl.rcParams['font.sans-serif'])
+        cn_fp = FontProperties(fname=_cn_font_path)
 
     mpl.rcParams['font.family'] = 'sans-serif'
     mpl.rcParams['axes.unicode_minus'] = False
     mpl.rcParams['font.size'] = 9
-    return plt, mpl
+    return plt, mpl, cn_fp
 
 
 def plot_effective_dose_curve(phantom_type: str = 'AM',
@@ -531,7 +533,7 @@ def plot_effective_dose_curve(phantom_type: str = 'AM',
     图1: ICRP 116 有效剂量 E/Φ vs 中子能量（全范围，31 个能量点）
     标注热中子 / 超热中子 / 快中子区域
     """
-    plt, _ = _setup_matplotlib()
+    plt, _, cn_fp = _setup_matplotlib()
 
     eff_arr = np.array(NEUTRON_AP_E_OVER_PHI)
     energies_eV = eff_arr[:, 0] * 1e6   # MeV → eV
@@ -590,6 +592,7 @@ def plot_effective_dose_curve(phantom_type: str = 'AM',
     ax.text(0.99, 0.02, annotation_text,
             transform=ax.transAxes, fontsize=7.5,
             verticalalignment='bottom', horizontalalignment='right',
+            fontproperties=cn_fp,
             bbox=dict(boxstyle='round,pad=0.5', facecolor='#F8F9FA',
                       edgecolor='#BDBDBD', alpha=0.92),
 )
@@ -606,7 +609,7 @@ def plot_organ_ht_curves(phantom_type: str = 'AM',
     """
     图2: 所有器官 HT/Φ vs 中子能量（多线图）
     """
-    plt, _ = _setup_matplotlib()
+    plt, _, cn_fp = _setup_matplotlib()
 
     pt = phantom_type.upper()
     organ_ht = ORGAN_HT_AM if pt == 'AM' else ORGAN_HT_AF
@@ -666,6 +669,7 @@ def plot_organ_ht_curves(phantom_type: str = 'AM',
     ax.text(0.01, 0.01, annotation_text,
             transform=ax.transAxes, fontsize=7.5,
             verticalalignment='bottom', horizontalalignment='left',
+            fontproperties=cn_fp,
             bbox=dict(boxstyle='round,pad=0.5', facecolor='#F8F9FA',
                       edgecolor='#BDBDBD', alpha=0.92),
 )
@@ -687,7 +691,7 @@ def plot_organ_bar_comparison(phantom_type: str = 'AM',
         红色: 本程序 kerma 解析计算值（ICRP 110 组织成分 + ENDF 截面）
     下部 3 子图: 对应能量的相对偏差 (计算-参考)/参考 × 100%
     """
-    plt, mpl = _setup_matplotlib()
+    plt, mpl, cn_fp = _setup_matplotlib()
     mpl.rcParams['axes.unicode_minus'] = False
 
     pt = phantom_type.upper()
@@ -771,6 +775,7 @@ def plot_organ_bar_comparison(phantom_type: str = 'AM',
     )
     fig.text(0.5, 1.02, annotation_text,
              ha='center', va='bottom', fontsize=8, color='#333333',
+             fontproperties=cn_fp,
              bbox=dict(boxstyle='round,pad=0.4', facecolor='#EEF4FF',
                        edgecolor='#90CAF9', alpha=0.95),
              wrap=True)
@@ -791,7 +796,7 @@ def plot_effective_dose_verification(phantom_type: str = 'AM',
       ③ 用 kerma 解析计算 HT/Φ 再通过 Σ(wT×HT) 得到的有效剂量（程序计算值）
     下图: ②③ 相对 ① 的偏差
     """
-    plt, mpl = _setup_matplotlib()
+    plt, mpl, cn_fp = _setup_matplotlib()
     mpl.rcParams['axes.unicode_minus'] = False
 
     pt = phantom_type.upper()
@@ -898,6 +903,7 @@ def plot_effective_dose_verification(phantom_type: str = 'AM',
     axes[0].text(0.98, 0.02, annotation_text,
                  transform=axes[0].transAxes, fontsize=7.5,
                  verticalalignment='bottom', horizontalalignment='right',
+                 fontproperties=cn_fp,
                  bbox=dict(boxstyle='round,pad=0.5', facecolor='#F8F9FA',
                            edgecolor='#BDBDBD', alpha=0.93))
 
@@ -914,7 +920,7 @@ def plot_wt_weighted_contribution(phantom_type: str = 'AM',
     图5: 各器官对有效剂量的 wT 加权贡献  wT×HT/Φ  堆积面积图
     展示各器官在不同能量下对有效剂量的相对贡献
     """
-    plt, _ = _setup_matplotlib()
+    plt, _, cn_fp = _setup_matplotlib()
 
     pt = phantom_type.upper()
     organ_ht = ORGAN_HT_AM if pt == 'AM' else ORGAN_HT_AF
@@ -985,6 +991,7 @@ def plot_wt_weighted_contribution(phantom_type: str = 'AM',
     ax.text(0.01, 0.99, annotation_text,
             transform=ax.transAxes, fontsize=7.5,
             verticalalignment='top', horizontalalignment='left',
+            fontproperties=cn_fp,
             bbox=dict(boxstyle='round,pad=0.5', facecolor='#FFFDE7',
                       edgecolor='#F9A825', alpha=0.93),
 )
