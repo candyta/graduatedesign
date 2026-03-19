@@ -487,6 +487,34 @@ def _setup_matplotlib():
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     import matplotlib as mpl
+    from matplotlib.font_manager import fontManager, FontProperties
+
+    # 注册文泉驿中文字体（Linux 常见路径）
+    _CHINESE_FONT_PATHS = [
+        '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',
+        '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc',
+        '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+        '/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc',
+        '/usr/share/fonts/truetype/arphic/uming.ttc',
+    ]
+    _cn_font = None
+    for fp in _CHINESE_FONT_PATHS:
+        import os
+        if os.path.exists(fp):
+            try:
+                fontManager.addfont(fp)
+                prop = FontProperties(fname=fp)
+                _cn_font = prop.get_name()
+                break
+            except Exception:
+                continue
+
+    if _cn_font:
+        mpl.rcParams['font.family'] = _cn_font
+    else:
+        # 退化：使用系统中任何支持CJK的字体
+        mpl.rcParams['font.family'] = 'sans-serif'
+
     mpl.rcParams['axes.unicode_minus'] = False
     mpl.rcParams['font.size'] = 9
     return plt, mpl
@@ -559,7 +587,7 @@ def plot_effective_dose_curve(phantom_type: str = 'AM',
             verticalalignment='bottom', horizontalalignment='right',
             bbox=dict(boxstyle='round,pad=0.5', facecolor='#F8F9FA',
                       edgecolor='#BDBDBD', alpha=0.92),
-            family='monospace')
+)
 
     plt.tight_layout()
     if output_path:
@@ -635,7 +663,7 @@ def plot_organ_ht_curves(phantom_type: str = 'AM',
             verticalalignment='bottom', horizontalalignment='left',
             bbox=dict(boxstyle='round,pad=0.5', facecolor='#F8F9FA',
                       edgecolor='#BDBDBD', alpha=0.92),
-            family='monospace')
+)
 
     plt.tight_layout()
     if output_path:
@@ -848,23 +876,25 @@ def plot_effective_dose_verification(phantom_type: str = 'AM',
         "① 蓝实线：ICRP 116 Table A.3 直接给出的\n"
         "   有效剂量 E/Φ（31点MC参考值，权威基准）\n"
         "\n"
-        "② 绿方块虚线：用 ICRP 116 各器官 HT/Φ 数据\n"
-        "   通过 E=Σ(wT×HT) 反推的有效剂量\n"
-        "   （内部一致性验证，应与①接近）\n"
+        "② 绿方块虚线：用ICRP116各器官HT/Φ数据\n"
+        "   通过 E=Σ(wT×HT) 反推（内部验证，与①接近）\n"
         "\n"
-        "③ 红三角实线：本程序 Kerma 解析计算的各\n"
-        "   器官 HT/Φ，再经 Σ(wT×HT) 得到的有效剂量\n"
-        "   （程序计算值，与①的偏差体现模型局限性）\n"
+        "③ 红三角实线：本程序Kerma解析计算值\n"
+        "   （简化物理模型，与①存在系统性偏差）\n"
         "\n"
-        "下图偏差：②贴近①说明ICRP116数据内部一致；\n"
-        "③偏差反映 Kerma 近似模型的系统性误差"
+        "红线偏差大属正常，原因：\n"
+        "  · ICRP 116用全3D蒙特卡洛输运（包含\n"
+        "    体内多次散射、慢化效应、散射积累）\n"
+        "  · 本程序仅算初级中子与组织的直接作用\n"
+        "  · 超热区（1eV-10keV）中子在体内被慢化\n"
+        "    为热中子才沉积剂量，初级Kerma偏低\n"
+        "  · 次级光子贡献未纳入"
     )
     axes[0].text(0.98, 0.02, annotation_text,
                  transform=axes[0].transAxes, fontsize=7.5,
                  verticalalignment='bottom', horizontalalignment='right',
                  bbox=dict(boxstyle='round,pad=0.5', facecolor='#F8F9FA',
-                           edgecolor='#BDBDBD', alpha=0.93),
-                 family='monospace')
+                           edgecolor='#BDBDBD', alpha=0.93))
 
     plt.tight_layout()
     if output_path:
@@ -952,7 +982,7 @@ def plot_wt_weighted_contribution(phantom_type: str = 'AM',
             verticalalignment='top', horizontalalignment='left',
             bbox=dict(boxstyle='round,pad=0.5', facecolor='#FFFDE7',
                       edgecolor='#F9A825', alpha=0.93),
-            family='monospace')
+)
 
     plt.tight_layout()
     if output_path:
