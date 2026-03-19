@@ -539,6 +539,14 @@ def plot_effective_dose_curve(phantom_type: str = 'AM',
     energies_eV = eff_arr[:, 0] * 1e6   # MeV → eV
     e_phi = eff_arr[:, 1]
 
+    # 计算 Σ(wT × HT_kerma) 有效剂量（13个能量节点）
+    organ_wt = ORGAN_WT_AM if phantom_type.upper() == 'AM' else ORGAN_WT_AF
+    calc_dcc = calculate_organ_dcc_analytical(phantom_type)
+    sum_calc = np.zeros(len(ORGAN_ENERGIES_MEV))
+    for organ, wt in organ_wt.items():
+        if organ in calc_dcc:
+            sum_calc += wt * calc_dcc[organ]
+
     fig, ax = plt.subplots(figsize=(10, 6))
 
     # 能量区域背景
@@ -548,6 +556,8 @@ def plot_effective_dose_curve(phantom_type: str = 'AM',
 
     ax.loglog(energies_eV, e_phi, 'b-o', markersize=5, linewidth=1.8,
               label='ICRP 116 Ref. — AP, Neutron', zorder=5)
+    ax.loglog(ORGAN_ENERGIES_MEV * 1e6, sum_calc, 'r^--', markersize=5, linewidth=1.5,
+              label='Σ(wT·HT_Kerma) — Calc.', zorder=4, alpha=0.85)
 
     # 标注热中子点
     idx_thermal = np.argmin(np.abs(eff_arr[:, 0] - 2.53e-8))
@@ -614,6 +624,7 @@ def plot_organ_ht_curves(phantom_type: str = 'AM',
     pt = phantom_type.upper()
     organ_ht = ORGAN_HT_AM if pt == 'AM' else ORGAN_HT_AF
     organ_wt = ORGAN_WT_AM if pt == 'AM' else ORGAN_WT_AF
+    calc_dcc = calculate_organ_dcc_analytical(pt)
     energies_eV = ORGAN_ENERGIES_MEV * 1e6
 
     fig, ax = plt.subplots(figsize=(12, 7))
@@ -631,15 +642,28 @@ def plot_organ_ht_curves(phantom_type: str = 'AM',
         ax.loglog(energies_eV, ht_vals, color=color, lw=lw, ls=ls,
                   marker='o', markersize=3,
                   label=f'{organ} ({wt_label})')
+        # 叠加 Kerma 计算值（同色点线，较细，无图例条目）
+        if organ in calc_dcc:
+            ax.loglog(energies_eV, calc_dcc[organ], color=color,
+                      lw=max(lw * 0.6, 0.8), ls=':', marker='^',
+                      markersize=2.5, alpha=0.6)
+
+    # 手动添加计算值图例说明
+    import matplotlib.lines as mlines
+    calc_line = mlines.Line2D([], [], color='grey', lw=1, ls=':', marker='^',
+                              markersize=4, alpha=0.7, label='Calc. (Kerma model, dotted)')
+    handles, labels = ax.get_legend_handles_labels()
+    handles.append(calc_line)
+    labels.append('Calc. (Kerma model, dotted)')
 
     ax.set_xlabel('Neutron Energy (eV)', fontsize=11)
     ax.set_ylabel('HT / Φ  (pSv·cm²)', fontsize=11)
     ax.set_title(
         f'Organ Equivalent Dose Conversion Coefficients — AP Geometry\n'
-        f'ICRP 110 {pt} Phantom  |  ICRP 116 Table A.3  |  Neutron',
+        f'ICRP 110 {pt} Phantom  |  ICRP 116 Ref. (solid) vs Kerma Calc. (dotted)  |  Neutron',
         fontsize=11, fontweight='bold'
     )
-    ax.legend(fontsize=7, loc='upper left', ncol=2,
+    ax.legend(handles=handles, labels=labels, fontsize=7, loc='upper left', ncol=2,
               framealpha=0.7, bbox_to_anchor=(1.01, 1))
     ax.grid(True, which='both', alpha=0.2)
     ax.set_xlim(5e-4, 2e7)
