@@ -491,14 +491,21 @@ def _setup_matplotlib():
     from matplotlib.font_manager import fontManager, FontProperties, findfont
 
     # 候选中文字体路径列表（按优先级排序）
+    _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
     _FONT_CANDIDATES = [
-        # matplotlib 内置目录（已预置 wqy-zenhei）
+        # 优先：仓库内自带字体（跨平台，Windows/Linux/Mac 均可用）
+        os.path.join(_THIS_DIR, 'fonts', 'wqy-zenhei.ttc'),
+        # matplotlib 内置目录
         os.path.join(os.path.dirname(matplotlib.__file__),
                      'mpl-data', 'fonts', 'ttf', 'wqy-zenhei.ttc'),
-        # 系统字体
+        # Linux 系统字体
         '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',
         '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
         '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
+        # Windows 系统字体
+        r'C:\Windows\Fonts\msyh.ttc',    # 微软雅黑
+        r'C:\Windows\Fonts\simhei.ttf',  # 黑体
+        r'C:\Windows\Fonts\simsun.ttc',  # 宋体
     ]
 
     _cn_font_path = None
