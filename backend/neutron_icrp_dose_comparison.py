@@ -941,91 +941,100 @@ def plot_effective_dose_verification(phantom_type: str = 'AM',
 def plot_wt_weighted_contribution(phantom_type: str = 'AM',
                                    output_path: str = None):
     """
-    图5: 各器官对有效剂量的 wT 加权贡献  wT×HT/Φ  堆积面积图
-    展示各器官在不同能量下对有效剂量的相对贡献
+    图5: 各器官对有效剂量的 wT 加权贡献  wT×HT/Φ  堆积面积对比图
+    左图：ICRP 116 MC 参考值；右图：解析计算值
+    相同器官使用相同颜色，y 轴范围一致，便于视觉对比
     """
     plt, _, cn_fp = _setup_matplotlib()
 
     pt = phantom_type.upper()
-    organ_ht = ORGAN_HT_AM if pt == 'AM' else ORGAN_HT_AF
+    organ_ht_ref = ORGAN_HT_AM if pt == 'AM' else ORGAN_HT_AF
     organ_wt = ORGAN_WT_AM if pt == 'AM' else ORGAN_WT_AF
+    calc_dcc = calculate_organ_dcc_analytical(pt)
 
     energies_eV = ORGAN_ENERGIES_MEV * 1e6
 
-    fig, ax = plt.subplots(figsize=(12, 7))
-
-    # 按 wT 降序排列
+    # 按 wT 降序排列，过滤出两侧都有数据的器官
     organs_sorted = sorted(organ_wt.keys(), key=lambda o: organ_wt[o], reverse=True)
-    organs_sorted = [o for o in organs_sorted if o in organ_ht]
+    organs_sorted = [o for o in organs_sorted if o in organ_ht_ref and o in calc_dcc]
 
-    bottom = np.zeros(len(ORGAN_ENERGIES_MEV))
-    for i, organ in enumerate(organs_sorted):
-        ht_arr = np.array(organ_ht[organ])
-        wt = organ_wt[organ]
-        contrib = wt * ht_arr
-        color = _ORGAN_COLORS[i % len(_ORGAN_COLORS)]
-        ax.fill_between(energies_eV, bottom, bottom + contrib,
-                        alpha=0.75, color=color,
-                        label=f'{organ} (wT={wt:.4f})')
-        bottom += contrib
-
-    # 叠加 ICRP 116 表格有效剂量线
+    # ICRP 116 表格有效剂量（用于叠加参考线）
     eff_arr = np.array(NEUTRON_AP_E_OVER_PHI)
     tabulated_interp = np.array([
         _interp_log(eff_arr[:, 0], eff_arr[:, 1], e) for e in ORGAN_ENERGIES_MEV
     ])
-    ax.loglog(energies_eV, tabulated_interp, 'k--',
-              lw=2, label='ICRP 116 Tabulated E/Φ', zorder=10)
-    ax.loglog(energies_eV, bottom, 'w-.',
-              lw=1.5, label='Sum Σ(wT·HT/Φ)', zorder=9)
 
-    ax.set_xscale('log')
-    ax.set_yscale('log')
-    ax.set_xlabel('Neutron Energy (eV)', fontsize=11)
-    ax.set_ylabel('wT × HT / Φ  (pSv·cm²)', fontsize=11)
-    ax.set_title(
-        f'Organ Contributions to Effective Dose (Stacked) — AP Geometry\n'
-        f'ICRP 110 {pt} Phantom  |  ICRP 116  |  Neutron',
-        fontsize=11, fontweight='bold'
+    fig, (ax_ref, ax_calc) = plt.subplots(1, 2, figsize=(16, 7), sharey=True)
+
+    def _draw_stacked(ax, get_ht, title_label):
+        bottom = np.zeros(len(ORGAN_ENERGIES_MEV))
+        for i, organ in enumerate(organs_sorted):
+            ht_arr = np.asarray(get_ht(organ))
+            wt = organ_wt[organ]
+            contrib = wt * ht_arr
+            color = _ORGAN_COLORS[i % len(_ORGAN_COLORS)]
+            ax.fill_between(energies_eV, bottom, bottom + contrib,
+                            alpha=0.75, color=color,
+                            label=f'{organ} (wT={wt:.4f})')
+            bottom += contrib
+        # 参考线：ICRP 116 直接给出的 E/Φ
+        ax.loglog(energies_eV, tabulated_interp, 'k--',
+                  lw=2, label='ICRP 116 Tabulated E/Φ', zorder=10)
+        # 堆积总和线
+        ax.loglog(energies_eV, bottom, 'w-.',
+                  lw=1.5, label='Sum Σ(wT·HT/Φ)', zorder=9)
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+        ax.set_xlabel('Neutron Energy (eV)', fontsize=11)
+        ax.set_xlim(5e-4, 2e7)
+        ax.grid(True, which='both', alpha=0.2)
+        ax.set_title(title_label, fontsize=11, fontweight='bold')
+        return bottom
+
+    _draw_stacked(ax_ref,
+                  lambda o: organ_ht_ref[o],
+                  f'ICRP 116 Reference  (MC)\nICRP 110 {pt} Phantom — AP, Neutron')
+    _draw_stacked(ax_calc,
+                  lambda o: calc_dcc[o],
+                  f'Analytical Calculation\nICRP 110 {pt} Phantom — AP, Neutron')
+
+    ax_ref.set_ylabel('wT × HT / Φ  (pSv·cm²)', fontsize=11)
+
+    # 图例放在右图外侧
+    handles, labels = ax_ref.get_legend_handles_labels()
+    ax_calc.legend(handles, labels, fontsize=7, ncol=1,
+                   loc='upper left', bbox_to_anchor=(1.01, 1), framealpha=0.8)
+
+    fig.suptitle(
+        'Organ Contributions to Effective Dose — Stacked Area Comparison\n'
+        'Left: ICRP 116 MC Reference  |  Right: Analytical Calculation',
+        fontsize=12, fontweight='bold', y=1.01
     )
-    ax.legend(fontsize=7, ncol=2, loc='upper left',
-              bbox_to_anchor=(1.01, 1), framealpha=0.8)
-    ax.grid(True, which='both', alpha=0.2)
-    ax.set_xlim(5e-4, 2e7)
 
-    # ── 中文注释文本框 ──
+    # ── 中文注释文本框（放在左图） ──
     annotation_text = (
         "【图5 说明】\n"
-        "堆积面积图，展示各器官对有效剂量\n"
-        "的 wT 加权贡献 wT×HT/Φ (pSv·cm²)。\n"
+        "左图：ICRP 116 MC 参考值\n"
+        "右图：本文解析计算值\n"
+        "相同器官颜色相同\n"
+        "y 轴共享，可直接对比各\n"
+        "能量段各器官的贡献大小\n"
         "\n"
-        "数据来源：ICRP 116 各器官 HT/Φ\n"
-        "（MC 参考值）× ICRP 103 权重因子 wT\n"
-        "\n"
-        "黑色虚线：ICRP 116 直接给出的 E/Φ\n"
-        "白色点划线：Σ(wT×HT) 之和（两线应接近）\n"
-        "\n"
-        "主要贡献器官（AP 中子照射）：\n"
-        "  高能段：红骨髓、肺、胃（wT 大且位置\n"
-        "           靠近体表，中子穿透有效）\n"
-        "  低能段：皮肤（热中子在体表反应强）\n"
-        "\n"
-        "面积越大 = 该器官对全身风险贡献越大"
+        "黑色虚线：ICRP 116 表格 E/Φ\n"
+        "白色点划线：Σ(wT×HT) 之和"
     )
-    ax.text(0.01, 0.99, annotation_text,
-            transform=ax.transAxes, fontsize=7.5,
-            verticalalignment='top', horizontalalignment='left',
-            fontproperties=cn_fp,
-            bbox=dict(boxstyle='round,pad=0.5', facecolor='#FFFDE7',
-                      edgecolor='#F9A825', alpha=0.93),
-)
+    ax_ref.text(0.02, 0.99, annotation_text,
+                transform=ax_ref.transAxes, fontsize=7.5,
+                verticalalignment='top', horizontalalignment='left',
+                fontproperties=cn_fp,
+                bbox=dict(boxstyle='round,pad=0.5', facecolor='#FFFDE7',
+                          edgecolor='#F9A825', alpha=0.93))
 
     plt.tight_layout()
     if output_path:
         plt.savefig(output_path, dpi=150, bbox_inches='tight')
-        print(f"[图5] wT 加权贡献堆积图 → {output_path}")
+        print(f"[图5] wT 加权贡献堆积对比图 → {output_path}")
     plt.close()
-
 
 # ======================================================================
 # 文本报告与数据导出
