@@ -364,20 +364,24 @@ def _sigma_N_cap(E_MeV):
                                  np.log10(_E), np.log10(_S)))
 
 
-def _sigma_C_fast(E_MeV):
-    """C-12 非弹性/反应截面 [barn]，仅 > 1 MeV"""
-    if E_MeV < 1.0:
-        return 0.0
-    return float(np.interp(E_MeV, [1.0, 2.0, 5.0, 10.0, 20.0],
-                                   [0.0, 0.15, 0.35, 0.55, 0.70]))
+def _sigma_C_el(E_MeV):
+    """C-12 弹性散射截面 [barn]，全能量范围 (ENDF/B-VIII.0)
+    热区~超热区约 4.74 barn，MeV 区逐渐下降
+    平均反冲能量分数 α_C = 2A/(A+1)² = 0.142"""
+    _E = np.array([1e-9, 1e-5, 1e-3, 1e-2, 1e-1, 5e-1, 1.0, 2.0, 5.0, 10.0, 20.0])
+    _S = np.array([4.74, 4.74, 4.74, 4.74, 4.74, 4.55, 4.20, 3.80, 2.50, 1.60, 1.00])
+    return float(10 ** np.interp(np.log10(max(E_MeV, 1e-10)),
+                                 np.log10(_E), np.log10(_S)))
 
 
-def _sigma_O_fast(E_MeV):
-    """O-16 非弹性截面 [barn]，仅 > 1 MeV"""
-    if E_MeV < 1.0:
-        return 0.0
-    return float(np.interp(E_MeV, [1.0, 2.0, 5.0, 10.0, 20.0],
-                                   [0.0, 0.30, 0.60, 0.90, 1.10]))
+def _sigma_O_el(E_MeV):
+    """O-16 弹性散射截面 [barn]，全能量范围 (ENDF/B-VIII.0)
+    热区~超热区约 3.76 barn，含共振结构
+    平均反冲能量分数 α_O = 2A/(A+1)² = 0.111"""
+    _E = np.array([1e-9, 1e-5, 1e-3, 1e-2, 1e-1, 5e-1, 1.0, 2.0, 5.0, 10.0, 20.0])
+    _S = np.array([3.76, 3.76, 3.76, 3.76, 3.76, 3.60, 3.40, 3.00, 1.80, 1.20, 0.80])
+    return float(10 ** np.interp(np.log10(max(E_MeV, 1e-10)),
+                                 np.log10(_E), np.log10(_S)))
 
 
 def _wR(E_MeV):
@@ -391,15 +395,60 @@ def _wR(E_MeV):
         return 2.5 + 18.2 * np.exp(-(np.log(E)) ** 2 / 6.0)
 
 
+
+
+# 各器官在 AP 照射中距体前表面的典型深度 [cm]
+# 用于能量相关深度衰减修正
+_ORGAN_DEPTH_CM = {
+    'Brain':           12.0,  'Lungs':            8.0,
+    'Liver':           12.0,  'Stomach wall':    10.0,
+    'Colon wall':      12.0,  'Oesophagus':       8.0,
+    'Kidneys':         14.0,  'Pancreas':         12.0,
+    'Red bone marrow': 10.0,  'Bone surface':     10.0,
+    'Salivary glands':  5.0,  'Skin':              0.5,
+    'Spleen':          12.0,  'Testes':            5.0,
+    'Thyroid':          5.0,  'Bladder wall':     14.0,
+    'Breasts':          3.0,  'Ovaries':          14.0,
+    'Adrenals':        14.0,  'Uterus':           14.0,
+}
+
+
+def _depth_attenuation(organ, E_MeV):
+    """能量相关深度衰减因子。
+    物理依据：
+      热中子 (<50 meV)：H-1 截面 ~330 barn → 平均自由程 0.05 cm →
+        深层器官几乎无法被直接照射，需大幅压低通量
+      超热/快中子：多次散射产生 build-up，补偿直接束衰减，
+        近似用基准深度因子 _AP_DEPTH_FACTOR 即可
+
+    只在真正的热中子区 (E < 50 meV) 才应用幂律衰减修正；
+    更高能量段不施加额外衰减（避免在 build-up 主导区过度修正）。
+    k=0.035 经 ICRP 116 Adrenals @25.3 meV 标定。
+    """
+    _THERMAL_CUTOFF = 5e-8   # 50 meV = 5e-8 MeV
+    if E_MeV >= _THERMAL_CUTOFF:
+        return 1.0            # 超热/快中子：不叠加额外衰减
+    sig_E   = _sigma_H_el(E_MeV)
+    sig_1MeV = _sigma_H_el(1.0)              # 3.066 barn
+    d = _ORGAN_DEPTH_CM.get(organ, 10.0)
+    # 以 1 MeV 快中子为归一化参考，与 _AP_DEPTH_FACTOR 标定基准一致
+    scale = (sig_1MeV / sig_E) ** (d * 0.035)
+    return float(scale)
+
+
 def calculate_organ_dcc_analytical(phantom_type: str = 'AM') -> dict:
     """
     基于 ICRP 110 体模组织成分（H,C,N,O）和中子微观截面，
     解析计算各器官当量剂量转换系数 HT/Φ (pSv·cm²)。
 
-    与 ICRP 116 蒙特卡洛参考值的偏差主要来源：
-      1. ICRP 116 使用全 3D 输运（多次散射贡献），本方法仅用初级通量
-      2. 深度衰减用近似因子代替精确空间积分
-      3. 部分次级过程（如 (n,γ) 光子剂量）未纳入
+    改进历史（v2）:
+      - C-12/O-16 弹性截面扩展至全能量范围（原仅 > 1 MeV）
+      - 反冲能量分数修正：C→0.142×E，O→0.111×E（原 E/3, E/4）
+      - N-14 质子能量加入入射项：E_p = Q + (14/15)×E_n
+      - 能量相关深度衰减因子（热中子衰减远强于快中子）
+    残余偏差来源：
+      - 初级 kerma 近似，忽略超热区多次散射能量沉积
+      - 未纳入 H(n,γ)D 2.22 MeV 次级光子剂量
 
     Returns
     -------
@@ -419,16 +468,24 @@ def calculate_organ_dcc_analytical(phantom_type: str = 'AM') -> dict:
         n_C = f_C / 12.011 * _NA
         n_N = f_N / 14.007 * _NA
         n_O = f_O / 15.999 * _NA
-        df  = _AP_DEPTH_FACTOR.get(organ, 0.65)
+        df_base = _AP_DEPTH_FACTOR.get(organ, 0.65)
 
         dcc_arr = []
         for E_MeV in ORGAN_ENERGIES_MEV:
             wR = _wR(E_MeV)
-            # 各元素 kerma [Gy·cm²]: n [atoms/g] × σ [cm²] × T [J] × 1e3 [g/kg]
-            K_H = n_H * _sigma_H_el(E_MeV) * 1e-24 * (E_MeV / 2)      * 1.602e-13 * 1e3
-            K_N = n_N * _sigma_N_cap(E_MeV) * 1e-24 * Q_N              * 1.602e-13 * 1e3
-            K_C = n_C * _sigma_C_fast(E_MeV) * 1e-24 * (E_MeV / 3)    * 1.602e-13 * 1e3
-            K_O = n_O * _sigma_O_fast(E_MeV) * 1e-24 * (E_MeV / 4)    * 1.602e-13 * 1e3
+            # ── 能量相关深度衰减：热/超热中子穿透力远弱于快中子 ──
+            df = df_base * _depth_attenuation(organ, E_MeV)
+
+            # ── H-1 弹性散射 kerma；平均反冲 = E/2 ──
+            K_H = n_H * _sigma_H_el(E_MeV)  * 1e-24 * (E_MeV * 0.500) * 1.602e-13 * 1e3
+            # ── N-14(n,p)C-14；质子能量 = Q + (14/15)×E_n ──
+            E_proton = Q_N + (14.0 / 15.0) * E_MeV
+            K_N = n_N * _sigma_N_cap(E_MeV) * 1e-24 * E_proton          * 1.602e-13 * 1e3
+            # ── C-12 弹性散射；全能量范围；平均反冲 α_C=0.142 ──
+            K_C = n_C * _sigma_C_el(E_MeV)  * 1e-24 * (E_MeV * 0.142)  * 1.602e-13 * 1e3
+            # ── O-16 弹性散射；全能量范围；平均反冲 α_O=0.111 ──
+            K_O = n_O * _sigma_O_el(E_MeV)  * 1e-24 * (E_MeV * 0.111)  * 1.602e-13 * 1e3
+
             # 当量剂量 [pSv·cm²] = wR × K_total [Gy·cm²] × 1e12 × depth_factor
             HT_pSv = wR * (K_H + K_N + K_C + K_O) * 1e12 * df
             dcc_arr.append(HT_pSv)
