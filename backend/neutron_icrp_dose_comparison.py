@@ -534,6 +534,33 @@ def plot_effective_dose_curve(phantom_type: str = 'AM',
     ax.set_xlim(5e-4, 2e8)
     ax.set_ylim(1e-2, 3e3)
 
+    # ── 中文注释文本框 ──
+    annotation_text = (
+        "【图1 说明】\n"
+        "本图展示中子AP（前后向）照射条件下\n"
+        "有效剂量转换系数 E/Φ 随中子能量的变化。\n"
+        "\n"
+        "E/Φ 含义：每单位中子注量（个/cm²）对应\n"
+        "的全身有效剂量（皮希弗特 pSv），\n"
+        "数值越大表示辐射生物效应越强。\n"
+        "\n"
+        "数据来源：ICRP 116 报告 Table A.3，\n"
+        "由蒙特卡洛（MC）模拟 ICRP 110 体模得到，\n"
+        "共 31 个能量节点，覆盖 10 nMeV～100 MeV。\n"
+        "\n"
+        "三个能量区域特征：\n"
+        "  绿色 热中子（<0.5 eV）：E/Φ 约 0.3 pSv·cm²\n"
+        "  橙色 超热中子（0.5 eV-10 keV）：缓慢上升\n"
+        "  红色 快中子（>10 keV）：E/Φ 急剧增大，\n"
+        "        1 MeV 时达 ~500，100 MeV 达 ~1800"
+    )
+    ax.text(0.99, 0.02, annotation_text,
+            transform=ax.transAxes, fontsize=7.5,
+            verticalalignment='bottom', horizontalalignment='right',
+            bbox=dict(boxstyle='round,pad=0.5', facecolor='#F8F9FA',
+                      edgecolor='#BDBDBD', alpha=0.92),
+            family='monospace')
+
     plt.tight_layout()
     if output_path:
         plt.savefig(output_path, dpi=150, bbox_inches='tight')
@@ -585,6 +612,30 @@ def plot_organ_ht_curves(phantom_type: str = 'AM',
     ax.text(1e-2,  ax.get_ylim()[1] * 0.6, 'Thermal',    fontsize=8, color='#388E3C', alpha=0.7)
     ax.text(2e0,   ax.get_ylim()[1] * 0.6, 'Epithermal', fontsize=8, color='#E65100', alpha=0.7)
     ax.text(2e4,   ax.get_ylim()[1] * 0.6, 'Fast',       fontsize=8, color='#C62828', alpha=0.7)
+
+    # ── 中文注释文本框 ──
+    annotation_text = (
+        "【图2 说明】\n"
+        "各曲线为 ICRP 116 报告（MC 参考值）给出的\n"
+        "各器官当量剂量转换系数 HT/Φ (pSv·cm²)。\n"
+        "\n"
+        "HT/Φ 含义：每单位中子注量对应某器官\n"
+        "接受的当量剂量（已乘辐射权重因子 wR）。\n"
+        "\n"
+        "粗实线（wT≥0.04）为高权重关键器官：\n"
+        "  红骨髓、结肠、肺、胃、乳腺、性腺等；\n"
+        "细虚线为低权重器官（wT<0.04）。\n"
+        "\n"
+        "规律：皮肤（AP前表面）在低能段剂量最高；\n"
+        "深部器官（脑、睾丸）随能量升高快速增大；\n"
+        "快中子区（>10 keV）各器官差异明显减小。"
+    )
+    ax.text(0.01, 0.01, annotation_text,
+            transform=ax.transAxes, fontsize=7.5,
+            verticalalignment='bottom', horizontalalignment='left',
+            bbox=dict(boxstyle='round,pad=0.5', facecolor='#F8F9FA',
+                      edgecolor='#BDBDBD', alpha=0.92),
+            family='monospace')
 
     plt.tight_layout()
     if output_path:
@@ -675,6 +726,21 @@ def plot_organ_bar_comparison(phantom_type: str = 'AM',
              'approximation  (2) primary-fluence-only kerma (no scatter buildup)  '
              '(3) secondary gamma excluded',
              ha='center', fontsize=8, color='#555555', style='italic')
+
+    # ── 中文注释文本框（放在图左上角大标题区域下方）──
+    annotation_text = (
+        "【图3 说明】本图是核心对比图，展示每个器官在三个典型能量下"
+        "的 HT/Φ 计算值（红色）vs ICRP 116 报告参考值（蓝色）。\n"
+        "蓝色柱：ICRP 116 Table A.3 蒙特卡洛模拟结果（权威基准）\n"
+        "红色柱：本程序 Kerma 解析计算值（ICRP 110 组织成分 + ENDF/B-VIII 截面 + ICRP 103 wR 公式 + AP 深度修正）\n"
+        "下方偏差图：绿色±20% 良好，橙色±40% 可接受，红色>40% 偏大原因：①仅算初级注量 kerma，忽略多次散射积累；"
+        "②深度修正因子为近似值；③次级光子贡献未纳入"
+    )
+    fig.text(0.5, 1.02, annotation_text,
+             ha='center', va='bottom', fontsize=8, color='#333333',
+             bbox=dict(boxstyle='round,pad=0.4', facecolor='#EEF4FF',
+                       edgecolor='#90CAF9', alpha=0.95),
+             wrap=True)
 
     plt.tight_layout()
     if output_path:
@@ -775,6 +841,31 @@ def plot_effective_dose_verification(phantom_type: str = 'AM',
     ax2.grid(axis='y', alpha=0.2)
     ax2.set_xlim(5e-4, 2e8)
 
+    # ── 中文注释文本框（放在上图右下角）──
+    annotation_text = (
+        "【图4 说明】有效剂量三方对比，验证计算一致性\n"
+        "\n"
+        "① 蓝实线：ICRP 116 Table A.3 直接给出的\n"
+        "   有效剂量 E/Φ（31点MC参考值，权威基准）\n"
+        "\n"
+        "② 绿方块虚线：用 ICRP 116 各器官 HT/Φ 数据\n"
+        "   通过 E=Σ(wT×HT) 反推的有效剂量\n"
+        "   （内部一致性验证，应与①接近）\n"
+        "\n"
+        "③ 红三角实线：本程序 Kerma 解析计算的各\n"
+        "   器官 HT/Φ，再经 Σ(wT×HT) 得到的有效剂量\n"
+        "   （程序计算值，与①的偏差体现模型局限性）\n"
+        "\n"
+        "下图偏差：②贴近①说明ICRP116数据内部一致；\n"
+        "③偏差反映 Kerma 近似模型的系统性误差"
+    )
+    axes[0].text(0.98, 0.02, annotation_text,
+                 transform=axes[0].transAxes, fontsize=7.5,
+                 verticalalignment='bottom', horizontalalignment='right',
+                 bbox=dict(boxstyle='round,pad=0.5', facecolor='#F8F9FA',
+                           edgecolor='#BDBDBD', alpha=0.93),
+                 family='monospace')
+
     plt.tight_layout()
     if output_path:
         plt.savefig(output_path, dpi=150, bbox_inches='tight')
@@ -836,6 +927,32 @@ def plot_wt_weighted_contribution(phantom_type: str = 'AM',
               bbox_to_anchor=(1.01, 1), framealpha=0.8)
     ax.grid(True, which='both', alpha=0.2)
     ax.set_xlim(5e-4, 2e7)
+
+    # ── 中文注释文本框 ──
+    annotation_text = (
+        "【图5 说明】\n"
+        "堆积面积图，展示各器官对有效剂量\n"
+        "的 wT 加权贡献 wT×HT/Φ (pSv·cm²)。\n"
+        "\n"
+        "数据来源：ICRP 116 各器官 HT/Φ\n"
+        "（MC 参考值）× ICRP 103 权重因子 wT\n"
+        "\n"
+        "黑色虚线：ICRP 116 直接给出的 E/Φ\n"
+        "白色点划线：Σ(wT×HT) 之和（两线应接近）\n"
+        "\n"
+        "主要贡献器官（AP 中子照射）：\n"
+        "  高能段：红骨髓、肺、胃（wT 大且位置\n"
+        "           靠近体表，中子穿透有效）\n"
+        "  低能段：皮肤（热中子在体表反应强）\n"
+        "\n"
+        "面积越大 = 该器官对全身风险贡献越大"
+    )
+    ax.text(0.01, 0.99, annotation_text,
+            transform=ax.transAxes, fontsize=7.5,
+            verticalalignment='top', horizontalalignment='left',
+            bbox=dict(boxstyle='round,pad=0.5', facecolor='#FFFDE7',
+                      edgecolor='#F9A825', alpha=0.93),
+            family='monospace')
 
     plt.tight_layout()
     if output_path:
