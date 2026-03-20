@@ -4011,7 +4011,7 @@ export default {
             clearInterval(this.icrp116PollTimer);
             this.icrp116PollTimer = null;
           }
-        } catch (_) {}
+        } catch (_) { /* 忽略轮询错误 */ }
       }, 3000);
     },
 
