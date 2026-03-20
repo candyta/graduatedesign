@@ -2389,6 +2389,161 @@ console.log('[剂量组分] API端点已加载:');
 console.log('  - POST /dose-components/calculate');
 console.log('  - POST /dose-components/validate');
 
+// ═══════════════════════════════════════════════════════
+// ICRP-116 光子剂量系数 AP 验证接口
+// ═══════════════════════════════════════════════════════
+
+// 任务状态（内存中，重启后重置）
+const icrp116Job = {
+    running: false,
+    pid: null,
+    proc: null,
+    startTime: null,
+    logs: [],
+    completed: false,
+    failed: false,
+    currentCase: null,
+    doneEnergies: [],
+};
+
+const ICRP116_INP_DIR  = path.join(__dirname, 'icrp_validation', 'mcnp_inputs');
+const ICRP116_OUT_DIR  = path.join(__dirname, 'icrp_validation', 'mcnp_outputs');
+const ICRP116_SCRIPT   = path.join(__dirname, 'mcnp_icrp_step2b_run_mcnp.py');
+
+/**
+ * POST /api/icrp116/start-validation
+ * 启动 MCNP5 ICRP-116 验证（后台运行，立即返回）
+ * body: { energies: [0.01, 0.1, 1.0, 10.0] }  // 可选，默认全部
+ */
+app.post('/api/icrp116/start-validation', (req, res) => {
+    if (icrp116Job.running) {
+        return res.json({ success: false, message: '验证任务正在运行中，请等待完成或先取消' });
+    }
+
+    // 重置状态
+    icrp116Job.running      = true;
+    icrp116Job.completed    = false;
+    icrp116Job.failed       = false;
+    icrp116Job.logs         = [];
+    icrp116Job.doneEnergies = [];
+    icrp116Job.currentCase  = null;
+    icrp116Job.startTime    = Date.now();
+
+    const { energies } = req.body || {};
+    const args = [
+        ICRP116_SCRIPT,
+        '--inp-dir',     ICRP116_INP_DIR,
+        '--out-dir',     ICRP116_OUT_DIR,
+        '--backend-dir', __dirname,
+    ];
+    if (Array.isArray(energies) && energies.length > 0) {
+        args.push('--only', ...energies.map(String));
+    }
+
+    console.log('[ICRP116] 启动验证:', args.slice(1).join(' '));
+
+    const proc = spawn(PYTHON_PATH, args, { cwd: __dirname });
+    icrp116Job.pid  = proc.pid;
+    icrp116Job.proc = proc;
+
+    const pushLog = (text) => {
+        const entry = { time: new Date().toLocaleTimeString('zh-CN'), text };
+        icrp116Job.logs.push(entry);
+        if (icrp116Job.logs.length > 500) icrp116Job.logs.shift();
+        console.log('[ICRP116]', text);
+    };
+
+    proc.stdout.on('data', (data) => {
+        data.toString().split('\n').filter(l => l.trim()).forEach(line => {
+            pushLog(line);
+            // 解析当前能量
+            const mCur  = line.match(/E\s*=\s*([\d.]+)\s*MeV/);
+            if (mCur) icrp116Job.currentCase = parseFloat(mCur[1]);
+            // 解析完成能量
+            const mDone = line.match(/E=([\d.]+)\s*MeV\s*:\s*OK/i);
+            if (mDone) {
+                const e = parseFloat(mDone[1]);
+                if (!icrp116Job.doneEnergies.includes(e))
+                    icrp116Job.doneEnergies.push(e);
+            }
+        });
+    });
+
+    proc.stderr.on('data', (data) => {
+        data.toString().split('\n').filter(l => l.trim()).forEach(line => {
+            pushLog('[ERR] ' + line);
+        });
+    });
+
+    proc.on('close', (code) => {
+        icrp116Job.running = false;
+        icrp116Job.proc    = null;
+        if (code === 0) {
+            icrp116Job.completed = true;
+            pushLog('✓ 全部验证任务完成！可在 icrp_validation/mcnp_outputs/ 查看结果。');
+        } else {
+            icrp116Job.failed = true;
+            pushLog(`[错误] 进程退出码 ${code}，请检查日志`);
+        }
+        console.log('[ICRP116] 进程结束，code=', code);
+    });
+
+    res.json({ success: true, message: '验证任务已启动，请在日志面板查看进度' });
+});
+
+/**
+ * GET /api/icrp116/status
+ * 返回当前任务状态与最近 200 条日志
+ */
+app.get('/api/icrp116/status', (req, res) => {
+    const elapsed = icrp116Job.startTime
+        ? Math.floor((Date.now() - icrp116Job.startTime) / 1000)
+        : 0;
+
+    // 检查已完成的 npy 文件
+    const resultFiles = [];
+    try {
+        const files = require('fs').readdirSync(ICRP116_OUT_DIR);
+        files.filter(f => f.startsWith('fluence_') && f.endsWith('.npy'))
+             .forEach(f => resultFiles.push(f));
+    } catch (_) {}
+
+    res.json({
+        running:       icrp116Job.running,
+        completed:     icrp116Job.completed,
+        failed:        icrp116Job.failed,
+        currentCase:   icrp116Job.currentCase,
+        doneEnergies:  icrp116Job.doneEnergies,
+        elapsedSec:    elapsed,
+        logs:          icrp116Job.logs.slice(-200),
+        resultFiles,
+    });
+});
+
+/**
+ * POST /api/icrp116/cancel
+ * 取消正在运行的验证任务
+ */
+app.post('/api/icrp116/cancel', (req, res) => {
+    if (!icrp116Job.running) {
+        return res.json({ success: false, message: '当前没有正在运行的任务' });
+    }
+    try {
+        if (icrp116Job.proc) icrp116Job.proc.kill('SIGTERM');
+        icrp116Job.running = false;
+        icrp116Job.failed  = true;
+        icrp116Job.logs.push({ time: new Date().toLocaleTimeString('zh-CN'), text: '已取消' });
+        res.json({ success: true, message: '任务已取消' });
+    } catch (e) {
+        res.status(500).json({ success: false, message: e.message });
+    }
+});
+
+console.log('[ICRP116] API端点已加载:');
+console.log('  - POST /api/icrp116/start-validation');
+console.log('  - GET  /api/icrp116/status');
+console.log('  - POST /api/icrp116/cancel');
+
 app.listen(PORT, () => {
     log(`服务器已启动: http://localhost:${PORT}`);
 });

@@ -1595,6 +1595,125 @@
         </div>
       </div>
 
+      <!-- ══════════════════════════════════════════════════════ -->
+      <!-- Tab: ICRP-116 AP 光子剂量系数 MCNP5 验证              -->
+      <!-- ══════════════════════════════════════════════════════ -->
+      <div v-show="activeTab === 'icrp116'" class="tab-content">
+        <div class="icrp116-workspace">
+
+          <!-- 标题 -->
+          <div class="icrp116-header">
+            <h2>✅ ICRP-116 AP 光子剂量系数 MCNP5 验证</h2>
+            <p class="icrp116-desc">
+              使用 <strong>ICRP-110 AM</strong> 标准体模，以 <strong>AP 平行光子束</strong> 照射，
+              通过 <strong>MCNP5 蒙特卡洛模拟</strong>（FMESH 通量计分）计算各器官吸收剂量，
+              与 ICRP Publication 116 Table A.3 参考值对比验证。<br>
+              <span class="icrp116-note">⚠ 每个能量点需运行约 2~6 小时（10⁷ 粒子），请保持后端在线。</span>
+            </p>
+          </div>
+
+          <!-- 控制区 -->
+          <div class="icrp116-controls">
+            <div class="icrp116-energy-row">
+              <span class="ctrl-label">选择能量点：</span>
+              <label
+                v-for="e in icrp116Energies"
+                :key="e.value"
+                class="icrp116-energy-checkbox"
+              >
+                <input
+                  type="checkbox"
+                  :value="e.value"
+                  v-model="icrp116Selected"
+                  :disabled="icrp116Running"
+                />
+                {{ e.label }}
+              </label>
+            </div>
+
+            <div class="icrp116-btn-row">
+              <button
+                class="btn btn-primary"
+                :disabled="icrp116Running || icrp116Selected.length === 0"
+                @click="startIcrp116Validation"
+              >
+                <span v-if="icrp116Running" class="spinner-sm"></span>
+                {{ icrp116Running ? '⟳ MCNP5 运行中...' : '▶ 开始验证' }}
+              </button>
+              <button
+                v-if="icrp116Running"
+                class="btn btn-danger"
+                @click="cancelIcrp116Validation"
+              >
+                ■ 取消
+              </button>
+              <span v-if="icrp116Running" class="icrp116-elapsed">
+                已用时 {{ formatElapsed(icrp116Status.elapsedSec) }}
+              </span>
+            </div>
+
+            <!-- 进度状态 -->
+            <div v-if="icrp116Running || icrp116Status.doneEnergies.length" class="icrp116-progress">
+              <div class="icrp116-progress-items">
+                <div
+                  v-for="e in icrp116Energies"
+                  :key="e.value"
+                  :class="['icrp116-e-chip',
+                    icrp116Status.doneEnergies.includes(e.value) ? 'done' :
+                    (icrp116Running && icrp116Status.currentCase === e.value ? 'active' : 'pending')]"
+                >
+                  <span class="chip-icon">
+                    {{ icrp116Status.doneEnergies.includes(e.value) ? '✓' :
+                       (icrp116Running && icrp116Status.currentCase === e.value ? '⟳' : '○') }}
+                  </span>
+                  {{ e.label }}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 日志面板 -->
+          <div class="icrp116-log-panel">
+            <div class="icrp116-log-header">
+              <h4>📋 MCNP5 运行日志</h4>
+              <button class="btn btn-secondary btn-sm" @click="icrp116Status.logs = []">清空</button>
+            </div>
+            <div class="icrp116-log-body" ref="icrp116LogBody">
+              <div
+                v-for="(entry, i) in icrp116Status.logs"
+                :key="i"
+                :class="['log-entry',
+                  entry.text.includes('[ERR]') || entry.text.includes('[错误]') ? 'error' :
+                  entry.text.includes('✓') || entry.text.includes('[OK]') ? 'success' : 'info']"
+              >
+                <span class="log-time">{{ entry.time }}</span>
+                <span class="log-message">{{ entry.text }}</span>
+              </div>
+              <div v-if="!icrp116Status.logs.length" class="log-empty">
+                点击「开始验证」后日志将在此实时显示...
+              </div>
+            </div>
+          </div>
+
+          <!-- 完成状态 / 结果文件 -->
+          <div v-if="icrp116Status.completed" class="icrp116-result-banner success-banner">
+            <strong>✓ 全部计算完成！</strong>
+            已生成 {{ icrp116Status.resultFiles.length }} 个通量文件（fluence_E*.npy）。<br>
+            <span style="font-size:0.9em;">
+              结果已保存至 <code>icrp_validation/mcnp_outputs/</code>，
+              可运行第三步分析脚本与 ICRP-116 参考值对比。
+            </span>
+            <ul v-if="icrp116Status.resultFiles.length" class="icrp116-result-files">
+              <li v-for="f in icrp116Status.resultFiles" :key="f">📄 {{ f }}</li>
+            </ul>
+          </div>
+          <div v-if="icrp116Status.failed && !icrp116Running" class="icrp116-result-banner error-banner">
+            <strong>✗ 任务失败或已取消。</strong> 请检查上方日志排查问题。
+          </div>
+
+        </div>
+      </div>
+
       <!-- ── MCNP Tab：剂量组分参数（嵌入在MCNP页面中） ── -->
       <div v-show="activeTab === 'mcnp'" class="tab-content">
         <div class="ds-mcnp-title">
@@ -2332,7 +2451,8 @@ export default {
         { id: 'mcnp', name: 'MCNP计算', icon: '⚛️' },
         { id: 'dose', name: '剂量分析', icon: '📊' },
         { id: 'dvh', name: 'DVH分析', icon: '📈' },
-        { id: 'risk', name: '风险评估', icon: '🏥' }
+        { id: 'risk', name: '风险评估', icon: '🏥' },
+        { id: 'icrp116', name: 'ICRP-116验证', icon: '✅' }
       ],
 
       // 全屏
@@ -2388,6 +2508,22 @@ export default {
       icrcResult: null,
       icrcChartUrl: '',
       icrcError: '',
+
+      // ICRP-116 AP 光子验证
+      icrp116Energies: [
+        { value: 0.01,  label: '0.01 MeV（10 keV）' },
+        { value: 0.10,  label: '0.10 MeV（100 keV）' },
+        { value: 1.00,  label: '1.00 MeV' },
+        { value: 10.00, label: '10.00 MeV' },
+      ],
+      icrp116Selected: [0.01, 0.10, 1.00, 10.00],
+      icrp116Running:  false,
+      icrp116Status: {
+        completed: false, failed: false,
+        currentCase: null, doneEnergies: [],
+        elapsedSec: 0, logs: [], resultFiles: [],
+      },
+      icrp116PollTimer: null,
 
       // 中子AP ICRP剂量对比
       neutronPhantomType: 'AM',
@@ -3824,6 +3960,84 @@ export default {
         this.neutronLoading = false;
       }
     },
+
+    // ── ICRP-116 AP 光子验证 ──────────────────────────────────
+    async startIcrp116Validation() {
+      if (this.icrp116Running) return;
+      this.icrp116Running = true;
+      this.icrp116Status = {
+        completed: false, failed: false,
+        currentCase: null, doneEnergies: [],
+        elapsedSec: 0, logs: [], resultFiles: [],
+      };
+
+      try {
+        const resp = await axios.post(`${API_BASE}/api/icrp116/start-validation`, {
+          energies: this.icrp116Selected
+        });
+        if (!resp.data.success) {
+          this.icrp116Status.logs.push({
+            time: new Date().toLocaleTimeString('zh-CN'),
+            text: '[错误] ' + resp.data.message
+          });
+          this.icrp116Running = false;
+          return;
+        }
+        this.icrp116Status.logs.push({
+          time: new Date().toLocaleTimeString('zh-CN'),
+          text: '✓ 任务已启动，开始轮询进度...'
+        });
+      } catch (err) {
+        this.icrp116Status.logs.push({
+          time: new Date().toLocaleTimeString('zh-CN'),
+          text: '[错误] 启动失败: ' + err.message
+        });
+        this.icrp116Running = false;
+        return;
+      }
+
+      // 每 3 秒轮询状态
+      this.icrp116PollTimer = setInterval(async () => {
+        try {
+          const { data } = await axios.get(`${API_BASE}/api/icrp116/status`);
+          this.icrp116Status = data;
+          this.icrp116Running = data.running;
+          // 自动滚动日志
+          this.$nextTick(() => {
+            const el = this.$refs.icrp116LogBody;
+            if (el) el.scrollTop = el.scrollHeight;
+          });
+          if (!data.running) {
+            clearInterval(this.icrp116PollTimer);
+            this.icrp116PollTimer = null;
+          }
+        } catch (_) {}
+      }, 3000);
+    },
+
+    async cancelIcrp116Validation() {
+      try {
+        await axios.post(`${API_BASE}/api/icrp116/cancel`);
+        this.icrp116Running = false;
+        if (this.icrp116PollTimer) {
+          clearInterval(this.icrp116PollTimer);
+          this.icrp116PollTimer = null;
+        }
+      } catch (err) {
+        console.error('取消失败:', err.message);
+      }
+    },
+
+    formatElapsed(sec) {
+      if (!sec) return '0s';
+      const h = Math.floor(sec / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = sec % 60;
+      if (h > 0) return `${h}h ${m}m`;
+      if (m > 0) return `${m}m ${s}s`;
+      return `${s}s`;
+    },
+    // ────────────────────────────────────────────────────────
 
     getDeviationClass(pct) {
       if (pct === null) return '';
@@ -7059,4 +7273,45 @@ export default {
 .nicrp-empty p:first-child { font-size: 2.5rem; margin-bottom: 0.5rem; }
 .nicrp-empty-sub { font-size: 0.82rem; color: #cbd5e0; margin-top: 0.4rem; }
 .nicrp-error { color: #e53e3e; padding: 1rem; background: #fff5f5; border-radius: 8px; margin-top: 1rem; }
+
+/* ═══ ICRP-116 AP 光子验证 Tab ═══════════════════════════════ */
+.icrp116-workspace { max-width: 960px; margin: 0 auto; padding: 1.5rem; }
+.icrp116-header { margin-bottom: 1.5rem; }
+.icrp116-header h2 { font-size: 1.4rem; color: #2d3748; margin-bottom: 0.5rem; }
+.icrp116-desc { color: #4a5568; font-size: 0.92rem; line-height: 1.6; }
+.icrp116-note { color: #c05621; font-size: 0.85rem; }
+
+.icrp116-controls { background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 1.2rem 1.5rem; margin-bottom: 1.2rem; }
+.icrp116-energy-row { display: flex; align-items: center; flex-wrap: wrap; gap: 0.8rem; margin-bottom: 1rem; }
+.ctrl-label { font-weight: 600; color: #2d3748; }
+.icrp116-energy-checkbox { display: flex; align-items: center; gap: 0.3rem; font-size: 0.9rem; cursor: pointer; }
+.icrp116-energy-checkbox input { cursor: pointer; }
+.icrp116-btn-row { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; }
+.icrp116-elapsed { color: #718096; font-size: 0.88rem; }
+
+.icrp116-progress { margin-top: 1rem; }
+.icrp116-progress-items { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+.icrp116-e-chip { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.3rem 0.7rem; border-radius: 20px; font-size: 0.85rem; border: 1px solid #e2e8f0; background: #edf2f7; color: #718096; }
+.icrp116-e-chip.done { background: #c6f6d5; border-color: #68d391; color: #276749; }
+.icrp116-e-chip.active { background: #bee3f8; border-color: #63b3ed; color: #2b6cb0; }
+.icrp116-e-chip .chip-icon { font-size: 0.9rem; }
+
+.icrp116-log-panel { border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; margin-bottom: 1.2rem; }
+.icrp116-log-header { display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 1rem; background: #2d3748; color: #fff; }
+.icrp116-log-header h4 { margin: 0; font-size: 0.9rem; }
+.btn-sm { padding: 0.2rem 0.6rem; font-size: 0.78rem; }
+.icrp116-log-body { height: 320px; overflow-y: auto; background: #1a202c; padding: 0.5rem 0.8rem; font-family: monospace; font-size: 0.82rem; }
+.icrp116-log-body .log-entry { padding: 0.15rem 0; display: flex; gap: 0.6rem; }
+.icrp116-log-body .log-time { color: #718096; white-space: nowrap; min-width: 70px; }
+.icrp116-log-body .log-message { color: #e2e8f0; word-break: break-all; }
+.icrp116-log-body .log-entry.success .log-message { color: #68d391; }
+.icrp116-log-body .log-entry.error .log-message { color: #fc8181; }
+.icrp116-log-body .log-empty { color: #718096; text-align: center; padding: 2rem; }
+
+.icrp116-result-banner { padding: 1rem 1.2rem; border-radius: 8px; margin-top: 0.5rem; }
+.success-banner { background: #f0fff4; border: 1px solid #68d391; color: #276749; }
+.error-banner   { background: #fff5f5; border: 1px solid #fc8181; color: #c53030; }
+.icrp116-result-files { margin: 0.5rem 0 0 1rem; font-size: 0.88rem; }
+.btn-danger { background: #e53e3e; color: #fff; border: none; padding: 0.4rem 1rem; border-radius: 6px; cursor: pointer; }
+.btn-danger:hover { background: #c53030; }
 </style>
