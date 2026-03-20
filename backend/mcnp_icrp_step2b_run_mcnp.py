@@ -254,13 +254,15 @@ def ensure_prerequisites(args, cases, log_fh) -> bool:
     backend  = args.backend_dir
     inp_dir  = Path(args.inp_dir)
     needed   = [c["inp_name"] for c in cases]
-    missing  = [n for n in needed if not (inp_dir / n).exists()]
 
-    if not missing:
-        log(f"[准备] 所有 {len(needed)} 个 .inp 文件已存在，跳过生成步骤", log_fh)
-        return True
+    # 始终重新生成 .inp 文件，确保使用最新格式（避免旧文件超出 80 列）
+    log(f"[准备] 将重新生成 {len(needed)} 个 .inp 文件（强制刷新）", log_fh)
+    for n in needed:
+        p = inp_dir / n
+        if p.exists():
+            p.unlink()
 
-    log(f"[准备] 缺少 {len(missing)} 个 .inp 文件: {missing}", log_fh)
+    missing  = needed  # 全部视为缺失，触发 Step2
     log("[准备] 将自动运行 Step1/Step2 生成输入文件 ...", log_fh)
 
     zip_path  = Path(backend) / ICRP110_ZIP
