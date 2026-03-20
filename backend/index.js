@@ -2539,10 +2539,90 @@ app.post('/api/icrp116/cancel', (req, res) => {
     }
 });
 
+/**
+ * POST /api/icrp116/run-step3
+ * 运行 mcnp_icrp_step3_compare.py，等待完成，返回对比结果 JSON
+ */
+const ICRP116_STEP3_SCRIPT = path.join(__dirname, 'mcnp_icrp_step3_compare.py');
+const ICRP116_MASK_PATH    = path.join(__dirname, 'icrp_validation', 'organ_mask_127x63x111.npy');
+const ICRP116_ZIP_PATH     = path.join(__dirname, 'P110 data V1.2', 'AM.zip');
+const ICRP116_CSV_PATH     = path.join(ICRP116_OUT_DIR, 'icrp116_comparison.csv');
+const ICRP116_PNG_PATH     = path.join(ICRP116_OUT_DIR, 'icrp116_comparison.png');
+
+app.post('/api/icrp116/run-step3', (req, res) => {
+    const args = [
+        ICRP116_STEP3_SCRIPT,
+        '--out-dir', ICRP116_OUT_DIR,
+        '--mask',    ICRP116_MASK_PATH,
+        '--zip',     ICRP116_ZIP_PATH,
+    ];
+    console.log('[ICRP116-Step3] 启动:', args.slice(1).join(' '));
+
+    const proc = spawn(PYTHON_PATH, args, { cwd: __dirname });
+    const logs = [];
+    let stderr = '';
+
+    proc.stdout.on('data', d => {
+        d.toString().split('\n').filter(l => l.trim()).forEach(l => {
+            logs.push(l);
+            console.log('[Step3]', l);
+        });
+    });
+    proc.stderr.on('data', d => { stderr += d.toString(); });
+
+    proc.on('close', (code) => {
+        if (code !== 0) {
+            console.error('[Step3] 退出码', code, stderr.slice(0, 500));
+            return res.json({ success: false, message: `Step3 退出码 ${code}：${stderr.slice(0, 200)}`, logs });
+        }
+        // 读取 CSV 结果
+        try {
+            const csv = require('fs').readFileSync(ICRP116_CSV_PATH, 'utf-8');
+            const lines = csv.split('\n').map(l => l.trim()).filter(l => l);
+            const results = lines.slice(1).map(line => {
+                const [energy, h_calc, h_ref, deviation, pass_flag] = line.split(',');
+                return {
+                    energy:    parseFloat(energy),
+                    h_calc:    parseFloat(h_calc),
+                    h_ref:     parseFloat(h_ref),
+                    deviation: parseFloat(deviation),
+                    pass:      (pass_flag || '').trim(),
+                };
+            }).filter(r => !isNaN(r.energy));
+            res.json({ success: true, results, logs });
+        } catch (e) {
+            res.json({ success: false, message: 'CSV 读取失败: ' + e.message, logs });
+        }
+    });
+
+    proc.on('error', (e) => {
+        res.json({ success: false, message: '启动失败: ' + e.message, logs });
+    });
+});
+
+/**
+ * GET /api/icrp116/chart-image
+ * 返回已生成的对比图 PNG（base64）
+ */
+app.get('/api/icrp116/chart-image', (req, res) => {
+    try {
+        const fs = require('fs');
+        if (!fs.existsSync(ICRP116_PNG_PATH)) {
+            return res.json({ success: false, message: '图表尚未生成，请先点击「计算」按钮' });
+        }
+        const imageBase64 = fs.readFileSync(ICRP116_PNG_PATH).toString('base64');
+        res.json({ success: true, imageBase64 });
+    } catch (e) {
+        res.json({ success: false, message: e.message });
+    }
+});
+
 console.log('[ICRP116] API端点已加载:');
 console.log('  - POST /api/icrp116/start-validation');
 console.log('  - GET  /api/icrp116/status');
 console.log('  - POST /api/icrp116/cancel');
+console.log('  - POST /api/icrp116/run-step3');
+console.log('  - GET  /api/icrp116/chart-image');
 
 app.listen(PORT, () => {
     log(`服务器已启动: http://localhost:${PORT}`);

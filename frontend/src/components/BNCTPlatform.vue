@@ -1711,6 +1711,79 @@
             <strong>✗ 任务失败或已取消。</strong> 请检查上方日志排查问题。
           </div>
 
+          <!-- ── Step 3：与 ICRP-116 参考值对比分析 ── -->
+          <div class="icrp116-step3-module">
+            <div class="s3-header">
+              <h3>📊 Step 3：与 ICRP-116 参考值对比分析</h3>
+              <p>
+                读取 fluence_E*.npy，计算光子注量→有效剂量换算系数
+                h<sub>E</sub>（pSv·cm²），与 ICRP-116 Table A.3 AP 光子参考值比较。
+              </p>
+            </div>
+
+            <div class="s3-btn-row">
+              <button @click="runIcrp116Step3" :disabled="icrp116Step3Loading" class="btn btn-primary">
+                <span v-if="icrp116Step3Loading" class="spinner-sm"></span>
+                {{ icrp116Step3Loading ? '计算中...' : '▶ 计算' }}
+              </button>
+              <button
+                @click="genIcrp116Chart"
+                :disabled="!icrp116Step3Done || icrp116ChartLoading"
+                class="btn btn-secondary"
+              >
+                <span v-if="icrp116ChartLoading" class="spinner-sm"></span>
+                🖼️ 生成对比图
+              </button>
+            </div>
+
+            <!-- Step3 日志 -->
+            <div v-if="icrp116Step3Log.length" class="s3-log">
+              <div
+                v-for="(entry, i) in icrp116Step3Log"
+                :key="i"
+                :class="['s3-log-entry', entry.type]"
+              >
+                <span v-if="entry.time" class="s3-log-time">{{ entry.time }}</span>
+                <span class="s3-log-msg">{{ entry.text }}</span>
+              </div>
+            </div>
+
+            <!-- 结果表格 -->
+            <div v-if="icrp116Step3Result && icrp116Step3Result.length" class="s3-results">
+              <h4>对比结果（偏差 ≤10% 判为 PASS）</h4>
+              <table class="s3-table">
+                <thead>
+                  <tr>
+                    <th>能量 (MeV)</th>
+                    <th>h<sub>E</sub> 计算值 (pSv·cm²)</th>
+                    <th>ICRP-116 参考值 (pSv·cm²)</th>
+                    <th>偏差</th>
+                    <th>判定</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="row in icrp116Step3Result" :key="row.energy">
+                    <td>{{ row.energy.toFixed(3) }}</td>
+                    <td>{{ row.h_calc.toFixed(4) }}</td>
+                    <td>{{ row.h_ref.toFixed(4) }}</td>
+                    <td :class="Math.abs(row.deviation) <= 10 ? 'cell-pass' : 'cell-fail'">
+                      {{ row.deviation > 0 ? '+' : '' }}{{ row.deviation.toFixed(1) }}%
+                    </td>
+                    <td :class="row.pass === 'PASS' ? 'cell-pass' : 'cell-fail'">
+                      {{ row.pass === 'PASS' ? 'PASS ✓' : 'FAIL ✗' }}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- 对比图 -->
+            <div v-if="icrp116ChartUrl" class="s3-chart-area">
+              <h4>对比折线图</h4>
+              <img :src="icrp116ChartUrl" alt="ICRP-116 对比图" class="s3-chart-img" />
+            </div>
+          </div>
+
         </div>
       </div>
 
@@ -2524,6 +2597,13 @@ export default {
         elapsedSec: 0, logs: [], resultFiles: [],
       },
       icrp116PollTimer: null,
+      // Step 3 对比分析
+      icrp116Step3Loading: false,
+      icrp116Step3Done:    false,
+      icrp116Step3Result:  null,
+      icrp116Step3Log:     [],
+      icrp116ChartLoading: false,
+      icrp116ChartUrl:     null,
 
       // 中子AP ICRP剂量对比
       neutronPhantomType: 'AM',
@@ -4025,6 +4105,57 @@ export default {
         }
       } catch (err) {
         console.error('取消失败:', err.message);
+      }
+    },
+
+    // ── ICRP-116 Step 3：计算 h_E 并与参考值对比 ──────────────
+    async runIcrp116Step3() {
+      if (this.icrp116Step3Loading) return;
+      this.icrp116Step3Loading = true;
+      this.icrp116Step3Done    = false;
+      this.icrp116Step3Result  = null;
+      this.icrp116Step3Log     = [];
+      this.icrp116ChartUrl     = null;
+      const pushLog = (text, type = '') => {
+        this.icrp116Step3Log.push({
+          time: new Date().toLocaleTimeString('zh-CN'),
+          text, type,
+        });
+      };
+      try {
+        pushLog('▶ 启动 Step3 分析脚本...');
+        const { data } = await axios.post(`${API_BASE}/api/icrp116/run-step3`);
+        if (data.logs && data.logs.length) {
+          data.logs.forEach(l => pushLog(l));
+        }
+        if (data.success) {
+          this.icrp116Step3Result = data.results;
+          this.icrp116Step3Done   = true;
+          pushLog('✓ 计算完成，可点击「生成对比图」查看图表', 'success');
+        } else {
+          pushLog('[错误] ' + data.message, 'error');
+        }
+      } catch (err) {
+        pushLog('[错误] 请求失败: ' + err.message, 'error');
+      } finally {
+        this.icrp116Step3Loading = false;
+      }
+    },
+
+    async genIcrp116Chart() {
+      if (this.icrp116ChartLoading) return;
+      this.icrp116ChartLoading = true;
+      try {
+        const { data } = await axios.get(`${API_BASE}/api/icrp116/chart-image`);
+        if (data.success) {
+          this.icrp116ChartUrl = 'data:image/png;base64,' + data.imageBase64;
+        } else {
+          alert('加载图表失败：' + data.message);
+        }
+      } catch (err) {
+        alert('加载图表失败：' + err.message);
+      } finally {
+        this.icrp116ChartLoading = false;
       }
     },
 
@@ -7314,4 +7445,72 @@ export default {
 .icrp116-result-files { margin: 0.5rem 0 0 1rem; font-size: 0.88rem; }
 .btn-danger { background: #e53e3e; color: #fff; border: none; padding: 0.4rem 1rem; border-radius: 6px; cursor: pointer; }
 .btn-danger:hover { background: #c53030; }
+
+/* ─── ICRP-116 Step3 对比分析模块 ────────────────────────────── */
+.icrp116-step3-module {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 1.5rem 1.8rem;
+  margin-top: 1.5rem;
+}
+.icrp116-step3-module .s3-header h3 {
+  font-size: 1.05rem;
+  color: #2d3748;
+  margin: 0 0 0.3rem;
+  font-weight: 700;
+}
+.icrp116-step3-module .s3-header p {
+  color: #718096;
+  font-size: 0.88rem;
+  margin: 0 0 1rem;
+}
+.s3-btn-row {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+.s3-log {
+  background: #1a202c;
+  border-radius: 6px;
+  padding: 0.6rem 0.9rem;
+  max-height: 160px;
+  overflow-y: auto;
+  margin-bottom: 1rem;
+  font-family: monospace;
+}
+.s3-log-entry { display: flex; gap: 0.6rem; font-size: 0.8rem; padding: 1px 0; }
+.s3-log-time  { color: #718096; white-space: nowrap; }
+.s3-log-msg   { color: #e2e8f0; word-break: break-all; }
+.s3-log-entry.success .s3-log-msg { color: #68d391; }
+.s3-log-entry.error   .s3-log-msg { color: #fc8181; }
+.s3-results h4 { font-size: 0.95rem; color: #4a5568; margin: 0 0 0.6rem; font-weight: 600; }
+.s3-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  margin-bottom: 1.2rem;
+}
+.s3-table th {
+  background: #edf2f7;
+  padding: 0.5rem 0.8rem;
+  text-align: center;
+  color: #4a5568;
+  font-weight: 600;
+  border: 1px solid #e2e8f0;
+}
+.s3-table td {
+  padding: 0.45rem 0.8rem;
+  text-align: center;
+  border: 1px solid #e2e8f0;
+}
+.s3-chart-area { margin-top: 1rem; }
+.s3-chart-area h4 { font-size: 0.95rem; color: #4a5568; margin: 0 0 0.6rem; font-weight: 600; }
+.s3-chart-img {
+  max-width: 100%;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  display: block;
+}
 </style>
