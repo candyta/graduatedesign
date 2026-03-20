@@ -148,10 +148,11 @@ def load_data(mask_path: str, zip_path: str):
 # MCNP5 输入文件生成
 # ═══════════════════════════════════════════════════════════════
 
-def _fmt_fill_array(fill_vals: np.ndarray, per_line: int = 20) -> str:
+def _fmt_fill_array(fill_vals: np.ndarray, per_line: int = 15) -> str:
     """
     将 fill 数组格式化为 MCNP5 续行格式。
     fill_vals : 1-D array，顺序为 (iz slow, iy mid, ix fast)
+    per_line=15 保证 3 位 organ_id 时每行不超过 80 列 (5+15×4-1=64)。
     """
     lines = []
     total = len(fill_vals)
