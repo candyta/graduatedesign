@@ -205,7 +205,7 @@ def run_one(case: dict, args, log_fh):
         size_mb = dst_meshtal.stat().st_size / 1e6
         log(f"  [OK] meshtal 备份: {dst_meshtal}  ({size_mb:.1f} MB)", log_fh)
 
-    log(f"  ✓ E={energy:.3f} MeV 完成\n", log_fh)
+    log(f"  OK E={energy:.3f} MeV 完成\n", log_fh)
     return True
 
 
@@ -223,7 +223,7 @@ def _try_build_zip(zip_path: Path, am_dir: Path, log_fh) -> bool:
         for fname in needed:
             log(f"[准备]   打包: {fname}", log_fh)
             zf.write(str(am_dir / fname), f"AM/{fname}")
-    log(f"[准备] ✓ 已生成 {zip_path}", log_fh)
+    log(f"[准备] OK 已生成 {zip_path}", log_fh)
     return True
 
 
@@ -310,7 +310,7 @@ def ensure_prerequisites(args, cases, log_fh) -> bool:
         log(f"[错误] Step2 完成后仍缺少文件: {still_missing}", log_fh)
         return False
 
-    log("[准备] ✓ 所有 .inp 文件已生成", log_fh)
+    log("[准备] OK 所有 .inp 文件已生成", log_fh)
     return True
 
 
@@ -378,7 +378,7 @@ def main():
             log(f"[警告] {len(failed)} 个能量点失败: {failed}", log_fh)
             log("  提示：检查 g5.bat 路径、MCNP5 核数据库、inp 文件格式", log_fh)
         else:
-            log("✓ 全部完成！运行第三步脚本进行 ICRP-116 对比分析。", log_fh)
+            log("OK 全部完成！运行第三步脚本进行 ICRP-116 对比分析。", log_fh)
 
     # 最终打印
     print("\n运行结果汇总:")
@@ -386,7 +386,7 @@ def main():
         print(f"  E={e:.3f} MeV : {status}")
 
     if not failed:
-        print(f"\n✓ 所有 fluence npy 文件已保存到 {args.out_dir}")
+        print(f"\nOK 所有 fluence npy 文件已保存到 {args.out_dir}")
         print("  下一步: python mcnp_icrp_step3_compare.py")
     else:
         sys.exit(1)
