@@ -60,7 +60,7 @@ def extract_mesh_tally(mesh_file: str, grid_shape: tuple = None) -> np.ndarray:
     for i, line in enumerate(lines):
         if 'Mesh Tally Number' in line and '14' in line:
             in_mesh14 = True
-            print(f"✓ 找到Mesh Tally 14 在第{i+1}行")
+            print(f"OK 找到Mesh Tally 14 在第{i+1}行")
             continue
         if in_mesh14 and 'Mesh Tally Number' in line and '14' not in line:
             break
@@ -104,7 +104,7 @@ def extract_mesh_tally(mesh_file: str, grid_shape: tuple = None) -> np.ndarray:
         nx = len(dir_values['X']) - 1
         ny = len(dir_values['Y']) - 1
         nz = len(dir_values['Z']) - 1
-        print(f"✓ 从meshtal头部读取网格: {nx}×{ny}×{nz} (自动检测)")
+        print(f"OK 从meshtal头部读取网格: {nx}×{ny}×{nz} (自动检测)")
     elif grid_shape is not None:
         nx, ny, nz = grid_shape
         print(f"[警告] 未能从meshtal头部读取网格，使用传入的 grid_shape: {nx}×{ny}×{nz}")
@@ -181,7 +181,7 @@ def extract_mesh_tally(mesh_file: str, grid_shape: tuple = None) -> np.ndarray:
     dose_array = np.array(values, dtype=np.float64).reshape((nx, ny, nz)).transpose(2, 1, 0)
     
     non_zero = np.count_nonzero(dose_array)
-    print("\n✓ 数组重塑完成")
+    print("\nOK 数组重塑完成")
     print(f"  形状(nz,ny,nx): {dose_array.shape}")
     print(f"  非零值: {non_zero} ({non_zero/dose_array.size*100:.1f}%)")
     print(f"  数值范围: {dose_array.min():.2e} ~ {dose_array.max():.2e}")

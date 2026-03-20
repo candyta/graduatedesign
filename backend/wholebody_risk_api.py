@@ -178,16 +178,16 @@ def test_modules():
     for module_name in modules_to_test:
         try:
             __import__(module_name)
-            print(f"✓ {module_name}")
+            print(f"OK {module_name}")
         except ImportError as e:
-            print(f"✗ {module_name}: {e}")
+            print(f"X {module_name}: {e}")
             all_ok = False
     
     if all_ok:
-        print("\n✓ 所有模块导入成功！")
+        print("\nOK 所有模块导入成功！")
         return 0
     else:
-        print("\n✗ 部分模块导入失败")
+        print("\nX 部分模块导入失败")
         return 1
 
 
@@ -220,10 +220,10 @@ def quick_test(icrp_data_path: str):
     result = run_assessment(str(temp_dir), icrp_data_path)
     
     if result == 0:
-        print("\n✓ 快速测试成功！")
+        print("\nOK 快速测试成功！")
         print(f"结果已保存到: {temp_dir}")
     else:
-        print("\n✗ 快速测试失败")
+        print("\nX 快速测试失败")
     
     return result
 

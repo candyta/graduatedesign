@@ -159,7 +159,7 @@ class MCNP5InputGenerator:
         
         self.cell_cards.extend(cards)
         
-        print(f"✓ Lattice几何生成完成")
+        print(f"OK Lattice几何生成完成")
         print(f"  Lattice尺寸: {nx} × {ny} × {nz}")
         print(f"  单元尺寸: {vx_cm:.4f} × {vy_cm:.4f} × {vz_cm:.4f} cm")
         
@@ -223,7 +223,7 @@ class MCNP5InputGenerator:
         
         self.cell_cards.extend(cards)
         
-        print(f"✓ RPP几何生成完成")
+        print(f"OK RPP几何生成完成")
         print(f"  器官数: {len(unique_organs[:20])}")
         
         return cards
@@ -307,7 +307,7 @@ class MCNP5InputGenerator:
         
         self.data_cards.extend(cards)
         
-        print(f"✓ 材料定义生成完成")
+        print(f"OK 材料定义生成完成")
         print(f"  材料数: {len(unique_organs) - 1}")  # 排除空气
         
         return cards
@@ -360,7 +360,7 @@ class MCNP5InputGenerator:
         
         self.data_cards.extend(cards)
         
-        print("✓ 中子源定义完成")
+        print("OK 中子源定义完成")
         
         return cards
     
@@ -402,7 +402,7 @@ class MCNP5InputGenerator:
         
         self.data_cards.extend(cards)
         
-        print(f"✓ 计分卡生成完成")
+        print(f"OK 计分卡生成完成")
         print(f"  监测器官数: {len(organs_of_interest[:100])}")
         
         return cards
@@ -464,7 +464,7 @@ class MCNP5InputGenerator:
             f.write("nps 1000000  $ number of particles\n")
             f.write("prdmp 100000 100000 1 1\n")
         
-        print(f"✓ MCNP5输入文件已生成")
+        print(f"OK MCNP5输入文件已生成")
         print(f"  文件大小: {output_path.stat().st_size / 1024:.2f} KB")
 
 

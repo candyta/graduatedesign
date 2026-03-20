@@ -260,7 +260,7 @@ def main():
     with open(meta_path, 'w', encoding='utf-8') as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
     print(f"\n[保存] 元数据    → {meta_path}")
-    print("\n✓ 第一步完成，可运行第二步生成 MCNP5 输入文件。")
+    print("\nOK 第一步完成，可运行第二步生成 MCNP5 输入文件。")
 
 
 if __name__ == '__main__':

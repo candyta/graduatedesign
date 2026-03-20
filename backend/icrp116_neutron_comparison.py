@@ -470,11 +470,11 @@ def print_comparison_table(comparison: dict, phantom_type: str, energy_MeV: floa
         wt_s   = f"{wt:.4f}"   if wt is not None  else "  -"
         # 颜色标记（ANSI）
         if dev is not None and abs(dev) <= 5:
-            tag = '✓'
+            tag = 'OK'
         elif dev is not None and abs(dev) <= 15:
             tag = '△'
         else:
-            tag = '✗' if dev is not None else '-'
+            tag = 'X' if dev is not None else '-'
         print(f"{organ:<22} {ref_v:>12.4f} {calc_v:>12.4f} {dev_s:>8}  {wt_s:>6}  {tag}")
     print(f"{'='*70}\n")
 

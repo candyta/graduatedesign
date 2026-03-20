@@ -29,13 +29,13 @@ failed = []
 for module_name in modules:
     try:
         module = __import__(module_name)
-        print(f"✓ {module_name}")
+        print(f"OK {module_name}")
         success.append(module_name)
     except ImportError as e:
-        print(f"✗ {module_name}: {e}")
+        print(f"X {module_name}: {e}")
         failed.append((module_name, str(e)))
     except Exception as e:
-        print(f"✗ {module_name}: {type(e).__name__}: {e}")
+        print(f"X {module_name}: {type(e).__name__}: {e}")
         failed.append((module_name, str(e)))
 
 print("\n" + "="*60)
@@ -48,5 +48,5 @@ if failed:
         print(f"  {name}: {error}")
     sys.exit(1)
 else:
-    print("\n✓ 所有模块导入成功！")
+    print("\nOK 所有模块导入成功！")
     sys.exit(0)

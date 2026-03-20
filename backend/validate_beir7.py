@@ -543,22 +543,22 @@ def print_text(results):
     section("1. ERR 公式基准点  ERR(D=1Gy, e=30) == β")
     print("  原理: exp(γ×0)=1，故 ERR = β\n")
     for r in results['err_check']:
-        sm = "✓" if r['male_pass'] else "✗"
-        sf = "✓" if r['female_pass'] else "✗"
+        sm = "OK" if r['male_pass'] else "X"
+        sf = "OK" if r['female_pass'] else "X"
         print(f"  {r['organ']:<12}  男 期望={r['male_expected']:.2f} 得到={r['male_got']:.4f} {sm}    "
               f"女 期望={r['female_expected']:.2f} 得到={r['female_got']:.4f} {sf}")
     ok = results['summary']['err_formula_ok']
-    print(f"\n  结论: {'全部通过 ✓' if ok else '存在错误 ✗'}")
+    print(f"\n  结论: {'全部通过 OK' if ok else '存在错误 X'}")
 
     section("2. EAR 公式基准点  EAR(D=1Gy, e=30, a=60) == β")
     print("  原理: exp(γ×0)=1, (60/60)^η=1，故 EAR = β\n")
     for r in results['ear_check']:
-        sm = "✓" if r['male_pass'] else "✗"
-        sf = "✓" if r['female_pass'] else "✗"
+        sm = "OK" if r['male_pass'] else "X"
+        sf = "OK" if r['female_pass'] else "X"
         print(f"  {r['organ']:<12}  男 期望={r['male_expected']:.2f} 得到={r['male_got']:.4f} {sm}    "
               f"女 期望={r['female_expected']:.2f} 得到={r['female_got']:.4f} {sf}")
     ok = results['summary']['ear_formula_ok']
-    print(f"\n  结论: {'全部通过 ✓' if ok else '存在错误 ✗'}")
+    print(f"\n  结论: {'全部通过 OK' if ok else '存在错误 X'}")
 
     section("3. 年龄调整因子（肺癌 γ=-0.40）")
     print(f"  {'暴露年龄':>8}  {'调整因子':>10}  说明")
@@ -582,12 +582,12 @@ def print_text(results):
 
     section("6. 问题汇总")
     for issue in results['issues']:
-        icon = "✓ [已修复]" if issue['severity'] == 'fixed' else "ℹ [说明]"
+        icon = "OK [已修复]" if issue['severity'] == 'fixed' else "ℹ [说明]"
         print(f"\n  {icon} 问题{issue['id']}: {issue['title']}")
         print(f"    {issue['description']}")
         print(f"    影响: {issue['impact']}")
 
-    print(f"\n  ERR/EAR 公式结构: ✓  参数值: ✓  修复项: {results['summary']['fixes_applied']} 个\n")
+    print(f"\n  ERR/EAR 公式结构: OK  参数值: OK  修复项: {results['summary']['fixes_applied']} 个\n")
 
 
 if __name__ == '__main__':

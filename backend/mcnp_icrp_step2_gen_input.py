@@ -382,7 +382,7 @@ def main():
         out_path = out_dir / fname
         generate_input_file(mask, organs, media, e, out_path)
 
-    print(f'\n✓ 第二步完成，输入文件位于 {out_dir}/')
+    print(f'\nOK 第二步完成，输入文件位于 {out_dir}/')
     print('  后续: 用 MCNP5 运行各文件，再执行第三步提取器官剂量并与 ICRP-116 对比。')
 
 

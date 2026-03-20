@@ -611,7 +611,7 @@ class BEIRVII_RiskEngine:
             'description': '全身累积二次癌风险'
         }
 
-        print(f"\n✓ 风险评估完成")
+        print(f"\nOK 风险评估完成")
         print(f"  评估器官/部位: {len(results) - 1}")
         print(f"  总体风险: {total_risk:.4f}%")
         
@@ -680,7 +680,7 @@ class BEIRVII_RiskEngine:
         with open(json_path, 'w') as f:
             json.dump(risk_results, f, indent=2, ensure_ascii=False)
         
-        print(f"✓ 报告已生成:")
+        print(f"OK 报告已生成:")
         print(f"  文本报告: {output_path}")
         print(f"  JSON数据: {json_path}")
 

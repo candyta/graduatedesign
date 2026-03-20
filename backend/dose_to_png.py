@@ -548,7 +548,7 @@ def save_overlay_slices(dose_data, ct_data, output_dir, view_name,
         img.save(str(out_path), format='PNG')
         saved_count += 1
 
-    print(f"  ✓ 已保存 {saved_count} 张切片到: {view_dir}")
+    print(f"  OK 已保存 {saved_count} 张切片到: {view_dir}")
     return saved_count
 
 
@@ -810,7 +810,7 @@ def process_dose_3d(npy_path, output_dir, ref_nii_path,
 
     # ==================== 8. 生成汇总信息 ====================
     print("\n" + "="*60)
-    print("✓ 全身剂量分布可视化完成！")
+    print("OK 全身剂量分布可视化完成！")
     print("="*60)
     print(f"输出目录: {output_dir}")
     print(f"  - 轴位面: {axial_count} 张切片")

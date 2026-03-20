@@ -77,7 +77,7 @@ class ICRP110Phantom:
         self.load_voxel_data()
         self.load_spongiosa()
         self.load_blood_ratios()
-        print("✓ 所有数据加载完成！")
+        print("OK 所有数据加载完成！")
         
     def load_organs(self):
         """读取器官定义文件"""
@@ -112,7 +112,7 @@ class ICRP110Phantom:
                 except (ValueError, IndexError) as e:
                     continue
         
-        print(f"✓ 加载了 {len(self.organs)} 个器官定义")
+        print(f"OK 加载了 {len(self.organs)} 个器官定义")
         
     def load_media(self):
         """读取介质组成定义文件"""
@@ -157,7 +157,7 @@ class ICRP110Phantom:
                 except (ValueError, IndexError) as e:
                     continue
         
-        print(f"✓ 加载了 {len(self.media)} 种介质定义")
+        print(f"OK 加载了 {len(self.media)} 种介质定义")
     
     def load_voxel_data(self):
         """读取体素数据（器官ID数组）"""
@@ -189,7 +189,7 @@ class ICRP110Phantom:
                         idx += 1
         
         total_voxels = ncol * nrow * nsli
-        print(f"✓ 加载了 {total_voxels:,} 个体素")
+        print(f"OK 加载了 {total_voxels:,} 个体素")
         print(f"  非零体素: {np.count_nonzero(self.voxel_data):,}")
         print(f"  唯一器官ID数: {len(np.unique(self.voxel_data))}")
         
@@ -218,7 +218,7 @@ class ICRP110Phantom:
                 except (ValueError, IndexError):
                     continue
         
-        print(f"✓ 加载了 {len(self.spongiosa)} 个骨松质区域")
+        print(f"OK 加载了 {len(self.spongiosa)} 个骨松质区域")
     
     def load_blood_ratios(self):
         """读取血液比例数据"""
@@ -239,7 +239,7 @@ class ICRP110Phantom:
                 except (ValueError, IndexError):
                     continue
         
-        print(f"✓ 加载了 {len(self.blood_ratios)} 个器官的血液比例")
+        print(f"OK 加载了 {len(self.blood_ratios)} 个器官的血液比例")
     
     def get_organ_volume(self, organ_id: int) -> float:
         """
@@ -338,7 +338,7 @@ class ICRP110Phantom:
                 if volume > 0:
                     f.write(f"{organ_id:<5} {name:<40} {volume:>10.2f}  {mass:>10.2f}\n")
         
-        print(f"\n✓ 摘要已导出到: {output_file}")
+        print(f"\nOK 摘要已导出到: {output_file}")
 
 
 def test_loader():

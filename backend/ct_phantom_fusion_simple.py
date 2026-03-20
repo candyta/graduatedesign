@@ -65,7 +65,7 @@ class CTPhantomFusion:
         except Exception:
             pass
 
-        print(f"✓ CT影像尺寸: {self.ct_data.shape}")
+        print(f"OK CT影像尺寸: {self.ct_data.shape}")
         print(f"  体素间距: {self.ct_spacing} mm")
         print(f"  数值范围: [{self.ct_data.min():.1f}, {self.ct_data.max():.1f}]")
 
@@ -85,7 +85,7 @@ class CTPhantomFusion:
         self.ct_data = np.load(npy_path)
         self.ct_spacing = spacing
         
-        print(f"✓ CT影像尺寸: {self.ct_data.shape}")
+        print(f"OK CT影像尺寸: {self.ct_data.shape}")
         print(f"  体素间距: {spacing} mm")
         print(f"  数值范围: [{self.ct_data.min():.1f}, {self.ct_data.max():.1f}]")
     
@@ -105,7 +105,7 @@ class CTPhantomFusion:
         self.ct_data = ct_array
         self.ct_spacing = spacing
         
-        print(f"✓ CT影像尺寸: {self.ct_data.shape}")
+        print(f"OK CT影像尺寸: {self.ct_data.shape}")
         print(f"  数值范围: [{self.ct_data.min():.1f}, {self.ct_data.max():.1f}]")
         
     def load_tumor_mask(self, mask_path: str):
@@ -127,7 +127,7 @@ class CTPhantomFusion:
         
         tumor_volume = np.sum(self.tumor_mask) * np.prod(self.ct_spacing) / 1000
         
-        print(f"✓ 肿瘤掩膜尺寸: {self.tumor_mask.shape}")
+        print(f"OK 肿瘤掩膜尺寸: {self.tumor_mask.shape}")
         print(f"  肿瘤体积: {tumor_volume:.2f} cm³")
         print(f"  肿瘤体素数: {np.sum(self.tumor_mask)}")
         
@@ -216,7 +216,7 @@ class CTPhantomFusion:
             'z_range': [z_start, z_end]
         }
         
-        print(f"✓ 配准参数:")
+        print(f"OK 配准参数:")
         print(f"  平移: {translation}")
         print(f"  目标位置（体模坐标）: {target_center}")
         print(f"  Z轴范围: {z_start} - {z_end}")
@@ -472,7 +472,7 @@ class CTPhantomFusion:
         """平滑器官边界"""
         print("\n平滑器官边界...")
         smoothed = ndimage.median_filter(fusion_data, size=3)
-        print("✓ 边界平滑完成")
+        print("OK 边界平滑完成")
         return smoothed
     
     def export_fusion_result(self,
@@ -512,7 +512,7 @@ class CTPhantomFusion:
         with open(metadata_path, 'w') as f:
             json.dump(metadata_enhanced, f, indent=2)
         
-        print(f"\n✓ 融合结果已保存:")
+        print(f"\nOK 融合结果已保存:")
         print(f"  数据: {output_path}")
         print(f"  元数据: {metadata_path}")
 

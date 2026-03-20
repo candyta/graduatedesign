@@ -182,7 +182,7 @@ class BNCTRiskAssessmentPipeline:
         # 保存缩放体模
         scaled_phantom_path = self.output_dir / f"scaled_phantom_{phantom_type}.npy"
         np.save(scaled_phantom_path, scaled_voxels)
-        print(f"\n✓ 缩放体模已保存: {scaled_phantom_path}")
+        print(f"\nOK 缩放体模已保存: {scaled_phantom_path}")
         
         # ===== Step 3: CT融合（如果提供了CT） =====
         print("\n" + "-"*70)
@@ -221,7 +221,7 @@ class BNCTRiskAssessmentPipeline:
             # 保存融合体模
             fused_phantom_path = self.output_dir / f"fused_phantom_{phantom_type}.npy"
             np.save(fused_phantom_path, fused_voxels)
-            print(f"\n✓ 融合体模已保存: {fused_phantom_path}")
+            print(f"\nOK 融合体模已保存: {fused_phantom_path}")
             
             final_phantom = fused_voxels
         else:
@@ -272,7 +272,7 @@ class BNCTRiskAssessmentPipeline:
         print("-"*70)
         
         if dose_npy_path and Path(dose_npy_path).exists():
-            print(f"✓ 使用MCNP真实剂量数据: {dose_npy_path}")
+            print(f"OK 使用MCNP真实剂量数据: {dose_npy_path}")
             self.organ_doses = self._extract_organ_doses_from_mcnp(
                 dose_npy_path,
                 tumor_location,
@@ -327,7 +327,7 @@ class BNCTRiskAssessmentPipeline:
         elapsed_time = time.time() - start_time
         
         print("\n" + "="*70)
-        print("✓ 完整风险评估流程完成！")
+        print("OK 完整风险评估流程完成！")
         print("="*70)
         print(f"总耗时: {elapsed_time:.2f} 秒")
         print(f"\n输出文件:")
@@ -567,7 +567,7 @@ class BNCTRiskAssessmentPipeline:
 
         print(f"  年龄调整系数: {age_factor:.3f}")
         print(f"  体型修正系数: {anatomy_factor:.3f}  (患者 {weight:.1f}kg/{height:.1f}cm vs 参考 {REF_WEIGHT}kg/{REF_HEIGHT}cm)")
-        print(f"✓ 生成了 {len(adjusted_doses)} 个器官的剂量数据")
+        print(f"OK 生成了 {len(adjusted_doses)} 个器官的剂量数据")
 
         return adjusted_doses
     
@@ -625,7 +625,7 @@ class BNCTRiskAssessmentPipeline:
         with open(viz_path, 'w', encoding='utf-8') as f:
             json.dump(viz_data, f, indent=2, ensure_ascii=False)
         
-        print(f"✓ 可视化数据已保存: {viz_path}")
+        print(f"OK 可视化数据已保存: {viz_path}")
         
         return viz_data
 
@@ -673,7 +673,7 @@ def main():
               f"(剂量: {item['dose_sv']:.4f} Sv)")
     
     print("\n" + "="*70)
-    print("✓ 示例运行完成！")
+    print("OK 示例运行完成！")
     print("="*70)
 
 
