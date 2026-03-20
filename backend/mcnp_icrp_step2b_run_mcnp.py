@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
+r"""
 MCNP ICRP-110 验证 — Step 2b：在 Windows 上运行 MCNP5（4个能量点）
 ====================================================================
 复用现有 g5.bat + extract_dose_from_mcnp.py 基础设施，
@@ -33,6 +33,12 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+
+# ─── 前置步骤脚本 / 数据路径（相对于 backend 目录） ─────────────
+STEP1_SCRIPT  = "mcnp_icrp_step1_organ_mask.py"
+STEP2_SCRIPT  = "mcnp_icrp_step2_gen_input.py"
+ICRP110_ZIP   = os.path.join("P110 data V1.2", "AM.zip")
+ORGAN_MASK    = os.path.join("icrp_validation", "organ_mask_127x63x111.npy")
 
 # ─── 默认路径（与现有 run_batch.py / g5.bat 体系一致） ───────────
 DEFAULT_G5_BAT    = r"D:\LANL\g5.bat"
@@ -202,6 +208,88 @@ def run_one(case: dict, args, log_fh):
     return True
 
 
+def run_subprocess_logged(cmd, cwd, log_fh) -> int:
+    """运行子进程并将 stdout/stderr 合并实时记录，返回退出码。"""
+    proc = subprocess.Popen(
+        cmd, cwd=cwd,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, encoding="utf-8", errors="replace",
+    )
+    for line in proc.stdout:
+        log(line.rstrip(), log_fh)
+    proc.wait()
+    return proc.returncode
+
+
+def ensure_prerequisites(args, cases, log_fh) -> bool:
+    """
+    检查所需 .inp 文件是否存在；若缺失，自动运行 Step1 和/或 Step2 补全。
+    返回 True 表示准备就绪，False 表示出错。
+    """
+    backend  = args.backend_dir
+    inp_dir  = Path(args.inp_dir)
+    needed   = [c["inp_name"] for c in cases]
+    missing  = [n for n in needed if not (inp_dir / n).exists()]
+
+    if not missing:
+        log(f"[准备] 所有 {len(needed)} 个 .inp 文件已存在，跳过生成步骤", log_fh)
+        return True
+
+    log(f"[准备] 缺少 {len(missing)} 个 .inp 文件: {missing}", log_fh)
+    log("[准备] 将自动运行 Step1/Step2 生成输入文件 ...", log_fh)
+
+    zip_path  = Path(backend) / ICRP110_ZIP
+    mask_path = Path(backend) / ORGAN_MASK
+
+    # ── Step 1：生成器官掩膜（仅当掩膜不存在时） ──────────────────
+    if not mask_path.exists():
+        if not zip_path.exists():
+            log(f"[错误] 找不到 ICRP-110 数据包: {zip_path}", log_fh)
+            log("  请将 AM.zip 放在 backend/P110 data V1.2/ 目录下", log_fh)
+            return False
+
+        log(f"[准备] Step1 → 生成器官掩膜: {mask_path}", log_fh)
+        rc = run_subprocess_logged(
+            [sys.executable,
+             str(Path(backend) / STEP1_SCRIPT),
+             "--data-zip", str(zip_path),
+             "--out-dir",  str(mask_path.parent)],
+            cwd=backend, log_fh=log_fh,
+        )
+        if rc != 0:
+            log(f"[错误] Step1 失败 (退出码={rc})", log_fh)
+            return False
+    else:
+        log(f"[准备] 器官掩膜已存在: {mask_path}", log_fh)
+
+    # ── Step 2：生成 .inp 文件 ─────────────────────────────────────
+    if not zip_path.exists():
+        log(f"[错误] 找不到 ICRP-110 数据包: {zip_path}", log_fh)
+        return False
+
+    log(f"[准备] Step2 → 生成 .inp 文件到: {inp_dir}", log_fh)
+    rc = run_subprocess_logged(
+        [sys.executable,
+         str(Path(backend) / STEP2_SCRIPT),
+         "--mask",    str(mask_path),
+         "--zip",     str(zip_path),
+         "--out-dir", str(inp_dir)],
+        cwd=backend, log_fh=log_fh,
+    )
+    if rc != 0:
+        log(f"[错误] Step2 失败 (退出码={rc})", log_fh)
+        return False
+
+    # 最终确认
+    still_missing = [n for n in needed if not (inp_dir / n).exists()]
+    if still_missing:
+        log(f"[错误] Step2 完成后仍缺少文件: {still_missing}", log_fh)
+        return False
+
+    log("[准备] ✓ 所有 .inp 文件已生成", log_fh)
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="ICRP-116 验证：批量运行 MCNP5（4 个 AP 光子能量点）"
@@ -246,6 +334,12 @@ def main():
 
     with open(log_path, "w", encoding="utf-8") as log_fh:
         log(f"开始运行，共 {len(cases)} 个能量点", log_fh)
+
+        # 确保 .inp 文件存在（必要时自动运行 Step1 + Step2）
+        if not ensure_prerequisites(args, cases, log_fh):
+            log("[致命] 前置步骤失败，验证中止", log_fh)
+            sys.exit(1)
+
         results = {}
         for case in cases:
             ok = run_one(case, args, log_fh)
