@@ -32,6 +32,7 @@ import shutil
 import subprocess
 import sys
 import time
+import zipfile
 from pathlib import Path
 
 # ─── 前置步骤脚本 / 数据路径（相对于 backend 目录） ─────────────
@@ -208,6 +209,24 @@ def run_one(case: dict, args, log_fh):
     return True
 
 
+def _try_build_zip(zip_path: Path, am_dir: Path, log_fh) -> bool:
+    """
+    若 AM.zip 不存在，但 AM/ 目录已有解压文件，则自动打包（ZIP_STORED 无压缩）。
+    需要: AM.dat, AM_organs.dat, AM_media.dat
+    """
+    needed = ["AM.dat", "AM_organs.dat", "AM_media.dat"]
+    if not am_dir.is_dir() or not all((am_dir / f).exists() for f in needed):
+        return False
+    log(f"[准备] 找到 {am_dir}，自动打包为 {zip_path} ...", log_fh)
+    zip_path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(str(zip_path), 'w', zipfile.ZIP_STORED) as zf:
+        for fname in needed:
+            log(f"[准备]   打包: {fname}", log_fh)
+            zf.write(str(am_dir / fname), f"AM/{fname}")
+    log(f"[准备] ✓ 已生成 {zip_path}", log_fh)
+    return True
+
+
 def run_subprocess_logged(cmd, cwd, log_fh) -> int:
     """运行子进程并将 stdout/stderr 合并实时记录，返回退出码。"""
     proc = subprocess.Popen(
@@ -241,11 +260,20 @@ def ensure_prerequisites(args, cases, log_fh) -> bool:
     zip_path  = Path(backend) / ICRP110_ZIP
     mask_path = Path(backend) / ORGAN_MASK
 
+    # ── 若 zip 不存在，尝试从 AM/ 目录自动打包 ────────────────────
+    if not zip_path.exists():
+        am_dir = Path(backend) / "AM"
+        if not _try_build_zip(zip_path, am_dir, log_fh):
+            log(f"[错误] 找不到 ICRP-110 数据包: {zip_path}", log_fh)
+            log(f"  也未找到解压目录: {am_dir}", log_fh)
+            log("  请将 AM.zip 放在 backend/P110 data V1.2/ 目录下", log_fh)
+            log("  或将 AM.dat / AM_organs.dat / AM_media.dat 放在 backend/AM/ 目录下", log_fh)
+            return False
+
     # ── Step 1：生成器官掩膜（仅当掩膜不存在时） ──────────────────
     if not mask_path.exists():
         if not zip_path.exists():
             log(f"[错误] 找不到 ICRP-110 数据包: {zip_path}", log_fh)
-            log("  请将 AM.zip 放在 backend/P110 data V1.2/ 目录下", log_fh)
             return False
 
         log(f"[准备] Step1 → 生成器官掩膜: {mask_path}", log_fh)
@@ -263,10 +291,6 @@ def ensure_prerequisites(args, cases, log_fh) -> bool:
         log(f"[准备] 器官掩膜已存在: {mask_path}", log_fh)
 
     # ── Step 2：生成 .inp 文件 ─────────────────────────────────────
-    if not zip_path.exists():
-        log(f"[错误] 找不到 ICRP-110 数据包: {zip_path}", log_fh)
-        return False
-
     log(f"[准备] Step2 → 生成 .inp 文件到: {inp_dir}", log_fh)
     rc = run_subprocess_logged(
         [sys.executable,
