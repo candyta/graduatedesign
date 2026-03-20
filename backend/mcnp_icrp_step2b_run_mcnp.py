@@ -69,7 +69,13 @@ ENERGY_CASES = [
 def log(msg, log_fh=None):
     ts = time.strftime('%H:%M:%S')
     line = f"[{ts}] {msg}"
-    print(line, flush=True)
+    try:
+        print(line, flush=True)
+    except UnicodeEncodeError:
+        safe = line.encode(sys.stdout.encoding or "utf-8", errors="replace").decode(
+            sys.stdout.encoding or "utf-8", errors="replace"
+        )
+        print(safe, flush=True)
     if log_fh:
         log_fh.write(line + "\n")
         log_fh.flush()
