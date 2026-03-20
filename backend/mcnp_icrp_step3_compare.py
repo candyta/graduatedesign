@@ -31,6 +31,10 @@ import sys
 import zipfile
 from pathlib import Path
 
+# Windows GBK 终端下强制 UTF-8 输出，避免含特殊字符的 print 崩溃
+if sys.stdout.encoding and sys.stdout.encoding.lower() not in ('utf-8', 'utf8'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+
 import numpy as np
 
 # ─── 体模参数（与 Step 1/2 保持完全一致） ────────────────────────
@@ -327,7 +331,7 @@ def main():
     print(f"  out_dir  : {out_dir}")
     print(f"  mask     : {mask_path}")
     print(f"  zip      : {zip_path}")
-    print(f"  beam_area: {BEAM_AREA:.2f} cm²\n")
+    print(f"  beam_area: {BEAM_AREA:.2f} cm^2\n")
 
     print("[1/3] 加载器官掩膜 ...")
     mask = np.load(mask_path)
