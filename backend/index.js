@@ -2435,6 +2435,7 @@ app.post('/api/icrp116/start-validation', (req, res) => {
         '--inp-dir',     ICRP116_INP_DIR,
         '--out-dir',     ICRP116_OUT_DIR,
         '--backend-dir', __dirname,
+        '--xsdir',       String.raw`D:\LANL\xsdir`,   // 用于自动检测光子截面库
     ];
     if (Array.isArray(energies) && energies.length > 0) {
         args.push('--only', ...energies.map(String));
@@ -2618,12 +2619,48 @@ app.get('/api/icrp116/chart-image', (req, res) => {
     }
 });
 
+/**
+ * GET /api/icrp116/check-xsdir
+ * 扫描 D:\LANL\xsdir，返回可用光子截面库列表
+ */
+app.get('/api/icrp116/check-xsdir', (req, res) => {
+    const xsdirPath = String.raw`D:\LANL\xsdir`;
+    const preferred = ['.70p', '.12p', '.04p', '.24p'];
+    try {
+        const fs = require('fs');
+        if (!fs.existsSync(xsdirPath)) {
+            return res.json({
+                success: false,
+                message: `xsdir 文件不存在: ${xsdirPath}，请确认 MCNP5 安装路径`,
+                available: [],
+            });
+        }
+        const content = fs.readFileSync(xsdirPath, 'utf-8');
+        const available = preferred.filter(s =>
+            content.includes(`1000${s}`) || content.includes(`6000${s}`)
+        );
+        const recommended = available[0] || null;
+        res.json({
+            success: true,
+            xsdirPath,
+            available,
+            recommended,
+            message: available.length
+                ? `检测到光子截面库: ${available.join(', ')}，推荐使用 ${recommended}`
+                : 'xsdir 中未找到支持的光子截面库（.70p / .12p / .04p / .24p），请安装相应数据库',
+        });
+    } catch (e) {
+        res.json({ success: false, message: `读取 xsdir 失败: ${e.message}`, available: [] });
+    }
+});
+
 console.log('[ICRP116] API端点已加载:');
 console.log('  - POST /api/icrp116/start-validation');
 console.log('  - GET  /api/icrp116/status');
 console.log('  - POST /api/icrp116/cancel');
 console.log('  - POST /api/icrp116/run-step3');
 console.log('  - GET  /api/icrp116/chart-image');
+console.log('  - GET  /api/icrp116/check-xsdir');
 
 app.listen(PORT, () => {
     log(`服务器已启动: http://localhost:${PORT}`);

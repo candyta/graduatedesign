@@ -1734,6 +1734,33 @@
                 <span v-if="icrp116ChartLoading" class="spinner-sm"></span>
                 🖼️ 生成对比图
               </button>
+              <button @click="checkXsdir" :disabled="icrp116XsdirChecking" class="btn btn-secondary">
+                <span v-if="icrp116XsdirChecking" class="spinner-sm"></span>
+                🔍 检测截面库
+              </button>
+            </div>
+
+            <!-- xsdir 诊断面板 -->
+            <div v-if="icrp116XsdirInfo" :class="['s3-xsdir-panel', icrp116XsdirInfo.available && icrp116XsdirInfo.available.length ? 'xsdir-ok' : 'xsdir-warn']">
+              <div class="xsdir-title">📂 MCNP5 xsdir 截面库诊断</div>
+              <div class="xsdir-msg">{{ icrp116XsdirInfo.message }}</div>
+              <template v-if="icrp116XsdirInfo.available && icrp116XsdirInfo.available.length">
+                <div class="xsdir-detail">
+                  可用光子库: <strong>{{ icrp116XsdirInfo.available.join('、') }}</strong>
+                  &nbsp;推荐: <code>{{ icrp116XsdirInfo.recommended }}</code>
+                </div>
+                <div class="xsdir-hint">
+                  当前输入文件使用 <code>.70p</code>。
+                  若推荐库不是 <code>.70p</code>，请点击「开始验证」重新运行 Step2b；
+                  系统将自动从 xsdir 检测并使用正确的截面库后缀重新生成 .inp 文件。
+                </div>
+              </template>
+              <template v-else>
+                <div class="xsdir-hint">
+                  请检查 <code>D:\LANL\xsdir</code> 是否存在，确认 MCNP5 已正确安装，
+                  并安装 ENDF/B-VII 光子数据（mcplib70p）或其他光子库。
+                </div>
+              </template>
             </div>
 
             <!-- Step3 日志 -->
@@ -2608,6 +2635,8 @@ export default {
       icrp116Step3Log:     [],
       icrp116ChartLoading: false,
       icrp116ChartUrl:     null,
+      icrp116XsdirChecking: false,
+      icrp116XsdirInfo:    null,
 
       // 中子AP ICRP剂量对比
       neutronPhantomType: 'AM',
@@ -4160,6 +4189,20 @@ export default {
         alert('加载图表失败：' + err.message);
       } finally {
         this.icrp116ChartLoading = false;
+      }
+    },
+
+    async checkXsdir() {
+      if (this.icrp116XsdirChecking) return;
+      this.icrp116XsdirChecking = true;
+      this.icrp116XsdirInfo = null;
+      try {
+        const { data } = await axios.get(`${API_BASE}/api/icrp116/check-xsdir`);
+        this.icrp116XsdirInfo = data;
+      } catch (err) {
+        this.icrp116XsdirInfo = { success: false, message: '检测失败: ' + err.message, available: [] };
+      } finally {
+        this.icrp116XsdirChecking = false;
       }
     },
 
@@ -7518,4 +7561,19 @@ export default {
   border: 1px solid #e2e8f0;
   display: block;
 }
+
+/* xsdir 诊断面板 */
+.s3-xsdir-panel {
+  margin-top: 0.8rem;
+  padding: 0.8rem 1rem;
+  border-radius: 8px;
+  font-size: 0.87rem;
+  line-height: 1.6;
+}
+.xsdir-ok   { background: #ebf8ff; border: 1px solid #63b3ed; color: #2b6cb0; }
+.xsdir-warn { background: #fff5f5; border: 1px solid #fc8181; color: #c53030; }
+.xsdir-title { font-weight: 700; margin-bottom: 0.3rem; }
+.xsdir-detail { margin-top: 0.3rem; }
+.xsdir-hint { margin-top: 0.4rem; color: #4a5568; }
+.xsdir-hint code, .xsdir-detail code { background: #edf2f7; padding: 0.1em 0.3em; border-radius: 3px; }
 </style>
