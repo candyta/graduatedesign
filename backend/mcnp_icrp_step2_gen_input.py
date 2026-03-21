@@ -80,7 +80,9 @@ ZAID_MAP = {
     26: f'26000{PHOT_SUFFIX}',  # Fe
     53: f'53000{PHOT_SUFFIX}',  # I
 }
-AIR_MAT_ID = 200   # 干燥空气材料编号（自定义）
+AIR_MAT_ID  = 200   # 干燥空气材料编号（自定义）
+AIR_UNIV    = 9000  # 空气体素宇宙编号（fill 数组中 organ_id=0 映射到此）
+# 注意：fill 数组中 0 表示"晶格元素越界"→ 粒子丢失；必须映射到非零宇宙
 
 
 def detect_phot_lib(xsdir_path: str) -> str:
@@ -207,9 +209,10 @@ def write_cell_section(f, unique_ids, organs):
     """
     bg = '-11 12 -13 14 -15 16'   # base cell geometry
 
-    f.write('c --- Universe 0: Air (organ_id=0, outside body) ---\n')
-    f.write(f'9000  {AIR_MAT_ID}  -0.001225  {bg}  u=0  imp:p=1\n')
-    f.write(f'89000  0  #9000  u=0  imp:p=1\n')
+    f.write(f'c --- Universe {AIR_UNIV}: Air (organ_id=0, outside body) ---\n')
+    f.write(f'c     fill=0 causes "particle lost"; map organ_id=0 to u={AIR_UNIV} instead\n')
+    f.write(f'9001  {AIR_MAT_ID}  -0.001225  {bg}  u={AIR_UNIV}  imp:p=1\n')
+    f.write(f'9002  0  #9001  u={AIR_UNIV}  imp:p=1\n')
     f.write('c\n')
 
     f.write('c --- Organ universes (organ_id -> tissue material) ---\n')
@@ -356,7 +359,9 @@ def generate_input_file(mask: np.ndarray, organs: dict, media: dict,
     # 2. 构建 fill 数组
     #    MCNP5 fill 顺序: iz 最慢, iy 中, ix 最快
     #    mask shape: (nx=127, ny=63, nz=111) → transpose → (nz, ny, nx) → flatten
-    fill_vals = mask.transpose(2, 1, 0).flatten().astype(np.int16)
+    raw = mask.transpose(2, 1, 0).flatten().astype(np.int32)
+    # fill=0 in MCNP5 lattice means "outside" → particle lost; remap to air universe
+    fill_vals = np.where(raw == 0, AIR_UNIV, raw)
     assert len(fill_vals) == NX * NY * NZ
 
     # 3. 写文件

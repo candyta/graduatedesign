@@ -132,7 +132,7 @@ def run_one(case: dict, args, log_fh):
     work.mkdir(parents=True, exist_ok=True)
 
     # ── 1. 清理工作目录旧文件 ──────────────────────────────────────
-    for ext in (".o", ".r", ".s", ".p", ".w", ""):
+    for ext in (".o", ".r", ".s", ".p", ".w", ".m", ""):
         old = work / (base + ext)
         if old.exists():
             old.unlink()
