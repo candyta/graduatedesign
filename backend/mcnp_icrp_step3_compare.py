@@ -170,7 +170,23 @@ def compute_h_eff(fluence_npy: np.ndarray, mask: np.ndarray,
     organ_table : list of (name, wT, mean_fluence, dose_pGy, wT_dose) sorted by |contribution|
     """
     # 将 fluence (nz,ny,nx) 转置为 (nx,ny,nz) 与 mask 对齐
-    fluence = fluence_npy.transpose(2, 1, 0)   # (nx, ny, nz)
+    fluence = fluence_npy.transpose(2, 1, 0)   # (nx_full, ny_full, nz_full)
+
+    # 若 fluence 是全分辨率（254×127×222），需要 2× block-average 降采样到掩膜分辨率（127×63×111）
+    if fluence.shape != mask.shape:
+        nx_f, ny_f, nz_f = fluence.shape
+        nx_m, ny_m, nz_m = mask.shape
+        sx = nx_f // nx_m   # x 步长 = 2
+        sy = ny_f // ny_m   # y 步长 = 2（127//63=2，余1行裁掉）
+        sz = nz_f // nz_m   # z 步长 = 2
+        # x
+        fluence = fluence.reshape(nx_m, sx, ny_f, nz_f).mean(axis=1)
+        # y：先裁剪到整除数，再 block-average
+        fluence = fluence[:, :ny_m * sy, :].reshape(nx_m, ny_m, sy, nz_f).mean(axis=2)
+        # z
+        fluence = fluence.reshape(nx_m, ny_m, nz_m, sz).mean(axis=3)
+        assert fluence.shape == mask.shape, \
+            f"降采样后 shape={fluence.shape} 仍与 mask={mask.shape} 不符"
 
     unique_ids = np.unique(mask)
     organ_table = []
