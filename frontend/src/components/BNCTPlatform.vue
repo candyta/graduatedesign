@@ -1759,6 +1759,7 @@
                     <th>ICRP-116 参考值 (pSv·cm²)</th>
                     <th>偏差</th>
                     <th>判定</th>
+                    <th>数据源</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1771,6 +1772,9 @@
                     </td>
                     <td :class="row.pass === 'PASS' ? 'cell-pass' : 'cell-fail'">
                       {{ row.pass === 'PASS' ? 'PASS ✓' : 'FAIL ✗' }}
+                    </td>
+                    <td :class="row.source === 'MCNP' ? 'cell-pass' : 'cell-warn'">
+                      {{ row.source === 'MCNP' ? 'MCNP ✓' : '解析模型' }}
                     </td>
                   </tr>
                 </tbody>
@@ -6379,6 +6383,7 @@ export default {
 .row-special td { background: #fce4ec !important; }
 .cell-pass { color: #2e7d32; font-weight: 700; }
 .cell-fail { color: #c62828; font-weight: 700; }
+.cell-warn { color: #e65100; font-weight: 600; }
 .cell-warn { color: #c62828; font-weight: 700; }
 .cell-mod  { color: #f57c00; font-weight: 600; }
 

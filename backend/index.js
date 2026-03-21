@@ -2580,13 +2580,14 @@ app.post('/api/icrp116/run-step3', (req, res) => {
             const csv = require('fs').readFileSync(ICRP116_CSV_PATH, 'utf-8');
             const lines = csv.split('\n').map(l => l.trim()).filter(l => l);
             const results = lines.slice(1).map(line => {
-                const [energy, h_calc, h_ref, deviation, pass_flag] = line.split(',');
+                const [energy, h_calc, h_ref, deviation, pass_flag, source] = line.split(',');
                 return {
                     energy:    parseFloat(energy),
                     h_calc:    parseFloat(h_calc),
                     h_ref:     parseFloat(h_ref),
                     deviation: parseFloat(deviation),
                     pass:      (pass_flag || '').trim(),
+                    source:    (source    || '').trim(),
                 };
             }).filter(r => !isNaN(r.energy));
             res.json({ success: true, results, logs });
