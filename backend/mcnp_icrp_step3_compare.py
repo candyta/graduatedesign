@@ -394,11 +394,18 @@ def main():
               f"max={fluence_npy.max():.3e}  mean={fluence_npy.mean():.3e}")
 
         if not is_data_reliable(fluence_npy):
-            print(f"     [数据检验] 检测到无效数据（max约1e-5，CV约0.577，疑为随机数）")
-            print(f"     原因：MCNP 运行失败——很可能缺少光子截面库（如 .70p 未在 xsdir 中）")
-            print(f"     请检查 D:\\LANL\\xsdir 是否包含所需光子库，")
-            print(f"     或用 --phot-lib 参数指定实际可用的截面库后缀（如 .04p）")
-            print(f"     并重新运行 Step2b")
+            max_v = fluence_npy.max()
+            if max_v <= 0:
+                print(f"     [数据检验] 检测到无效数据（全零数组 max={max_v:.3e}）")
+                print(f"     原因：MCNP 输入文件有语法错误（如材料卡格式），MCNP 提前中止，")
+                print(f"     meshtal 文件存在但无任何计分数据。")
+                print(f"     解决：拉取最新代码，重启后端，重新运行 Step2b。")
+            else:
+                print(f"     [数据检验] 检测到无效数据（max约{max_v:.2e}，疑为随机数）")
+                print(f"     原因：MCNP 运行失败——很可能缺少光子截面库（如 .70p 未在 xsdir 中）")
+                print(f"     请检查 D:\\LANL\\xsdir 是否包含所需光子库，")
+                print(f"     或用 --phot-lib 参数指定实际可用的截面库后缀（如 .04p）")
+                print(f"     并重新运行 Step2b")
             skipped.append(energy)
             continue
 
