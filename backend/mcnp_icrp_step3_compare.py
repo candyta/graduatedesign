@@ -200,36 +200,56 @@ def compute_h_eff_from_fluence(fluence: np.ndarray, mask: np.ndarray,
                                 organs: dict, energy: float) -> tuple:
     """
     从已对齐至掩膜分辨率的 fluence (NX, NY, NZ) 计算 h_E (pSv·cm²)。
+
+    正确的 ICRP 方法：对同一器官的多个子区域（如 4 块皮肤区域、
+    20+ 块骨松质区域）先合并所有体素取体素计数加权均值，再统一乘以 wT。
+    若逐子区域分别乘 wT，会造成 4×/20× 等倍数过高。
     """
+    from collections import defaultdict
 
-    unique_ids = np.unique(mask)
-    organ_table = []
-    e_eff_pGy = 0.0   # pGy per source particle
-
-    for oid in unique_ids:
-        if oid == 0:
-            continue   # 体外空气
-        if oid not in organs:
+    # Step 1: 按 WT_RULES 规则将 organ_id 分组（首条匹配规则）
+    rule_groups = defaultdict(list)   # rule_idx → [oid, ...]
+    for oid in np.unique(mask):
+        oid = int(oid)
+        if oid == 0 or oid not in organs:
             continue
-
         _, _, name = organs[oid]
-        wt = get_wt(name)
-        if wt == 0.0:
-            continue   # 无需计入有效剂量
+        nlc = name.lower()
+        for idx, (keywords, _) in enumerate(WT_RULES):
+            if any(k in nlc for k in keywords):
+                rule_groups[idx].append(oid)
+                break
 
-        mu_en_rho = get_mu_en_rho(name, energy)
+    organ_table = []
+    e_eff_pGy = 0.0
 
-        # 该器官体素索引
-        voxel_mask = (mask == oid)
-        mean_fluence = float(fluence[voxel_mask].mean())
+    # Step 2: 对每个器官类别，计算所有子区域合并后的体素加权均值，再乘 wT
+    for rule_idx in sorted(rule_groups.keys()):
+        oids = rule_groups[rule_idx]
+        _, wt = WT_RULES[rule_idx]
+
+        # 收集该类别所有体素的通量值（体素数加权，不是子区域均值再平均）
+        group_mask = np.isin(mask, oids)
+        if not group_mask.any():
+            continue
+        mean_fluence = float(fluence[group_mask].mean())
+
+        # μ_en/ρ 用第一个子器官名称判断组织类型（骨 vs 软组织）
+        first_name = organs[oids[0]][2]
+        mu_en_rho = get_mu_en_rho(first_name, energy)
 
         # D_T [pGy/sp] = Φ × E × (μ_en/ρ) × 1.602e-10 × 1e12
         dose_pGy = mean_fluence * energy * mu_en_rho * 1.602e-10 * 1e12
-
         wt_dose = wt * dose_pGy
         e_eff_pGy += wt_dose
 
-        organ_table.append((name, wt, mean_fluence, dose_pGy, wt_dose))
+        # 显示名：只显示第一个子器官名 + 子区域数
+        if len(oids) == 1:
+            dname = first_name
+        else:
+            base = first_name.split(',')[0].strip()
+            dname = f"{base} ({len(oids)} regions)"
+        organ_table.append((dname, wt, mean_fluence, dose_pGy, wt_dose))
 
     # h_E [pSv·cm²] = E_eff [pSv/sp] / Φ_incident [cm⁻²/sp]
     #               = E_eff [pGy/sp] × BEAM_AREA [cm²]
