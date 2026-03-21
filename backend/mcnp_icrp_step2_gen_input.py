@@ -278,10 +278,9 @@ def write_data_section(f, unique_ids, organs, media, energy_mev):
     # ── 材料 ──
     # 干燥空气
     f.write(f'c Material {AIR_MAT_ID}: Dry Air  rho=-0.001225 g/cm3\n')
-    f.write(f'm{AIR_MAT_ID}\n')
-    f.write(f'     7000{PHOT_SUFFIX}  -0.7553  $ N\n')
-    f.write(f'     8000{PHOT_SUFFIX}  -0.2318  $ O\n')
-    f.write(f'    18000{PHOT_SUFFIX}  -0.0129  $ Ar\n')  # Ar not in ZAID_MAP; use PHOT_SUFFIX directly
+    f.write(f'm{AIR_MAT_ID}  7000{PHOT_SUFFIX}  -0.7553  $ N\n')
+    f.write(f'      8000{PHOT_SUFFIX}  -0.2318  $ O\n')
+    f.write(f'     18000{PHOT_SUFFIX}  -0.0129  $ Ar\n')
     f.write('c\n')
 
     # ICRP-110 组织材料
@@ -305,11 +304,14 @@ def write_data_section(f, unique_ids, organs, media, energy_mev):
                 density_ref = dens
                 break
         f.write(f'c  M{tid}: {tname}  rho~{density_ref:.4f}\n')
-        f.write(f'm{tid}\n')
-        for z in sorted(comp.keys()):
-            frac = comp[z]
-            zaid = ZAID_MAP.get(z)
-            if zaid and frac > 0:
+        zaids = [(z, comp[z], ZAID_MAP.get(z)) for z in sorted(comp.keys())
+                 if ZAID_MAP.get(z) and comp[z] > 0]
+        first = True
+        for z, frac, zaid in zaids:
+            if first:
+                f.write(f'm{tid}  {zaid}  -{frac:.6f}  $ Z={z}\n')
+                first = False
+            else:
                 f.write(f'     {zaid}  -{frac:.6f}  $ Z={z}\n')
         f.write('c\n')
 
