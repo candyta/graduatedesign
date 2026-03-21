@@ -83,6 +83,34 @@ ZAID_MAP = {
 AIR_MAT_ID = 200   # 干燥空气材料编号（自定义）
 
 
+def detect_phot_lib(xsdir_path: str) -> str:
+    """
+    扫描 MCNP5 xsdir 文件，查找可用的光子截面库后缀。
+    按优先级依次检查：.70p  .12p  .04p  .24p
+    返回找到的第一个后缀；若均未找到则返回 None。
+    """
+    preferred = ['.70p', '.12p', '.04p', '.24p']
+    try:
+        with open(xsdir_path, 'r', errors='ignore') as f:
+            content = f.read()
+    except OSError:
+        return None
+    for suffix in preferred:
+        # xsdir 行格式: ZAID.lib  awr  filename  ...
+        # 例如: 1000.70p  ...
+        if f'1000{suffix}' in content or f'6000{suffix}' in content:
+            return suffix
+    return None
+
+
+def build_zaid_map(phot_suffix: str) -> dict:
+    """根据指定截面库后缀构建 ZAID 映射。"""
+    z_list = [1, 6, 7, 8, 11, 12, 15, 16, 17, 19, 20, 26, 53]
+    z_names = {1:'H', 6:'C', 7:'N', 8:'O', 11:'Na', 12:'Mg',
+               15:'P', 16:'S', 17:'Cl', 19:'K', 20:'Ca', 26:'Fe', 53:'I'}
+    return {z: f'{z * 1000}{phot_suffix}' for z in z_list}
+
+
 # ═══════════════════════════════════════════════════════════════
 # 数据加载
 # ═══════════════════════════════════════════════════════════════
@@ -248,7 +276,7 @@ def write_data_section(f, unique_ids, organs, media, energy_mev):
     f.write(f'm{AIR_MAT_ID}\n')
     f.write(f'     7000{PHOT_SUFFIX}  -0.7553  $ N\n')
     f.write(f'     8000{PHOT_SUFFIX}  -0.2318  $ O\n')
-    f.write(f'    18000{PHOT_SUFFIX}  -0.0129  $ Ar\n')
+    f.write(f'    18000{PHOT_SUFFIX}  -0.0129  $ Ar\n')  # Ar not in ZAID_MAP; use PHOT_SUFFIX directly
     f.write('c\n')
 
     # ICRP-110 组织材料
@@ -359,10 +387,29 @@ def generate_input_file(mask: np.ndarray, organs: dict, media: dict,
 
 def main():
     parser = argparse.ArgumentParser(description='ICRP-110 验证 Step2: 生成 MCNP5 AP 输入')
-    parser.add_argument('--mask',    default='icrp_validation/organ_mask_127x63x111.npy')
-    parser.add_argument('--zip',     default='P110 data V1.2/AM.zip')
-    parser.add_argument('--out-dir', default='icrp_validation/mcnp_inputs')
+    parser.add_argument('--mask',     default='icrp_validation/organ_mask_127x63x111.npy')
+    parser.add_argument('--zip',      default='P110 data V1.2/AM.zip')
+    parser.add_argument('--out-dir',  default='icrp_validation/mcnp_inputs')
+    parser.add_argument('--phot-lib', default=None,
+        help='MCNP 光子截面库后缀，例如 .70p .12p .04p .24p；'
+             '若不指定则自动从 xsdir 检测，检测失败则用默认 .70p')
+    parser.add_argument('--xsdir',    default=r'D:\LANL\xsdir',
+        help='MCNP5 xsdir 文件路径，用于自动检测可用光子库')
     args = parser.parse_args()
+
+    # ── 确定光子截面库后缀 ───────────────────────────────────
+    global PHOT_SUFFIX, ZAID_MAP
+    if args.phot_lib:
+        PHOT_SUFFIX = args.phot_lib
+        print(f'[Step2] 使用指定光子库后缀: {PHOT_SUFFIX}')
+    else:
+        detected = detect_phot_lib(args.xsdir)
+        if detected:
+            PHOT_SUFFIX = detected
+            print(f'[Step2] 从 xsdir 自动检测到光子库: {PHOT_SUFFIX}  ({args.xsdir})')
+        else:
+            print(f'[Step2] 未能检测 xsdir ({args.xsdir})，使用默认: {PHOT_SUFFIX}')
+    ZAID_MAP = build_zaid_map(PHOT_SUFFIX)
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

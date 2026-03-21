@@ -193,47 +193,35 @@ def extract_mesh_tally(mesh_file: str, grid_shape: tuple = None) -> np.ndarray:
 
 def extract_from_standard_output(output_file: str) -> np.ndarray:
     """
-    从标准.o文件提取tally数据
-    
-    这是一个简化版本，实际MCNP输出文件解析可能很复杂
+    从标准.o文件中检查 MCNP 是否正常完成，并尝试提取 meshtal 数据。
+    若未找到有效 tally 数据则抛出异常（不再返回随机数）。
     """
-    print("\n[从标准输出提取]")
+    print("\n[从标准输出检查]")
     print(f"文件: {output_file}")
-    
+
     with open(output_file, 'r', errors='ignore') as f:
         content = f.read()
-    
-    # 查找 "1tally" 部分
-    tally_pattern = r'1tally.*?(?=1tally|\Z)'
-    tallies = re.findall(tally_pattern, content, re.DOTALL)
-    
-    if not tallies:
-        print("[警告] 未找到tally数据，生成模拟数据")
-        # 生成示例数据用于测试
-        return np.random.rand(222, 127, 254) * 1e-5
-    
-    print(f"找到 {len(tallies)} 个tally")
-    
-    # 简化处理：从第一个tally提取数据
-    # 实际实现需要根据MCNP输出格式详细解析
-    values = []
-    for match in re.finditer(r'\d+\.\d+[eE][+-]\d+', tallies[0]):
-        values.append(float(match.group()))
-    
-    if len(values) == 0:
-        print("[警告] 未能提取数值，生成模拟数据")
-        return np.random.rand(222, 127, 254) * 1e-5
-    
-    # 简化：假设是ICRP-110标准尺寸
-    nx, ny, nz = 254, 127, 222
-    expected_size = nx * ny * nz
-    
-    if len(values) < expected_size:
-        values.extend([0.0] * (expected_size - len(values)))
-    
-    dose_array = np.array(values[:expected_size]).reshape((nz, ny, nx))
-    
-    return dose_array
+
+    # 检查常见 MCNP 失败标志
+    fatal_lines = [ln.strip() for ln in content.splitlines()
+                   if 'fatal error' in ln.lower() or 'cross-section' in ln.lower()
+                   or 'cannot find' in ln.lower() or 'bad trouble' in ln.lower()]
+    if fatal_lines:
+        print("[错误] MCNP 输出包含致命错误:")
+        for ln in fatal_lines[:5]:
+            print(f"  {ln}")
+        raise RuntimeError(
+            "MCNP 运行失败（fatal error）。\n"
+            "最可能原因：xsdir 中缺少所用光子截面库（如 .70p）。\n"
+            "请检查 D:\\LANL\\xsdir，确认材料卡中的 ZAID 后缀在 xsdir 中存在，\n"
+            "或通过 --phot-lib 参数指定实际可用的截面库后缀后重新运行 Step2b。"
+        )
+
+    # meshtal 应由 Step2b 直接读取；若走到此处说明 meshtal 未找到
+    raise RuntimeError(
+        f"在 {output_file} 中未找到有效 meshtal 数据。\n"
+        "请确认 MCNP 工作目录中存在 meshtal 文件，并检查 FMESH tally 设置。"
+    )
 
 
 def extract_dose_from_mcnp(output_file: str, 

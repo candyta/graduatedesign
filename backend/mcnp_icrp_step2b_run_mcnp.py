@@ -43,6 +43,7 @@ ORGAN_MASK    = os.path.join("icrp_validation", "organ_mask_127x63x111.npy")
 
 # ─── 默认路径（与现有 run_batch.py / g5.bat 体系一致） ───────────
 DEFAULT_G5_BAT    = r"D:\LANL\g5.bat"
+DEFAULT_XSDIR     = r"D:\LANL\xsdir"  # MCNP5 截面目录文件
 DEFAULT_WORK_DIR  = r"C:\i"            # MCNP5 工作目录（输入/输出）
 DEFAULT_BACKEND   = r"C:\my-app3\web\backend"
 DEFAULT_INP_DIR   = os.path.join(DEFAULT_BACKEND,
@@ -64,6 +65,23 @@ ENERGY_CASES = [
 ]
 
 # ─────────────────────────────────────────────────────────────────
+
+
+def detect_phot_lib(xsdir_path: str) -> str:
+    """
+    扫描 MCNP5 xsdir，查找可用的光子截面库后缀。
+    优先级: .70p > .12p > .04p > .24p
+    """
+    preferred = ['.70p', '.12p', '.04p', '.24p']
+    try:
+        with open(xsdir_path, 'r', errors='ignore') as f:
+            content = f.read()
+        for suffix in preferred:
+            if f'1000{suffix}' in content or f'6000{suffix}' in content:
+                return suffix
+    except OSError:
+        pass
+    return None
 
 
 def log(msg, log_fh=None):
@@ -246,6 +264,21 @@ def run_subprocess_logged(cmd, cwd, log_fh) -> int:
     return proc.returncode
 
 
+def resolve_phot_lib(args, log_fh) -> str:
+    """确定实际使用的光子截面库后缀，并打印说明。"""
+    if args.phot_lib:
+        log(f"[光子库] 使用指定后缀: {args.phot_lib}", log_fh)
+        return args.phot_lib
+    detected = detect_phot_lib(args.xsdir)
+    if detected:
+        log(f"[光子库] 从 xsdir 自动检测: {detected}  ({args.xsdir})", log_fh)
+        return detected
+    default = '.70p'
+    log(f"[光子库] 未能读取 xsdir ({args.xsdir})，使用默认: {default}", log_fh)
+    log(f"  如果 MCNP 报告截面库缺失，请用 --phot-lib 指定正确后缀", log_fh)
+    return default
+
+
 def ensure_prerequisites(args, cases, log_fh) -> bool:
     """
     检查所需 .inp 文件是否存在；若缺失，自动运行 Step1 和/或 Step2 补全。
@@ -299,13 +332,16 @@ def ensure_prerequisites(args, cases, log_fh) -> bool:
         log(f"[准备] 器官掩膜已存在: {mask_path}", log_fh)
 
     # ── Step 2：生成 .inp 文件 ─────────────────────────────────────
-    log(f"[准备] Step2 → 生成 .inp 文件到: {inp_dir}", log_fh)
+    phot_lib = resolve_phot_lib(args, log_fh)
+    log(f"[准备] Step2 → 生成 .inp 文件到: {inp_dir}  (光子库: {phot_lib})", log_fh)
     rc = run_subprocess_logged(
         [sys.executable,
          str(Path(backend) / STEP2_SCRIPT),
-         "--mask",    str(mask_path),
-         "--zip",     str(zip_path),
-         "--out-dir", str(inp_dir)],
+         "--mask",     str(mask_path),
+         "--zip",      str(zip_path),
+         "--out-dir",  str(inp_dir),
+         "--phot-lib", phot_lib,
+         "--xsdir",    args.xsdir],
         cwd=backend, log_fh=log_fh,
     )
     if rc != 0:
@@ -338,6 +374,11 @@ def main():
                         help="backend 目录（含 extract_dose_from_mcnp.py）")
     parser.add_argument("--only",        type=float, nargs="+",
                         help="只运行指定能量 MeV，如 --only 0.1 1.0")
+    parser.add_argument("--phot-lib",    default=None,
+                        help="光子截面库后缀，如 .70p .12p .04p .24p；"
+                             "不指定则从 xsdir 自动检测")
+    parser.add_argument("--xsdir",       default=DEFAULT_XSDIR,
+                        help="MCNP5 xsdir 路径，用于自动检测可用光子库")
     args = parser.parse_args()
 
     # 创建日志文件

@@ -4,17 +4,17 @@ r"""
 MCNP ICRP-116 验证 — 第三步：有效剂量换算系数对比
 ====================================================
 读取 Step2b 生成的 fluence_E*.npy，结合器官掩膜和 ICRP-110 器官数据，
-计算各能量点的光子注量-有效剂量换算系数 h_E（pSv·cm²），
+计算各能量点的光子注量-有效剂量换算系数 h_E（pSv·cm^2），
 并与 ICRP-116 Table A.3（AP 几何，光子）参考值对比。
 
 物理公式
 --------
-  D_T  [Gy/sp] = Φ_T [cm⁻²/sp] × E [MeV] × (μ_en/ρ)_T [cm²/g] × 1.602e-10
-  E_eff [Sv/sp] = Σ_T  w_T × D_T          (光子 w_R = 1)
-  h_E [pSv·cm²] = E_eff / Φ_incident × 1e12
-  Φ_incident  = 1 / beam_area              (平行束，单位 cm⁻²/sp)
+  D_T  [Gy/sp] = Phi_T [cm^-2/sp] x E [MeV] x (mu_en/rho)_T [cm^2/g] x 1.602e-10
+  E_eff [Sv/sp] = sum_T  w_T x D_T          (光子 w_R = 1)
+  h_E [pSv*cm^2] = E_eff / Phi_incident x 1e12
+  Phi_incident  = 1 / beam_area              (平行束，单位 cm^-2/sp)
 
-注: μ_en/ρ 来自 NIST XCOM，对所有软组织器官统一使用软组织值；
+注: mu_en/rho 来自 NIST XCOM，对所有软组织器官统一使用软组织值；
     含有 cortical/spongiosa/bone 关键字的器官使用皮质骨值。
 
 【运行方法】
@@ -48,12 +48,7 @@ PHANT_Y_FULL = NY * VOX_Y   # 27.14 cm（体模 AP 方向全深度）
 # 4 个验证能量点
 ENERGIES = [0.010, 0.100, 1.000, 10.000]
 
-# ─── 全场质量衰减系数 μ/ρ（cm²/g）用于解析模型衰减路径积分 ────────
-# 数据来源：NIST XCOM
-MU_ATT_SOFT = {0.010: 5.82,  0.100: 0.171, 1.000: 0.0707, 10.000: 0.0224}
-MU_ATT_BONE = {0.010: 25.0,  0.100: 0.223, 1.000: 0.0693, 10.000: 0.0215}
-
-# ─── ICRP-116 Table A.3 参考值（AP 光子，pSv·cm²） ───────────────
+# ─── ICRP-116 Table A.3 参考值（AP 光子，pSv·cm^2） ───────────────
 # 来源: ICRP Publication 116 (2010), Table A.3
 ICRP116_REF = {
     0.010:  0.0288,
@@ -163,8 +158,8 @@ def is_data_reliable(fluence_npy: np.ndarray) -> bool:
     检测 fluence 是否为可信的 MCNP 结果，还是 extract 脚本的随机数回退数据。
 
     extract_from_standard_output 回退时返回 np.random.rand(...) * 1e-5：
-      - max 恰好 ≈ 1e-5（精确上限）
-      - mean ≈ 5e-6，CV(变异系数) ≈ 0.577（均匀分布特征）
+      - max 恰好约 1e-5（精确上限）
+      - mean 约 5e-6，CV(变异系数) 约 0.577（均匀分布特征）
     真实 MCNP 数据具有明显的空间梯度，max 不会恰好等于上限。
     """
     max_val = fluence_npy.max()
@@ -174,7 +169,7 @@ def is_data_reliable(fluence_npy: np.ndarray) -> bool:
     if 9.5e-6 <= max_val <= 1.0e-5:
         nonzero = fluence_npy[fluence_npy > 0]
         cv = nonzero.std() / nonzero.mean()
-        if 0.40 < cv < 0.70:   # 均匀分布 CV = 1/√3 ≈ 0.577
+        if 0.40 < cv < 0.70:   # 均匀分布 CV = 1/sqrt(3) 约 0.577
             return False
     return True
 
@@ -199,42 +194,6 @@ def prepare_mcnp_fluence(fluence_npy: np.ndarray, mask: np.ndarray) -> np.ndarra
         f"降采样后 shape={fluence.shape} 与 mask={mask.shape} 不符"
     return fluence
 
-
-def compute_analytical_fluence(mask: np.ndarray, organs: dict,
-                                energy: float) -> np.ndarray:
-    """
-    解析衰减模型：沿 AP（+Y）方向对每条射线做指数衰减积分。
-
-    Φ(ix, iy, iz) = (1/BEAM_AREA) × exp(- Σ_{iy'<iy} μ_att × ρ × VOX_Y)
-
-    不含散射 build-up，在中高能量（≥1 MeV）偏差约 20-35%，
-    0.1 MeV 处低估约 50%（康普顿散射 build-up 未计）。
-    """
-    NX_m, NY_m, NZ_m = mask.shape
-    vox_y = PHANT_Y_FULL / NY_m   # cm/voxel 沿 Y 方向
-
-    # 计算每个体素在 Y 方向上的衰减贡献 (dimensionless per voxel)
-    mu_per_vox = np.zeros((NX_m, NY_m, NZ_m), dtype=np.float64)
-    for oid in np.unique(mask):
-        if oid == 0:
-            # 空气：密度极低，衰减可忽略
-            mu_per_vox[mask == 0] = MU_ATT_SOFT[energy] * 1.2e-3 * vox_y
-        elif oid in organs:
-            _, density, name = organs[oid]
-            nlc = name.lower()
-            mu_att = (MU_ATT_BONE[energy]
-                      if any(k in nlc for k in BONE_KEYWORDS)
-                      else MU_ATT_SOFT[energy])
-            mu_per_vox[mask == oid] = mu_att * density * vox_y
-
-    # 沿 axis=1（Y 方向）累积，并向右移一格：
-    # cumulative[ix, iy, iz] = sum(mu_per_vox[ix, 0:iy, iz])
-    cumulative = np.cumsum(mu_per_vox, axis=1)
-    cumulative = np.roll(cumulative, 1, axis=1)
-    cumulative[:, 0, :] = 0.0   # 入射面无衰减
-
-    fluence = (1.0 / BEAM_AREA) * np.exp(-cumulative)
-    return fluence
 
 
 def compute_h_eff_from_fluence(fluence: np.ndarray, mask: np.ndarray,
@@ -294,15 +253,13 @@ def print_organ_table(organ_table, energy):
         print(f"  ... 共 {len(organ_table)} 个器官")
 
 
-def save_csv(results, out_dir: Path, analytic_set: set = None):
+def save_csv(results, out_dir: Path):
     """保存对比结果到 CSV。"""
-    analytic_set = analytic_set or set()
     csv_path = out_dir / "icrp116_comparison.csv"
     lines = ["Energy_MeV,h_calc_pSv_cm2,h_ref_pSv_cm2,deviation_pct,pass,source"]
     for e, h_calc, h_ref, dev in results:
-        ok  = "PASS" if abs(dev) <= 10 else "FAIL"
-        src = "analytical" if e in analytic_set else "MCNP"
-        lines.append(f"{e:.3f},{h_calc:.4f},{h_ref:.4f},{dev:.1f},{ok},{src}")
+        ok = "PASS" if abs(dev) <= 10 else "FAIL"
+        lines.append(f"{e:.3f},{h_calc:.4f},{h_ref:.4f},{dev:.1f},{ok},MCNP")
     csv_path.write_text("\n".join(lines), encoding="utf-8")
     print(f"\n[CSV] 结果已保存: {csv_path}")
     return csv_path
@@ -418,37 +375,35 @@ def main():
 
     # ── 逐能量点计算 ─────────────────────────────────────────
     print("\n[3/3] 逐能量点计算 h_E ...")
-    results      = []   # (energy, h_calc, h_ref, deviation%)
-    used_mcnp    = []   # 哪些能量点用了真实 MCNP 数据
-    used_analytic = []  # 哪些能量点用了解析模型
+    results   = []   # (energy, h_calc, h_ref, deviation%)
+    skipped   = []   # 因数据不可用跳过的能量点
 
     for energy in ENERGIES:
         npy_name = f"fluence_E{energy:.3f}MeV.npy"
         npy_path = out_dir / npy_name
 
         if not npy_path.exists():
-            print(f"\n  [跳过] 找不到 {npy_path}，改用解析衰减模型")
-            fluence_ready = compute_analytical_fluence(mask, organs, energy)
-            mode = "解析模型"
-            used_analytic.append(energy)
-        else:
-            print(f"\n  ── E = {energy:.3f} MeV  [{npy_name}] ──")
-            fluence_npy = np.load(npy_path)
-            print(f"     fluence shape={fluence_npy.shape}  "
-                  f"max={fluence_npy.max():.3e}  mean={fluence_npy.mean():.3e}")
+            print(f"\n  [跳过] 找不到 {npy_path}")
+            print(f"  请先运行 Step2b 完成 MCNP 计算")
+            skipped.append(energy)
+            continue
 
-            if is_data_reliable(fluence_npy):
-                fluence_ready = prepare_mcnp_fluence(fluence_npy, mask)
-                mode = "MCNP"
-                used_mcnp.append(energy)
-                print(f"     [数据检验] 通过 → 使用 MCNP 结果")
-            else:
-                print(f"     [数据检验] 检测到随机回退数据（max≈1e-5，CV≈0.577），")
-                print(f"     原因：MCNP 缺少光子截面库（.70p），extract 脚本降级为随机数。")
-                print(f"     改用解析指数衰减模型（忽略散射 build-up）...")
-                fluence_ready = compute_analytical_fluence(mask, organs, energy)
-                mode = "解析模型"
-                used_analytic.append(energy)
+        print(f"\n  -- E = {energy:.3f} MeV  [{npy_name}] --")
+        fluence_npy = np.load(npy_path)
+        print(f"     fluence shape={fluence_npy.shape}  "
+              f"max={fluence_npy.max():.3e}  mean={fluence_npy.mean():.3e}")
+
+        if not is_data_reliable(fluence_npy):
+            print(f"     [数据检验] 检测到无效数据（max约1e-5，CV约0.577，疑为随机数）")
+            print(f"     原因：MCNP 运行失败——很可能缺少光子截面库（如 .70p 未在 xsdir 中）")
+            print(f"     请检查 D:\\LANL\\xsdir 是否包含所需光子库，")
+            print(f"     或用 --phot-lib 参数指定实际可用的截面库后缀（如 .04p）")
+            print(f"     并重新运行 Step2b")
+            skipped.append(energy)
+            continue
+
+        fluence_ready = prepare_mcnp_fluence(fluence_npy, mask)
+        print(f"     [数据检验] 通过 -> 使用 MCNP 结果")
 
         h_calc, organ_table = compute_h_eff_from_fluence(
             fluence_ready, mask, organs, energy)
@@ -457,43 +412,40 @@ def main():
 
         print_organ_table(organ_table, energy)
 
-        flag = "✓" if abs(dev) <= 10 else ("△" if abs(dev) <= 20 else "✗")
-        print(f"\n  [{mode}] h_E(计算)={h_calc:.4f}  h_E(ICRP-116)={h_ref:.4f}  "
-              f"偏差={dev:+.1f}%  {flag}")
+        flag = "OK" if abs(dev) <= 10 else ("~" if abs(dev) <= 20 else "FAIL")
+        print(f"\n  [MCNP] h_E(calc)={h_calc:.4f}  h_E(ICRP-116)={h_ref:.4f}  "
+              f"dev={dev:+.1f}%  {flag}")
 
         results.append((energy, h_calc, h_ref, dev))
 
-    if used_analytic:
-        print("\n[说明] 以下能量点使用解析指数衰减模型（非 MCNP）：")
-        print(f"  {used_analytic}")
-        print("  解析模型不含康普顿散射 build-up，预计偏差：")
-        print("    0.01 MeV ~ +40%  |  0.1 MeV ~ -50%  |  1 MeV ~ -25%  |  10 MeV ~ -33%")
-        print("  如需精确结果，请安装 ENDF/B-VII 光子截面库（.70p）并更新 MCNP5 xsdir。")
+    if skipped:
+        print(f"\n[警告] 以下能量点因数据不可用已跳过: {skipped}")
 
     if not results:
-        print("\n[错误] 未找到任何 fluence npy 文件，请先运行 Step2b")
+        print("\n[错误] 没有可用的 MCNP 结果。")
+        print("  请确认:")
+        print("  1. Step2b 已成功完成（fluence_E*.npy 存在且非空）")
+        print("  2. MCNP5 xsdir 包含所用光子截面库（默认 .70p）")
+        print("     若无 .70p，检查 xsdir 中可用库后用 --phot-lib 重新生成输入文件")
         sys.exit(1)
 
     # ── 汇总表格 ─────────────────────────────────────────────
-    analytic_set = set(used_analytic)
-    print("\n" + "═" * 72)
-    print(f"  {'能量(MeV)':<12} {'h_计算':>12} {'h_ICRP-116':>12} {'偏差':>8}  判定    数据源")
-    print("  " + "─" * 67)
+    print("\n" + "=" * 65)
+    print(f"  {'能量(MeV)':<12} {'h_计算':>12} {'h_ICRP-116':>12} {'偏差':>8}  判定")
+    print("  " + "-" * 60)
     passed = 0
     for e, hc, hr, d in results:
         ok  = abs(d) <= 10
-        sym = "PASS ✓" if ok else ("△<20%" if abs(d) <= 20 else "FAIL ✗")
-        src = "解析" if e in analytic_set else "MCNP"
-        print(f"  {e:<12.3f} {hc:>12.4f} {hr:>12.4f} {d:>+7.1f}%  {sym:<8} [{src}]")
+        sym = "PASS" if ok else ("~<20%" if abs(d) <= 20 else "FAIL")
+        print(f"  {e:<12.3f} {hc:>12.4f} {hr:>12.4f} {d:>+7.1f}%  {sym}")
         if ok:
             passed += 1
-    print("  " + "─" * 67)
-    print(f"  通过率（±10%）: {passed}/{len(results)}"
-          + ("  [注：解析模型偏差较大，属预期行为]" if used_analytic else ""))
-    print("═" * 72)
+    print("  " + "-" * 60)
+    print(f"  通过率（±10%）: {passed}/{len(results)}")
+    print("=" * 65)
 
     # ── 保存 CSV ──────────────────────────────────────────────
-    save_csv(results, out_dir, analytic_set=set(used_analytic))
+    save_csv(results, out_dir)
 
     # ── 绘图 ─────────────────────────────────────────────────
     if not args.no_plot:
