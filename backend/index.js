@@ -2636,9 +2636,16 @@ app.get('/api/icrp116/check-xsdir', (req, res) => {
             });
         }
         const content = fs.readFileSync(xsdirPath, 'utf-8');
-        const available = preferred.filter(s =>
-            content.includes(`1000${s}`) || content.includes(`6000${s}`)
-        );
+        // Use regex to match actual xsdir entry lines (ZAID.LLp at line start),
+        // avoiding false-positives from comments or path strings.
+        const foundDigits = new Set();
+        const rx = /^\s*\d+\.(\d{2,3})p\s/mg;
+        let m;
+        while ((m = rx.exec(content)) !== null) foundDigits.add(m[1]);
+        const available = preferred.filter(s => {
+            const digits = s.replace('.', '').replace('p', ''); // '.04p' -> '04'
+            return foundDigits.has(digits);
+        });
         const recommended = available[0] || null;
         res.json({
             success: true,
@@ -2647,7 +2654,9 @@ app.get('/api/icrp116/check-xsdir', (req, res) => {
             recommended,
             message: available.length
                 ? `检测到光子截面库: ${available.join(', ')}，推荐使用 ${recommended}`
-                : 'xsdir 中未找到支持的光子截面库（.70p / .12p / .04p / .24p），请安装相应数据库',
+                : 'xsdir 中未找到光子截面库条目（.70p / .12p / .04p / .24p 均未检出实际数据行）。\n'
+                  + '这意味着 MCNP5 未安装光子截面数据（如 MCPLIB04）。\n'
+                  + '需从 RSICC 获取并安装光子截面库，并在 xsdir 中注册后才能运行光子输运计算。',
         });
     } catch (e) {
         res.json({ success: false, message: `读取 xsdir 失败: ${e.message}`, available: [] });

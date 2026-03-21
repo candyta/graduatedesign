@@ -85,20 +85,25 @@ AIR_MAT_ID = 200   # 干燥空气材料编号（自定义）
 
 def detect_phot_lib(xsdir_path: str) -> str:
     """
-    扫描 MCNP5 xsdir 文件，查找可用的光子截面库后缀。
+    扫描 MCNP5 xsdir 文件，使用正则表达式匹配真实的光子截面库条目。
+    xsdir 条目格式：<ZAID>.<LLp>  <AWR>  <filename>  ...
+    例如：  1000.04p   0.000000  mcplib04  0  1  0  ...
     按优先级依次检查：.70p  .12p  .04p  .24p
     返回找到的第一个后缀；若均未找到则返回 None。
     """
+    import re
     preferred = ['.70p', '.12p', '.04p', '.24p']
     try:
         with open(xsdir_path, 'r', errors='ignore') as f:
             content = f.read()
     except OSError:
         return None
+    # 在 xsdir 中寻找真实条目：行首（可有空格）的 ZAID.LLp 后跟空白字符
+    # 这样可以避免误匹配注释或路径名中的字符串
+    found = set(re.findall(r'^\s*\d+\.(\d{2,3})p\s', content, re.MULTILINE))
     for suffix in preferred:
-        # xsdir 行格式: ZAID.lib  awr  filename  ...
-        # 例如: 1000.70p  ...
-        if f'1000{suffix}' in content or f'6000{suffix}' in content:
+        digits = suffix.lstrip('.').rstrip('p')  # '.04p' -> '04'
+        if digits in found:
             return suffix
     return None
 

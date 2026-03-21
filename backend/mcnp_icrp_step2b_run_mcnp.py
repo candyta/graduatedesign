@@ -69,15 +69,19 @@ ENERGY_CASES = [
 
 def detect_phot_lib(xsdir_path: str) -> str:
     """
-    扫描 MCNP5 xsdir，查找可用的光子截面库后缀。
+    扫描 MCNP5 xsdir，使用正则表达式匹配真实的光子截面库条目。
+    只匹配行首的 ZAID.LLp 格式（避免误匹配注释/路径名中的字符串）。
     优先级: .70p > .12p > .04p > .24p
     """
+    import re
     preferred = ['.70p', '.12p', '.04p', '.24p']
     try:
         with open(xsdir_path, 'r', errors='ignore') as f:
             content = f.read()
+        found = set(re.findall(r'^\s*\d+\.(\d{2,3})p\s', content, re.MULTILINE))
         for suffix in preferred:
-            if f'1000{suffix}' in content or f'6000{suffix}' in content:
+            digits = suffix.lstrip('.').rstrip('p')  # '.04p' -> '04'
+            if digits in found:
                 return suffix
     except OSError:
         pass
@@ -264,19 +268,25 @@ def run_subprocess_logged(cmd, cwd, log_fh) -> int:
     return proc.returncode
 
 
-def resolve_phot_lib(args, log_fh) -> str:
-    """确定实际使用的光子截面库后缀，并打印说明。"""
+def resolve_phot_lib(args, log_fh):
+    """
+    确定实际使用的光子截面库后缀，并打印说明。
+    若无法确认可用库，返回 None（调用方应中止运行）。
+    """
     if args.phot_lib:
         log(f"[光子库] 使用指定后缀: {args.phot_lib}", log_fh)
         return args.phot_lib
     detected = detect_phot_lib(args.xsdir)
     if detected:
-        log(f"[光子库] 从 xsdir 自动检测: {detected}  ({args.xsdir})", log_fh)
+        log(f"[光子库] 从 xsdir 自动检测到可用库: {detected}  ({args.xsdir})", log_fh)
         return detected
-    default = '.70p'
-    log(f"[光子库] 未能读取 xsdir ({args.xsdir})，使用默认: {default}", log_fh)
-    log(f"  如果 MCNP 报告截面库缺失，请用 --phot-lib 指定正确后缀", log_fh)
-    return default
+    # 未找到任何光子截面库
+    log(f"[致命] 在 xsdir ({args.xsdir}) 中未找到任何光子截面库条目！", log_fh)
+    log(f"  xsdir 中未检出 .70p / .12p / .04p / .24p 格式的数据行。", log_fh)
+    log(f"  MCNP5 光子输运需要安装光子截面库（如 MCPLIB04）。", log_fh)
+    log(f"  请从 RSICC（https://rsicc.ornl.gov）获取 MCPLIB04 数据，", log_fh)
+    log(f"  解压到 D:\\LANL\\，并在 xsdir 中添加相应条目后重试。", log_fh)
+    return None
 
 
 def ensure_prerequisites(args, cases, log_fh) -> bool:
@@ -333,6 +343,9 @@ def ensure_prerequisites(args, cases, log_fh) -> bool:
 
     # ── Step 2：生成 .inp 文件 ─────────────────────────────────────
     phot_lib = resolve_phot_lib(args, log_fh)
+    if phot_lib is None:
+        log("[致命] 无可用光子截面库，无法生成 MCNP 输入文件，终止运行", log_fh)
+        return False
     log(f"[准备] Step2 → 生成 .inp 文件到: {inp_dir}  (光子库: {phot_lib})", log_fh)
     rc = run_subprocess_logged(
         [sys.executable,
