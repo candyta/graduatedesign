@@ -70,26 +70,27 @@ EMESH_BINS = {
     10.00: [0.000, 1.000, 3.000, 7.000, 10.500],    # 4档: 对散射+湮灭光子分档
 }
 
-# MCNP5 光子截面库后缀（适应大多数 ENDF/B-VI 安装）
-PHOT_SUFFIX = '.70p'
+# MCNP5 光子截面库后缀
+# 默认 .04p (MCPLIB04)；若安装了更新版 .70p (MCPLIB70) 会由 detect_phot_lib 自动选择
+PHOT_SUFFIX = '.04p'
 
 # 元素 Z 顺序（与 AM_media.dat 列一致）
 ELEMENT_Z_ORDER = [1, 6, 7, 8, 11, 12, 15, 16, 17, 19, 20, 26, 53]
 # Z → ZAID（光子库）
 ZAID_MAP = {
-    1:  f'1000{PHOT_SUFFIX}',   # H
-    6:  f'6000{PHOT_SUFFIX}',   # C
-    7:  f'7000{PHOT_SUFFIX}',   # N
-    8:  f'8000{PHOT_SUFFIX}',   # O
-    11: f'11000{PHOT_SUFFIX}',  # Na
-    12: f'12000{PHOT_SUFFIX}',  # Mg
-    15: f'15000{PHOT_SUFFIX}',  # P
-    16: f'16000{PHOT_SUFFIX}',  # S
-    17: f'17000{PHOT_SUFFIX}',  # Cl
-    19: f'19000{PHOT_SUFFIX}',  # K
-    20: f'20000{PHOT_SUFFIX}',  # Ca
-    26: f'26000{PHOT_SUFFIX}',  # Fe
-    53: f'53000{PHOT_SUFFIX}',  # I
+    1:  f'1000{PHOT_SUFFIX}',    # H
+    6:  f'6000{PHOT_SUFFIX}',    # C
+    7:  f'7000{PHOT_SUFFIX}',    # N
+    8:  f'8000{PHOT_SUFFIX}',    # O
+    11: f'11000{PHOT_SUFFIX}',   # Na
+    12: f'12000{PHOT_SUFFIX}',   # Mg
+    15: f'15000{PHOT_SUFFIX}',   # P
+    16: f'16000{PHOT_SUFFIX}',   # S
+    17: f'17000{PHOT_SUFFIX}',   # Cl
+    19: f'19000{PHOT_SUFFIX}',   # K
+    20: f'20000{PHOT_SUFFIX}',   # Ca
+    26: f'26000{PHOT_SUFFIX}',   # Fe
+    53: f'53000{PHOT_SUFFIX}',   # I
 }
 AIR_MAT_ID  = 200   # 干燥空气材料编号（自定义）
 AIR_UNIV    = 9000  # 空气体素宇宙编号（fill 数组中 organ_id=0 映射到此）
@@ -439,7 +440,7 @@ def main():
     parser.add_argument('--out-dir',  default='icrp_validation/mcnp_inputs')
     parser.add_argument('--phot-lib', default=None,
         help='MCNP 光子截面库后缀，例如 .70p .12p .04p .24p；'
-             '若不指定则自动从 xsdir 检测，检测失败则用默认 .70p')
+             '若不指定则自动从 xsdir 检测，检测失败则用默认 .04p (MCPLIB04)')
     parser.add_argument('--xsdir',    default=r'D:\LANL\xsdir',
         help='MCNP5 xsdir 文件路径，用于自动检测可用光子库')
     args = parser.parse_args()
@@ -455,7 +456,8 @@ def main():
             PHOT_SUFFIX = detected
             print(f'[Step2] 从 xsdir 自动检测到光子库: {PHOT_SUFFIX}  ({args.xsdir})')
         else:
-            print(f'[Step2] 未能检测 xsdir ({args.xsdir})，使用默认: {PHOT_SUFFIX}')
+            print(f'[Step2] 警告: 未能检测 xsdir ({args.xsdir})，使用默认: {PHOT_SUFFIX} (MCPLIB04)')
+            print(f'[Step2] 若您的安装使用其他库，请用 --phot-lib 指定后缀')
     ZAID_MAP = build_zaid_map(PHOT_SUFFIX)
 
     out_dir = Path(args.out_dir)
