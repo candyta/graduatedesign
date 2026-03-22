@@ -23,40 +23,36 @@ import re
 from pathlib import Path
 
 
-def extract_mesh_tally(mesh_file: str, grid_shape: tuple = None) -> np.ndarray:
+def extract_mesh_tally(mesh_file: str, grid_shape: tuple = None) -> dict:
     """
-    从Mesh Tally文件提取数据
-    
-    自动从meshtal文件头部解析实际的网格尺寸（IINTS/JINTS/KINTS），
-    不依赖外部传入的 grid_shape，避免尺寸不匹配导致的数据解析错误。
-    
-    MCNP5 meshtal 格式：
-      Mesh Tally Number  14
-        ...
-        X direction:   x0  x1  x2  ...  xN   (N个边界 = N-1个bin = IINTS)
-        Y direction:   y0  y1  ...
-        Z direction:   z0  z1  ...
-        Energy bin boundaries: ...
-      
-      X         Y         Z     Result      Rel Error
-      x1  y1  z1  val  err
-      ...
+    从Mesh Tally文件提取数据，自动检测是否有 EMESH 能量分档。
+
+    返回 dict:
+      'total'  : np.ndarray shape (nz, ny, nx)  — 全能量合计注量
+      'bins'   : list of np.ndarray (nz,ny,nx)  — 各能量档注量（无 EMESH 时为空列表）
+      'e_bounds': list of float  — 能量档边界 (MeV)（无 EMESH 时为空列表）
+      'n_ebins': int             — 能量档数量（无 EMESH 时为 0）
+      'nx','ny','nz': int
+
+    MCNP5 meshtal 格式（含 EMESH 时）:
+      每行: X_center Y_center Z_center E_upper Result Rel_Error
+      外层循环 Z(慢) → Y → X → E(快)
     """
     print("\n[从Mesh Tally提取]")
     print(f"文件: {mesh_file}")
-    
+
     if not Path(mesh_file).exists():
         raise FileNotFoundError(f"Mesh tally文件不存在: {mesh_file}")
-    
+
     with open(mesh_file, 'r', encoding='utf-8', errors='ignore') as f:
         lines = f.readlines()
-    
-    # ===== 第一遍：从meshtal头部解析真实网格尺寸 =====
+
+    # ===== 第一遍：从meshtal头部解析网格尺寸 + 能量分档 =====
     in_mesh14 = False
-    x_bins, y_bins, z_bins = None, None, None
     parsing_dir = None
-    dir_values = {'X': [], 'Y': [], 'Z': []}
-    
+    dir_values  = {'X': [], 'Y': [], 'Z': []}
+    e_bounds    = []   # 能量档边界
+
     for i, line in enumerate(lines):
         if 'Mesh Tally Number' in line and '14' in line:
             in_mesh14 = True
@@ -66,62 +62,80 @@ def extract_mesh_tally(mesh_file: str, grid_shape: tuple = None) -> np.ndarray:
             break
         if not in_mesh14:
             continue
-        
+
         stripped = line.strip()
+
         # 解析 "X direction:" / "Y direction:" / "Z direction:" 行
+        matched_dir = False
         for axis in ('X', 'Y', 'Z'):
             if stripped.lower().startswith(f'{axis.lower()} direction'):
                 parsing_dir = axis
-                # 同一行后面可能就有数值
                 rest = stripped.split(':', 1)[-1].strip()
-                if rest:
-                    for tok in rest.split():
-                        try:
-                            dir_values[axis].append(float(tok))
-                        except ValueError:
-                            pass
+                for tok in rest.split():
+                    try:
+                        dir_values[axis].append(float(tok))
+                    except ValueError:
+                        pass
+                matched_dir = True
                 break
-        else:
-            # 继续读取上一个方向的数值
-            if parsing_dir and stripped and not any(
-                k in stripped for k in ('direction', 'Energy', 'Result', 'Tally', '===', '---')):
-                # 如果遇到新的方向关键词或空行，停止当前方向解析
+
+        if not matched_dir:
+            # 解析能量档边界行 "Energy bin boundaries: ..."
+            if 'energy bin' in stripped.lower() or 'energy boundaries' in stripped.lower():
+                parsing_dir = 'E'
+                rest = stripped.split(':', 1)[-1].strip()
+                for tok in rest.split():
+                    try:
+                        e_bounds.append(float(tok))
+                    except ValueError:
+                        pass
+            elif parsing_dir and stripped and not any(
+                    k in stripped.lower() for k in
+                    ('direction', 'result', 'tally', '===', '---', 'number')):
                 if stripped.lower().startswith(('x ', 'y ', 'z ')):
                     parsing_dir = None
                 else:
+                    target = dir_values[parsing_dir] if parsing_dir in ('X', 'Y', 'Z') else e_bounds
                     for tok in stripped.split():
                         try:
-                            dir_values[parsing_dir].append(float(tok))
+                            target.append(float(tok))
                         except ValueError:
                             pass
-        
-        # 遇到数据表头就停止头部解析
+
+        # 遇到数据表头停止头部解析
         if 'Result' in stripped and 'Rel' in stripped:
             break
-    
-    # 边界数量 = bin数量 + 1
+
+    # 确定网格尺寸
     if dir_values['X'] and dir_values['Y'] and dir_values['Z']:
         nx = len(dir_values['X']) - 1
         ny = len(dir_values['Y']) - 1
         nz = len(dir_values['Z']) - 1
-        print(f"OK 从meshtal头部读取网格: {nx}×{ny}×{nz} (自动检测)")
+        print(f"OK 从meshtal头部读取网格: {nx}×{ny}×{nz}")
     elif grid_shape is not None:
         nx, ny, nz = grid_shape
-        print(f"[警告] 未能从meshtal头部读取网格，使用传入的 grid_shape: {nx}×{ny}×{nz}")
+        print(f"[警告] 使用传入的 grid_shape: {nx}×{ny}×{nz}")
     else:
-        # 最后的fallback：使用FMESH shape//2
         nx, ny, nz = 127, 63, 111
         print(f"[警告] 使用默认fallback网格: {nx}×{ny}×{nz}")
-    
-    expected_size = nx * ny * nz
-    print(f"网格: {nx}×{ny}×{nz} = {expected_size} 体素")
-    
+
+    n_ebins = max(len(e_bounds) - 1, 0)
+    if n_ebins > 0:
+        print(f"OK 检测到 EMESH: {n_ebins} 个能量档，边界 = {e_bounds} MeV")
+    else:
+        print("  无 EMESH，提取全能量总注量")
+
+    expected_voxels = nx * ny * nz
+    # 含 EMESH 时，每个体素有 n_ebins 行数据
+    expected_rows = expected_voxels * max(n_ebins, 1)
+    print(f"网格: {nx}×{ny}×{nz} = {expected_voxels} 体素，期望数据行 = {expected_rows}")
+
     # ===== 第二遍：提取数据值 =====
     in_mesh14 = False
     values = []
     data_start_found = False
-    
-    for i, line in enumerate(lines):
+
+    for line in lines:
         if 'Mesh Tally Number' in line and '14' in line:
             in_mesh14 = True
             data_start_found = False
@@ -130,68 +144,77 @@ def extract_mesh_tally(mesh_file: str, grid_shape: tuple = None) -> np.ndarray:
             break
         if not in_mesh14:
             continue
-        
-        # 检测数据表头
+
         if any(k in line for k in ['Result', 'Rel Error', 'Rel. Error']):
             data_start_found = True
             continue
-        
         if not data_start_found:
             continue
-        
+
         stripped = line.strip()
         if not stripped or stripped.startswith(('#', 'c', 'C')):
             continue
-        
+
         parts = stripped.split()
         if len(parts) < 2:
             continue
-        
+
         try:
             if len(parts) >= 6:
                 result = float(parts[4])   # X Y Z Energy Result Error
             elif len(parts) >= 5:
                 result = float(parts[3])   # X Y Z Result Error
             elif len(parts) >= 2:
-                result = float(parts[0])   # Result Error
+                result = float(parts[0])
             else:
                 continue
-            
             if abs(result) > 1e30 or result < 0:
                 result = 0.0
             values.append(result)
         except (ValueError, IndexError):
             continue
-    
+
     print(f"提取值数量: {len(values)}")
-    
+
     if len(values) == 0:
         print("[错误] 未提取到任何数据！")
-        return np.zeros((nz, ny, nx), dtype=np.float64)
-    
-    if len(values) < expected_size:
-        print(f"[警告] 数据不足，用零填充 (实际{len(values)}, 期望{expected_size})")
-        values.extend([0.0] * (expected_size - len(values)))
-    elif len(values) > expected_size:
-        print(f"[警告] 数据过多，截断 (实际{len(values)}, 期望{expected_size})")
-        values = values[:expected_size]
-    
-    # MCNP5 FMESH 输出顺序: i(X) 变化最快（内层），k(Z) 变化最慢（外层）
-    # 依据 MCNP5 User's Manual: "the first index (x) varies most rapidly,
-    # and the last index (z) varies slowest."
-    # 正确 reshape: (nz, ny, nx) → array[iz, iy, ix] = 位置 (ix, iy, iz) 的注量
-    # 上游 prepare_mcnp_fluence 会做 transpose(2,1,0) → (nx, ny, nz) 与掩膜对齐
-    dose_array = np.array(values, dtype=np.float64).reshape((nz, ny, nx))
-    
-    non_zero = np.count_nonzero(dose_array)
-    print("\nOK 数组重塑完成")
-    print(f"  形状(nz,ny,nx): {dose_array.shape}")
-    print(f"  非零值: {non_zero} ({non_zero/dose_array.size*100:.1f}%)")
-    print(f"  数值范围: {dose_array.min():.2e} ~ {dose_array.max():.2e}")
-    if dose_array.max() > 0:
-        print(f"  平均值: {dose_array.mean():.2e}")
-    
-    return dose_array
+        total = np.zeros((nz, ny, nx), dtype=np.float64)
+        return {'total': total, 'bins': [], 'e_bounds': e_bounds,
+                'n_ebins': 0, 'nx': nx, 'ny': ny, 'nz': nz}
+
+    # ===== 重塑数据 =====
+    # MCNP5 FMESH 输出顺序: Z(慢) → Y → X → E(快，仅 EMESH 时)
+    if n_ebins > 0:
+        # 有 EMESH: shape (nz, ny, nx, n_ebins)
+        total_expected = expected_voxels * n_ebins
+        if len(values) < total_expected:
+            values.extend([0.0] * (total_expected - len(values)))
+        elif len(values) > total_expected:
+            values = values[:total_expected]
+        arr = np.array(values, dtype=np.float64).reshape((nz, ny, nx, n_ebins))
+        bins_list = [arr[:, :, :, k] for k in range(n_ebins)]
+        total = arr.sum(axis=3)
+    else:
+        # 无 EMESH: shape (nz, ny, nx)
+        if len(values) < expected_voxels:
+            values.extend([0.0] * (expected_voxels - len(values)))
+        elif len(values) > expected_voxels:
+            values = values[:expected_voxels]
+        total = np.array(values, dtype=np.float64).reshape((nz, ny, nx))
+        bins_list = []
+
+    non_zero = int(np.count_nonzero(total))
+    print(f"\nOK 数组重塑完成  形状(nz,ny,nx)={total.shape}  "
+          f"非零={non_zero}({non_zero/total.size*100:.1f}%)  "
+          f"范围[{total.min():.2e}, {total.max():.2e}]  均值={total.mean():.2e}")
+
+    return {'total': total, 'bins': bins_list, 'e_bounds': e_bounds,
+            'n_ebins': n_ebins, 'nx': nx, 'ny': ny, 'nz': nz}
+
+
+def _legacy_array_from_result(result: dict) -> np.ndarray:
+    """向后兼容：从新格式 dict 返回旧格式 ndarray(nz,ny,nx)。"""
+    return result['total']
 
 
 def extract_from_standard_output(output_file: str) -> np.ndarray:
@@ -227,83 +250,99 @@ def extract_from_standard_output(output_file: str) -> np.ndarray:
     )
 
 
-def extract_dose_from_mcnp(output_file: str, 
-                           grid_shape: tuple = (254, 127, 222)) -> np.ndarray:
+def extract_dose_from_mcnp(output_file: str,
+                           grid_shape: tuple = (254, 127, 222)) -> dict:
     """
-    主提取函数：自动选择合适的提取方法
-    
+    主提取函数：自动选择合适的提取方法，支持 EMESH 能量分档。
+
     Parameters:
     -----------
-    output_file : str
-        MCNP输出文件路径 (xxx.o)
-    grid_shape : tuple
-        网格形状 (nx, ny, nz)，默认ICRP-110尺寸
-        
+    output_file : str  — MCNP输出文件路径 (xxx.o)
+    grid_shape  : tuple — 网格形状 (nx, ny, nz)
+
     Returns:
     --------
-    np.ndarray: 3D剂量数组 (nz, ny, nx)
+    dict 含:
+      'total'   : np.ndarray (nz,ny,nx)  全能量合计注量
+      'bins'    : list of ndarray         各能量档注量（无 EMESH 时为空列表）
+      'e_bounds': list of float           能量档边界 MeV
+      'n_ebins' : int
     """
-    print("="*60)
+    print("=" * 60)
     print("MCNP剂量数据提取")
-    print("="*60)
+    print("=" * 60)
     print(f"输入文件: {output_file}")
     print(f"目标网格: {grid_shape[0]}×{grid_shape[1]}×{grid_shape[2]}")
-    
+
     output_path = Path(output_file)
-    
-    # 方法1: 查找Mesh Tally文件
-    # 尝试多种可能的命名
+
     possible_mesh_files = [
-        output_path.parent / f"{output_path.stem}m.msht",  # 标准命名 (xxxm.msht)
-        output_path.parent / "meshtal",                      # MCNP5默认命名
-        output_path.parent / f"mesh{output_path.stem}",     # 变体命名
-        output_path.parent / f"{output_path.stem}.meshtal", # 另一种变体
+        output_path.parent / f"{output_path.stem}m.msht",
+        output_path.parent / "meshtal",
+        output_path.parent / f"mesh{output_path.stem}",
+        output_path.parent / f"{output_path.stem}.meshtal",
     ]
-    
+
     mesh_file = None
     for candidate in possible_mesh_files:
         if candidate.exists():
             mesh_file = candidate
             print(f"\n[成功] 找到Mesh Tally文件: {mesh_file}")
             break
-    
+
     if mesh_file:
-        print("\n尝试从Mesh Tally文件提取...")
         try:
-            dose_array = extract_mesh_tally(str(mesh_file), grid_shape)
+            result = extract_mesh_tally(str(mesh_file), grid_shape)
         except Exception as e:
             print(f"[警告] Mesh Tally提取失败: {e}")
-            print("尝试从标准输出提取...")
-            dose_array = extract_from_standard_output(output_file)
+            raise RuntimeError(f"meshtal 提取失败: {e}") from e
     else:
-        print(f"\n[失败] 未找到Mesh Tally文件（尝试了 {len(possible_mesh_files)} 个可能的位置）")
+        print(f"\n[失败] 未找到Mesh Tally文件")
         for pf in possible_mesh_files:
             print(f"  - {pf}")
-        print("尝试从标准输出提取...")
-        dose_array = extract_from_standard_output(output_file)
-    
-    # 验证结果
-    print("\n[提取结果]")
-    print(f"数组形状: {dose_array.shape}")
-    print(f"数据类型: {dose_array.dtype}")
-    print(f"数值范围: {dose_array.min():.2e} ~ {dose_array.max():.2e}")
-    print(f"平均值: {dose_array.mean():.2e}")
-    print(f"非零值比例: {np.count_nonzero(dose_array) / dose_array.size * 100:.1f}%")
-    
-    return dose_array
+        extract_from_standard_output(output_file)   # 会抛出异常
+        result = None  # 不会到达此行
+
+    dose_array = result['total']
+    print(f"\n[提取结果] 形状={dose_array.shape}  "
+          f"范围=[{dose_array.min():.2e}, {dose_array.max():.2e}]  "
+          f"均值={dose_array.mean():.2e}  "
+          f"非零={np.count_nonzero(dose_array)/dose_array.size*100:.1f}%")
+    if result['n_ebins'] > 0:
+        print(f"  EMESH: {result['n_ebins']} 档，边界={result['e_bounds']} MeV")
+
+    return result
 
 
-def save_dose_npy(dose_array: np.ndarray, output_path: str):
-    """保存剂量数据为.npy格式"""
+def save_dose_npy(result, output_path: str):
+    """
+    保存提取结果为 .npy 文件（向后兼容 + EMESH 扩展）。
+
+    - fluence_E*.npy          : 总注量 (nz,ny,nx)（始终保存）
+    - fluence_E*_bin{k}.npy   : 第 k 档注量 (nz,ny,nx)（仅 EMESH 时保存）
+    - fluence_E*_ebounds.npy  : 能量档边界 (nz,ny,nx) → 1D array（仅 EMESH 时保存）
+    """
+    # 向后兼容：允许直接传入 ndarray
+    if isinstance(result, np.ndarray):
+        result = {'total': result, 'bins': [], 'e_bounds': [], 'n_ebins': 0}
+
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    np.save(output_path, dose_array)
-    file_size = output_path.stat().st_size
-    
-    print("\n[成功] 剂量数据已保存")
-    print(f"  路径: {output_path}")
-    print(f"  大小: {file_size / 1024:.1f} KB")
+
+    np.save(output_path, result['total'])
+    print(f"\n[成功] 总注量已保存: {output_path}  ({output_path.stat().st_size/1024:.1f} KB)")
+
+    if result['n_ebins'] > 0:
+        stem = output_path.stem   # e.g. "fluence_E1.000MeV"
+        suffix = output_path.suffix
+        parent = output_path.parent
+        for k, bin_arr in enumerate(result['bins']):
+            bin_path = parent / f"{stem}_bin{k}{suffix}"
+            np.save(bin_path, bin_arr)
+            print(f"  bin{k}: {bin_path}  ({bin_path.stat().st_size/1024:.1f} KB)")
+        eb_path = parent / f"{stem}_ebounds{suffix}"
+        np.save(eb_path, np.array(result['e_bounds'], dtype=np.float64))
+        print(f"  能量档边界: {eb_path}")
 
 
 def main():
@@ -325,10 +364,10 @@ def main():
     
     try:
         # 提取剂量
-        dose_array = extract_dose_from_mcnp(output_file)
-        
-        # 保存为.npy
-        save_dose_npy(dose_array, npy_path)
+        result = extract_dose_from_mcnp(output_file)
+
+        # 保存为.npy（支持 EMESH 分档）
+        save_dose_npy(result, npy_path)
         
         print("\n" + "="*60)
         print("[成功] 完成！")
