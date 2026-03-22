@@ -415,7 +415,7 @@ def generate_input_file(mask: np.ndarray, organs: dict, media: dict,
 def main():
     parser = argparse.ArgumentParser(description='ICRP-110 验证 Step2: 生成 MCNP5 AP 输入')
     parser.add_argument('--mask',     default='icrp_validation/organ_mask_127x63x111.npy')
-    parser.add_argument('--zip',      default='P110 data V1.2/AM.zip')
+    parser.add_argument('--zip',      default='../P110 data V1.2/AM.zip')
     parser.add_argument('--out-dir',  default='icrp_validation/mcnp_inputs')
     parser.add_argument('--phot-lib', default=None,
         help='MCNP 光子截面库后缀，例如 .70p .12p .04p .24p；'

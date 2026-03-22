@@ -200,7 +200,7 @@ def build_organ_mask(voxel_ds: np.ndarray, organs: dict) -> tuple:
 
 def main():
     parser = argparse.ArgumentParser(description='ICRP-110 验证 Step1: 生成器官掩膜')
-    parser.add_argument('--data-zip', default='P110 data V1.2/AM.zip',
+    parser.add_argument('--data-zip', default='../P110 data V1.2/AM.zip',
                         help='AM.zip 路径')
     parser.add_argument('--out-dir', default='./icrp_validation',
                         help='输出目录')

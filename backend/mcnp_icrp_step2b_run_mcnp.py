@@ -38,7 +38,7 @@ from pathlib import Path
 # ─── 前置步骤脚本 / 数据路径（相对于 backend 目录） ─────────────
 STEP1_SCRIPT  = "mcnp_icrp_step1_organ_mask.py"
 STEP2_SCRIPT  = "mcnp_icrp_step2_gen_input.py"
-ICRP110_ZIP   = os.path.join("P110 data V1.2", "AM.zip")
+ICRP110_ZIP   = os.path.join("..", "P110 data V1.2", "AM.zip")
 ORGAN_MASK    = os.path.join("icrp_validation", "organ_mask_127x63x111.npy")
 
 # ─── 默认路径（与现有 run_batch.py / g5.bat 体系一致） ───────────

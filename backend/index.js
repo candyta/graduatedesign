@@ -2546,7 +2546,7 @@ app.post('/api/icrp116/cancel', (req, res) => {
  */
 const ICRP116_STEP3_SCRIPT = path.join(__dirname, 'mcnp_icrp_step3_compare.py');
 const ICRP116_MASK_PATH    = path.join(__dirname, 'icrp_validation', 'organ_mask_127x63x111.npy');
-const ICRP116_ZIP_PATH     = path.join(__dirname, 'P110 data V1.2', 'AM.zip');
+const ICRP116_ZIP_PATH     = path.join(__dirname, '..', 'P110 data V1.2', 'AM.zip');
 const ICRP116_CSV_PATH     = path.join(ICRP116_OUT_DIR, 'icrp116_comparison.csv');
 const ICRP116_PNG_PATH     = path.join(ICRP116_OUT_DIR, 'icrp116_comparison.png');
 

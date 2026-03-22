@@ -353,7 +353,7 @@ def main():
         default=r"icrp_validation/organ_mask_127x63x111.npy",
         help="Step1 生成的器官掩膜路径")
     parser.add_argument("--zip",
-        default=r"P110 data V1.2/AM.zip",
+        default=r"../P110 data V1.2/AM.zip",
         help="ICRP-110 AM.zip 路径（含 AM_organs.dat）")
     parser.add_argument("--no-plot", action="store_true",
         help="跳过生成图表")
