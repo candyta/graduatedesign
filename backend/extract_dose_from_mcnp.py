@@ -176,9 +176,12 @@ def extract_mesh_tally(mesh_file: str, grid_shape: tuple = None) -> np.ndarray:
         print(f"[警告] 数据过多，截断 (实际{len(values)}, 期望{expected_size})")
         values = values[:expected_size]
     
-    # MCNP FMESH输出顺序: X最外层循环，Z最内层（X变化最慢，Z变化最快）
-    # reshape为 (nx, ny, nz) 再转置为 (nz, ny, nx) 符合SimpleITK约定
-    dose_array = np.array(values, dtype=np.float64).reshape((nx, ny, nz)).transpose(2, 1, 0)
+    # MCNP5 FMESH 输出顺序: i(X) 变化最快（内层），k(Z) 变化最慢（外层）
+    # 依据 MCNP5 User's Manual: "the first index (x) varies most rapidly,
+    # and the last index (z) varies slowest."
+    # 正确 reshape: (nz, ny, nx) → array[iz, iy, ix] = 位置 (ix, iy, iz) 的注量
+    # 上游 prepare_mcnp_fluence 会做 transpose(2,1,0) → (nx, ny, nz) 与掩膜对齐
+    dose_array = np.array(values, dtype=np.float64).reshape((nz, ny, nx))
     
     non_zero = np.count_nonzero(dose_array)
     print("\nOK 数组重塑完成")
