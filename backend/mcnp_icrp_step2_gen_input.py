@@ -59,19 +59,16 @@ SRC_Y = -(PHANT_Y + 2.0)
 # 4 个验证能量点 (MeV)
 ENERGIES_MEV = [0.01, 0.10, 1.00, 10.00]
 
-# FMESH EMESH 能量分档（用于 energy-resolved 注量→剂量换算，解决散射光子能量高估问题）
-# 格式: {能量(MeV): [上界列表(MeV)]}
-# MCNP5 EMESH 卡格式: EMESH=n  e1  e2  ...  en
-#   n  = bin 数量
-#   e1 < e2 < ... < en 为每个 bin 的【上界】；下界隐含为 0（粒子截止能量）
-# ⚠ 不要包含 0.000 作为第一个值——MCNP5 会检查 e1 > 0（严格递增），0.000 会触发
-#   "entries are not monotonically increasing" 致命错误。
-EMESH_BINS = {
-    0.01:  [0.012],                         # 1档: 10 keV 光子（Compton 散射后能量变化极小）
-    0.10:  [0.050, 0.095, 0.110],           # 3档: 低能散射 / 中能散射 / 初级
-    1.00:  [0.200, 0.500, 0.800, 1.050],   # 4档: 逐步覆盖 Compton 散射光子
-    10.00: [1.000, 3.000, 7.000, 10.500],  # 4档: 散射光子 + 湮灭光子
-}
+# FMESH EMESH 能量分档（energy-resolved 注量→剂量换算，消除散射光子高估）
+# ⚠ MCNP5 1.14 (ld=05052003) EMESH 卡不兼容：无论格式如何均报
+#   "fatal error. entries are not monotonically increasing."
+# 目前置空禁用，Step3 自动回退到总注量模式。
+# 参考分档设计（待 MCNP5 1.60+/MCNP6 环境验证后启用）：
+#   0.01:  [0.012]
+#   0.10:  [0.050, 0.095, 0.110]
+#   1.00:  [0.200, 0.500, 0.800, 1.050]
+#   10.00: [1.000, 3.000, 7.000, 10.500]
+EMESH_BINS = {}   # 置空 → 禁用 EMESH
 
 # MCNP5 光子截面库后缀
 # 默认 .04p (MCPLIB04)；若安装了更新版 .70p (MCPLIB70) 会由 detect_phot_lib 自动选择
