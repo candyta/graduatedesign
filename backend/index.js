@@ -415,7 +415,9 @@ app.post('/generate-wholebody-dose-map', async (req, res) => {
         
         // 优先在dose_results中查找（run_batch.py生成的位置）
         if (fs.existsSync(doseResultsDir)) {
-            doseFiles = fs.readdirSync(doseResultsDir).filter(f => f.endsWith('.npy'));
+            // 排除 EMESH 辅助文件（_ebounds.npy, _bin0.npy 等），只取主剂量文件
+            doseFiles = fs.readdirSync(doseResultsDir).filter(f =>
+                f.endsWith('.npy') && !f.includes('_ebounds') && !/_bin\d+\.npy$/.test(f));
             if (doseFiles.length > 0) {
                 // 使用最新的文件（按修改时间排序）
                 const sortedFiles = doseFiles.map(f => ({
@@ -431,7 +433,8 @@ app.post('/generate-wholebody-dose-map', async (req, res) => {
         // 如果dose_results中没有，再在dose_png目录查找
         if (!doseNpyPath) {
             if (fs.existsSync(dosePngDir)) {
-                doseFiles = fs.readdirSync(dosePngDir).filter(f => f.endsWith('.npy'));
+                doseFiles = fs.readdirSync(dosePngDir).filter(f =>
+                    f.endsWith('.npy') && !f.includes('_ebounds') && !/_bin\d+\.npy$/.test(f));
                 if (doseFiles.length > 0) {
                     doseNpyPath = path.join(dosePngDir, doseFiles[0]);
                     console.log(`✓ 在dose_png中找到剂量文件: ${doseNpyPath}`);
@@ -590,7 +593,8 @@ app.post('/reapply-dose-organs', async (req, res) => {
         // 查找剂量文件（与 generate-wholebody-dose-map 相同逻辑）
         let doseNpyPath = null;
         if (fs.existsSync(doseResultsDir)) {
-            const doseFiles = fs.readdirSync(doseResultsDir).filter(f => f.endsWith('.npy'));
+            const doseFiles = fs.readdirSync(doseResultsDir).filter(f =>
+                f.endsWith('.npy') && !f.includes('_ebounds') && !/_bin\d+\.npy$/.test(f));
             if (doseFiles.length > 0) {
                 const sorted = doseFiles.map(f => ({
                     name: f, time: fs.statSync(path.join(doseResultsDir, f)).mtime.getTime()
@@ -599,7 +603,8 @@ app.post('/reapply-dose-organs', async (req, res) => {
             }
         }
         if (!doseNpyPath && fs.existsSync(dosePngDir)) {
-            const doseFiles = fs.readdirSync(dosePngDir).filter(f => f.endsWith('.npy'));
+            const doseFiles = fs.readdirSync(dosePngDir).filter(f =>
+                f.endsWith('.npy') && !f.includes('_ebounds') && !/_bin\d+\.npy$/.test(f));
             if (doseFiles.length > 0) doseNpyPath = path.join(dosePngDir, doseFiles[0]);
         }
         if (!doseNpyPath) throw new Error('未找到剂量数据文件(.npy)');
