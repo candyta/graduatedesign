@@ -259,13 +259,19 @@ def write_surface_section(f):
     f.write(f'15  pz   {hz:.4f}\n')
     f.write(f'16  pz  -{hz:.4f}\n')
     f.write('c\n')
-    f.write(f'c Phantom bounding box ({PHANT_X:.3f} x {PHANT_Y:.3f} x {PHANT_Z:.3f} cm)\n')
-    f.write(f'111  px   {PHANT_X:.3f}\n')
-    f.write(f'112  px  -{PHANT_X:.3f}\n')
-    f.write(f'113  py   {PHANT_Y:.3f}\n')
-    f.write(f'114  py  -{PHANT_Y:.3f}\n')
-    f.write(f'115  pz   {PHANT_Z:.3f}\n')
-    f.write(f'116  pz  -{PHANT_Z:.3f}\n')
+    # Use 4 decimal places so phantom surfaces equal the exact lattice extent.
+    # With :.3f, PHANT_X=27.1399 rounds UP to 27.140, creating a 0.0001 cm gap
+    # between the phantom bounding box and the lattice edge.  Source particles
+    # born in that sliver have no valid lattice element → "zero lattice element
+    # hit" → MCNP5 abort / hang.  Using :.4f gives 27.1399, exactly matching
+    # the lattice, eliminating the gap entirely.
+    f.write(f'c Phantom bounding box ({PHANT_X:.4f} x {PHANT_Y:.4f} x {PHANT_Z:.4f} cm)\n')
+    f.write(f'111  px   {PHANT_X:.4f}\n')
+    f.write(f'112  px  -{PHANT_X:.4f}\n')
+    f.write(f'113  py   {PHANT_Y:.4f}\n')
+    f.write(f'114  py  -{PHANT_Y:.4f}\n')
+    f.write(f'115  pz   {PHANT_Z:.4f}\n')
+    f.write(f'116  pz  -{PHANT_Z:.4f}\n')
     f.write('c\n')
     f.write('c World sphere\n')
     f.write('9999  so  300.0\n')
@@ -320,15 +326,20 @@ def write_data_section(f, unique_ids, organs, media, energy_mev):
 
     # ── 源：AP 平行光子束 ──
     f.write(f'c AP parallel photon beam  E={energy_mev:.3f} MeV\n')
-    f.write(f'c Source plane: y={SRC_Y:.3f} cm  (anterior, +Y direction)\n')
-    f.write(f'c Source area:  X=[{-PHANT_X:.3f}, {PHANT_X:.3f}]  Z=[{-PHANT_Z:.3f}, {PHANT_Z:.3f}] cm\n')
+    f.write(f'c Source plane: y={SRC_Y:.4f} cm  (anterior, +Y direction)\n')
+    f.write(f'c Source area:  X=[{-PHANT_X:.4f}, {PHANT_X:.4f}]  Z=[{-PHANT_Z:.4f}, {PHANT_Z:.4f}] cm\n')
     f.write( 'SDEF  par=2\n')
     f.write(f'      erg={energy_mev:.4f}\n')
     f.write( '      dir=1  vec=0 1 0\n')
-    f.write(f'      x=d1  y={SRC_Y:.3f}  z=d2\n')
-    f.write(f'SI1  {-PHANT_X:.3f}  {PHANT_X:.3f}\n')
+    f.write(f'      x=d1  y={SRC_Y:.4f}  z=d2\n')
+    # Use 4 decimal places so source range matches lattice extent exactly.
+    # With :.3f, SI1 would allow x up to 27.140, but the lattice only covers
+    # |x| ≤ 27.1399.  Source particles born in the 0.0001 cm gap enter the
+    # phantom container cell but find no lattice element → "zero lattice
+    # element hit".  Using :.4f clamps the range to 27.1399 (exact lattice edge).
+    f.write(f'SI1  {-PHANT_X:.4f}  {PHANT_X:.4f}\n')
     f.write( 'SP1  0  1\n')
-    f.write(f'SI2  {-PHANT_Z:.3f}  {PHANT_Z:.3f}\n')
+    f.write(f'SI2  {-PHANT_Z:.4f}  {PHANT_Z:.4f}\n')
     f.write( 'SP2  0  1\n')
     f.write('c\n')
 
@@ -342,10 +353,14 @@ def write_data_section(f, unique_ids, organs, media, energy_mev):
     f.write(f'     kmesh={PHANT_Z:.3f}  kints={NZ}\n')
     f.write('c\n')
 
-    # ── NPS ──
+    # ── NPS & time limit ──
     f.write('c Number of source histories\n')
     f.write('nps 10000000\n')
     f.write('prdmp 1000000 1000000 1\n')
+    # ctme: computer-time limit in minutes.  If MCNP5 geometry issues stall a
+    # run, it will still exit cleanly and write a partial output file rather
+    # than hanging until the Python subprocess timeout (8 h).  360 min = 6 h.
+    f.write('ctme 360\n')
 
 
 def generate_input_file(mask: np.ndarray, organs: dict, media: dict,
