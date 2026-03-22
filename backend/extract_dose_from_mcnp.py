@@ -123,6 +123,15 @@ def extract_mesh_tally(mesh_file: str, grid_shape: tuple = None) -> dict:
     # 补全下界使 e_bounds 满足 len = n_bins + 1，与 Step3 约定一致。
     if e_bounds and e_bounds[0] > 0:
         e_bounds.insert(0, 0.0)
+
+    # MCNP5 1.14 即使没有 EMESH 卡也会在 meshtal 中写出默认的 2-bin 能量结构：
+    #   [0.0, 0.001, 1e+36]  — 上界 1e36 是 MCNP5 内部"无穷大"哨兵值。
+    # 这不是真正的用户自定义 EMESH，直接使用会导致 bin1 代表能量 = sqrt(0.001×1e36)
+    # ≈ 3e16 MeV，造成剂量计算结果完全错误。检测并丢弃这类默认结构。
+    if e_bounds and e_bounds[-1] > 1000.0:
+        print(f"  [EMESH] 检测到 MCNP5 默认能量哨兵（上界={e_bounds[-1]:.0e} MeV），忽略 EMESH，使用总注量模式")
+        e_bounds = []
+
     n_ebins = max(len(e_bounds) - 1, 0)
     if n_ebins > 0:
         print(f"OK 检测到 EMESH: {n_ebins} 个能量档，边界 = {e_bounds} MeV")

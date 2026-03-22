@@ -205,12 +205,19 @@ def load_organs(zip_path: str) -> dict:
 # 核心计算
 # ═══════════════════════════════════════════════════════════════
 
-def is_data_reliable(fluence_npy: np.ndarray, energy: float = None) -> bool:
+def is_data_reliable(fluence_npy: np.ndarray, energy: float = None,
+                     mask: np.ndarray = None) -> bool:
     """
     检测 fluence 是否为可信的 MCNP 结果，还是 extract 脚本的随机数回退数据。
-    同时检测低能量点（E ≤ 0.05 MeV）的物理合理性：10 keV 光子在组织中平均自由程
-    仅 0.2 cm，深部器官注量应接近 0；若全局均值 > 20%×(1/BEAM_AREA)，
-    说明光子截面库未加载（光子无衰减穿透体模），模拟结果无效。
+    同时检测低能量点（E ≤ 0.05 MeV）的物理合理性：10 keV 光子在软组织中
+    平均自由程仅 0.04 cm，深部器官注量应接近 0。
+
+    ⚠ 全局均值不能用于判断——ICRP-110 AM 体模约 60% 体素为体外"空气"
+      （体素坐标在体模包围盒内但不属于任何器官），10 keV 光子在空气中几乎
+      不衰减（MFP≈69 cm），因此即使截面库正常，全局均值 ≈ 61% × Φ_incident。
+    正确做法：只统计组织体素（mask>0）的均值：
+      截面库正常：组织均值 ≈ 0.01~1% × Φ_incident（强衰减）
+      截面库缺失：组织均值 ≈ 100% × Φ_incident（无衰减）
 
     extract_from_standard_output 回退时返回 np.random.rand(...) * 1e-5：
       - max 恰好约 1e-5（精确上限）
@@ -226,14 +233,20 @@ def is_data_reliable(fluence_npy: np.ndarray, energy: float = None) -> bool:
         cv = nonzero.std() / nonzero.mean()
         if 0.40 < cv < 0.70:   # 均匀分布 CV = 1/sqrt(3) 约 0.577
             return False
-    # 低能量物理合理性检验：E ≤ 0.05 MeV 时，光子强衰减，全局均值应远小于入射注量
+    # 低能量物理合理性检验：E ≤ 0.05 MeV 时，只检查组织体素均值
     if energy is not None and energy <= 0.05:
-        incident_fluence = 1.0 / BEAM_AREA   # 每源粒子入射注量 (cm⁻²/sp)
-        mean_val = float(fluence_npy.mean())
-        # 正确运行时：大部分体素注量≈0，全局均值 << 0.1×incident
-        # 截面库缺失时：光子无衰减，全局均值 ≈ 0.5~0.7×incident
-        if mean_val > 0.20 * incident_fluence:
-            return False   # 物理不合理：光子未被衰减，截面库未正确加载
+        incident_fluence = 1.0 / BEAM_AREA
+        if mask is not None:
+            # fluence_npy: (NZ, NY, NX)；mask: (NX, NY, NZ) → 转置对齐
+            mask_flu = mask.transpose(2, 1, 0)   # (NZ, NY, NX)
+            tissue_sel = fluence_npy[mask_flu > 0]
+            mean_tissue = float(tissue_sel.mean()) if tissue_sel.size > 0 else 0.0
+        else:
+            mean_tissue = float(fluence_npy.mean())
+        # 截面库正常：组织均值远小于入射注量（强光电吸收）
+        # 截面库缺失：光子完全穿透，组织均值 ≈ 入射注量
+        if mean_tissue > 0.30 * incident_fluence:
+            return False   # 物理不合理：截面库未正确加载
     return True
 
 
@@ -543,7 +556,7 @@ def main():
         print(f"     fluence shape={fluence_npy.shape}  "
               f"max={fluence_npy.max():.3e}  mean={fluence_npy.mean():.3e}")
 
-        if not is_data_reliable(fluence_npy, energy):
+        if not is_data_reliable(fluence_npy, energy, mask=mask):
             max_v = fluence_npy.max()
             mean_v = fluence_npy.mean()
             if max_v <= 0:
@@ -551,14 +564,18 @@ def main():
                 print(f"     原因：MCNP 输入文件有语法错误（如材料卡格式），MCNP 提前中止，")
                 print(f"     meshtal 文件存在但无任何计分数据。")
                 print(f"     解决：拉取最新代码，重启后端，重新运行 Step2b。")
-            elif energy <= 0.05 and mean_v > 0.20 / BEAM_AREA:
+            elif energy <= 0.05:
                 incident = 1.0 / BEAM_AREA
-                ratio = mean_v / incident
+                # 计算组织均值（与 is_data_reliable 一致）
+                mask_flu = mask.transpose(2, 1, 0)
+                tissue_sel = fluence_npy[mask_flu > 0]
+                tissue_mean = float(tissue_sel.mean()) if tissue_sel.size > 0 else mean_v
+                ratio = tissue_mean / incident
                 print(f"     [数据检验] *** 物理不合理：低能光子未被衰减！ ***")
-                print(f"     E={energy} MeV 光子在软组织中平均自由程仅 ~0.2 cm，")
-                print(f"     全局均值 {mean_v:.3e} = {ratio:.1%} × 入射注量（应 < 5%）")
-                print(f"     原因：MCNP 光子截面库（如 .70p）未正确加载——光子穿透体模无任何相互作用。")
-                print(f"     解决：确认 xsdir 中含有光子截面库条目，重新运行 Step2b。")
+                print(f"     E={energy} MeV 光子在软组织中平均自由程仅 ~0.04 cm，")
+                print(f"     组织体素均值 {tissue_mean:.3e} = {ratio:.1%} × 入射注量（应 < 1%）")
+                print(f"     原因：MCNP 光子截面库未正确加载——光子穿透体模无任何相互作用。")
+                print(f"     解决：确认 xsdir 含有光子截面库条目，重新运行 Step2b。")
             else:
                 print(f"     [数据检验] 检测到无效数据（max约{max_v:.2e}，疑为随机数）")
                 print(f"     原因：MCNP 运行失败——很可能缺少光子截面库（如 .70p 未在 xsdir 中）")
@@ -579,7 +596,11 @@ def main():
 
         if use_emesh:
             e_bounds = list(np.load(eb_path))
-            n_bins   = len(e_bounds) - 1
+            # 丢弃 MCNP5 1.14 默认哨兵结构（上界 ~1e36 MeV 无物理意义）
+            if e_bounds and e_bounds[-1] > 1000.0:
+                use_emesh = False
+                print(f"     [EMESH] 检测到 MCNP5 默认哨兵（上界={e_bounds[-1]:.0e}），回退到总注量模式")
+            n_bins   = len(e_bounds) - 1 if use_emesh else 0
             fluence_bins = []
             for k in range(n_bins):
                 bin_npy = out_dir / f"{stem}_bin{k}.npy"
