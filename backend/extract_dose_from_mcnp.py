@@ -119,6 +119,10 @@ def extract_mesh_tally(mesh_file: str, grid_shape: tuple = None) -> dict:
         nx, ny, nz = 127, 63, 111
         print(f"[警告] 使用默认fallback网格: {nx}×{ny}×{nz}")
 
+    # MCNP5 EMESH 在 meshtal 头部只写上界（无隐含下界 0.0）。
+    # 补全下界使 e_bounds 满足 len = n_bins + 1，与 Step3 约定一致。
+    if e_bounds and e_bounds[0] > 0:
+        e_bounds.insert(0, 0.0)
     n_ebins = max(len(e_bounds) - 1, 0)
     if n_ebins > 0:
         print(f"OK 检测到 EMESH: {n_ebins} 个能量档，边界 = {e_bounds} MeV")

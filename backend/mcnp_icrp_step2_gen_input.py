@@ -60,14 +60,17 @@ SRC_Y = -(PHANT_Y + 2.0)
 ENERGIES_MEV = [0.01, 0.10, 1.00, 10.00]
 
 # FMESH EMESH 能量分档（用于 energy-resolved 注量→剂量换算，解决散射光子能量高估问题）
-# 格式: {能量(MeV): [能量分档边界列表(MeV)]}
-# 最后一个 bin 包含初级光子；前面 bins 捕获不同能量的散射光子
-# 每个 bin 的代表性能量（用于 μ_en/ρ 查表）同时在 Step3 中定义
+# 格式: {能量(MeV): [上界列表(MeV)]}
+# MCNP5 EMESH 卡格式: EMESH=n  e1  e2  ...  en
+#   n  = bin 数量
+#   e1 < e2 < ... < en 为每个 bin 的【上界】；下界隐含为 0（粒子截止能量）
+# ⚠ 不要包含 0.000 作为第一个值——MCNP5 会检查 e1 > 0（严格递增），0.000 会触发
+#   "entries are not monotonically increasing" 致命错误。
 EMESH_BINS = {
-    0.01:  [0.000, 0.012],                          # 1档: 10 keV Compton散射能量变化极小
-    0.10:  [0.000, 0.050, 0.095, 0.110],            # 3档: 低能散射/中能散射/初级
-    1.00:  [0.000, 0.200, 0.500, 0.800, 1.050],     # 4档: 逐步覆盖Compton散射光子
-    10.00: [0.000, 1.000, 3.000, 7.000, 10.500],    # 4档: 对散射+湮灭光子分档
+    0.01:  [0.012],                         # 1档: 10 keV 光子（Compton 散射后能量变化极小）
+    0.10:  [0.050, 0.095, 0.110],           # 3档: 低能散射 / 中能散射 / 初级
+    1.00:  [0.200, 0.500, 0.800, 1.050],   # 4档: 逐步覆盖 Compton 散射光子
+    10.00: [1.000, 3.000, 7.000, 10.500],  # 4档: 散射光子 + 湮灭光子
 }
 
 # MCNP5 光子截面库后缀
@@ -367,11 +370,11 @@ def write_data_section(f, unique_ids, organs, media, energy_mev):
     f.write(f'     kmesh={PHANT_Z:.3f}  kints={NZ}\n')
     # 添加能量分档
     bins = EMESH_BINS.get(energy_mev)
-    if bins and len(bins) >= 2:
-        n_bins = len(bins) - 1
+    if bins and len(bins) >= 1:
+        n_bins = len(bins)   # MCNP5: EMESH=n e1 e2 ... en（仅上界，下界隐含为 0）
         bin_str = '  '.join(f'{b:.3f}' for b in bins)
         f.write(f'     EMESH={n_bins}  {bin_str}\n')
-        f.write(f'c  EMESH: {n_bins} energy bins, boundaries = [{bin_str}] MeV\n')
+        f.write(f'c  EMESH: {n_bins} energy bins, upper bounds = [{bin_str}] MeV\n')
     f.write('c\n')
 
     # ── NPS & time limit ──
