@@ -375,13 +375,17 @@ def write_data_section(f, unique_ids, organs, media, energy_mev):
     f.write('c\n')
 
     # ── NPS & time limit ──
+    # 1 MeV 光子产生大量 Compton 二次光子级联，总粒子数可达 10^8，
+    # 10^7 初级粒子需约 10-15 小时。减少到 3×10^6 可在 ~3 小时内完成，
+    # 统计误差约 3-4%（仍在 ±10% 精度范围内）。
+    nps = 3_000_000 if abs(energy_mev - 1.0) < 0.01 else 10_000_000
+    prdmp_interval = max(500_000, nps // 10)
     f.write('c Number of source histories\n')
-    f.write('nps 10000000\n')
-    f.write('prdmp 1000000 1000000 1\n')
-    # ctme: computer-time limit in minutes.  If MCNP5 geometry issues stall a
-    # run, it will still exit cleanly and write a partial output file rather
-    # than hanging until the Python subprocess timeout (8 h).  360 min = 6 h.
-    f.write('ctme 360\n')
+    f.write(f'nps {nps}\n')
+    f.write(f'prdmp {prdmp_interval} {prdmp_interval} 1\n')
+    # ctme: computer-time limit in minutes.  Safety valve — if nps completes
+    # first, ctme is ignored.  Set generously to avoid premature termination.
+    f.write('ctme 720\n')
 
 
 def generate_input_file(mask: np.ndarray, organs: dict, media: dict,

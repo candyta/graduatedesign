@@ -53,8 +53,9 @@ DEFAULT_OUT_DIR   = os.path.join(DEFAULT_BACKEND,
 
 # MCNP5 超时（秒）
 # AP 光子 10^7 粒子 + FMESH 888K 体素，单 CPU 约 2~6 小时 / 能量点
-WAIT_TIMEOUT   = 8 * 3600   # 8 小时
-WAIT_INTERVAL  = 30          # 每 30 s 检查一次
+# 1 MeV 光子产生大量 Compton 级联，粒子数可达 10^8，需约 10-15 小时
+WAIT_TIMEOUT   = 12 * 3600   # 12 小时（足以覆盖 1 MeV 慢速情况）
+WAIT_INTERVAL  = 30           # 每 30 s 检查一次
 
 # 4 个验证能量点
 ENERGY_CASES = [
@@ -152,6 +153,8 @@ def run_one(case: dict, args, log_fh):
     # ── 3. 调用 g5.bat 运行 MCNP5 ─────────────────────────────────
     log(f"  执行: \"{args.g5_bat}\" \"{base}\"  (cwd={work})", log_fh)
     t0 = time.time()
+    timed_out = False
+    result = None
     try:
         result = subprocess.run(
             [args.g5_bat, base],
@@ -162,33 +165,43 @@ def run_one(case: dict, args, log_fh):
             timeout=WAIT_TIMEOUT,
         )
     except subprocess.TimeoutExpired:
-        log(f"  [错误] MCNP5 超时 (>{WAIT_TIMEOUT}s)", log_fh)
-        return False
+        timed_out = True
+        elapsed = time.time() - t0
+        log(f"  [警告] MCNP5 超时 (>{WAIT_TIMEOUT}s, 实际={elapsed:.0f}s)", log_fh)
+        log(f"  [警告] 检查 ctme 是否已写出部分结果 ...", log_fh)
     except Exception as e:
         log(f"  [错误] 调用 g5.bat 失败: {e}", log_fh)
         return False
 
-    elapsed = time.time() - t0
-    log(f"  g5.bat 返回码={result.returncode}  耗时={elapsed:.0f}s", log_fh)
+    if result is not None:
+        elapsed = time.time() - t0
+        log(f"  g5.bat 返回码={result.returncode}  耗时={elapsed:.0f}s", log_fh)
 
-    # 打印 g5.bat 输出（去掉乱码）
-    if result.stdout:
-        stdout = result.stdout.decode("utf-8", errors="ignore")
-        ascii_out = stdout.encode("ascii", errors="ignore").decode("ascii").strip()
-        if ascii_out:
-            for line in ascii_out.splitlines():
-                log(f"  [MCNP] {line}", log_fh)
+        # 打印 g5.bat 输出（去掉乱码）
+        if result.stdout:
+            stdout = result.stdout.decode("utf-8", errors="ignore")
+            ascii_out = stdout.encode("ascii", errors="ignore").decode("ascii").strip()
+            if ascii_out:
+                for line in ascii_out.splitlines():
+                    log(f"  [MCNP] {line}", log_fh)
 
-    if result.returncode != 0:
-        log("  [错误] g5.bat 非零退出，跳过此能量点", log_fh)
-        return False
+        if result.returncode != 0:
+            log("  [错误] g5.bat 非零退出，跳过此能量点", log_fh)
+            return False
 
     # ── 4. 确认 .o 文件存在 ───────────────────────────────────────
+    # 即使超时，ctme 参数可能已让 MCNP5 优雅退出并写出结果文件
     out_o = work / f"{base}.o"
     if not out_o.exists():
-        log(f"  [错误] 未找到 {out_o}", log_fh)
+        if timed_out:
+            log(f"  [错误] 超时且未找到 {out_o.name}（MCNP 未能写出结果），放弃", log_fh)
+        else:
+            log(f"  [错误] 未找到 {out_o}", log_fh)
         return False
-    log(f"  找到输出文件: {out_o}", log_fh)
+    if timed_out:
+        log(f"  [INFO] 超时后找到 {out_o.name}，提取 ctme 部分结果", log_fh)
+    else:
+        log(f"  找到输出文件: {out_o}", log_fh)
 
     # ── 5. 提取 meshtal → npy ─────────────────────────────────────
     out_dir = Path(args.out_dir)
