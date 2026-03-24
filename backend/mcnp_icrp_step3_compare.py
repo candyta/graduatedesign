@@ -406,12 +406,67 @@ def compute_h_eff_from_fluence_emesh(fluence_bins: list, e_bounds: list,
     return h_eff, organ_table
 
 
+def compute_h_eff_from_f6(f6_dict: dict, organs: dict) -> tuple:
+    """
+    从 F6:P 计分结果（散射正确的能量沉积）计算 h_E (pSv·cm²)。
+
+    f6_dict : {tally_num (str/int): {'value': MeV/g/src, 'rel_err': float}}
+    计分号 → WT_RULES 组索引: idx = (tally_num - 6) // 10 - 1
+
+    公式:
+      D_T (pGy/src)   = F6_value (MeV/g/src) × 1.602e2
+      h_E (pSv·cm²)   = Σ_T wT × D_T × BEAM_AREA
+    """
+    import json as _json
+
+    # 将 str key 转为 int
+    f6 = {int(k): v for k, v in f6_dict.items()}
+
+    organ_table = []
+    e_eff_pGy = 0.0
+
+    for tnum, info in sorted(f6.items()):
+        # 反推 WT_RULES 索引
+        idx = (tnum - 6) // 10 - 1
+        if idx < 0 or idx >= len(WT_RULES):
+            continue
+        _, wt = WT_RULES[idx]
+        val = info['value']
+        rel = info.get('rel_err', 0.0)
+        if val <= 0:
+            continue
+
+        dose_pGy = val * 1.602e2           # MeV/g/src → pGy/src
+        wt_dose  = wt * dose_pGy
+        e_eff_pGy += wt_dose
+
+        keywords = WT_RULES[idx][0]
+        dname = keywords[0]
+        # 统计有多少器官 ids 参与（仅供显示）
+        organ_table.append((dname, wt, val, dose_pGy, wt_dose, rel))
+
+    h_eff = e_eff_pGy * BEAM_AREA
+    organ_table.sort(key=lambda r: abs(r[4]), reverse=True)
+    return h_eff, organ_table
+
+
 def print_organ_table(organ_table, energy):
-    """打印器官剂量贡献明细（前 15 位）。"""
-    print(f"\n  {'器官名称':<35} {'wT':>6} {'mean Φ':>12} {'D_T(pGy)':>12} {'wT×D_T':>12}")
-    print("  " + "-" * 82)
-    for name, wt, phi, dose, contrib in organ_table[:15]:
-        print(f"  {name:<35} {wt:>6.4f} {phi:>12.3e} {dose:>12.3e} {contrib:>12.3e}")
+    """打印器官剂量贡献明细（前 15 位）。支持 F6 和 fluence 两种格式。"""
+    # F6 rows have 6 elements (name, wt, f6_val, dose, contrib, rel_err)
+    # fluence rows have 5 elements (name, wt, phi, dose, contrib)
+    use_f6 = len(organ_table) > 0 and len(organ_table[0]) == 6
+    if use_f6:
+        print(f"\n  {'器官名称':<35} {'wT':>6} {'F6(MeV/g)':>12} {'D_T(pGy)':>12} {'wT×D_T':>12} {'rel_err':>8}")
+        print("  " + "-" * 90)
+        for row in organ_table[:15]:
+            name, wt, f6v, dose, contrib, rel = row
+            print(f"  {name:<35} {wt:>6.4f} {f6v:>12.3e} {dose:>12.3e} {contrib:>12.3e} {rel:>8.4f}")
+    else:
+        print(f"\n  {'器官名称':<35} {'wT':>6} {'mean Φ':>12} {'D_T(pGy)':>12} {'wT×D_T':>12}")
+        print("  " + "-" * 82)
+        for row in organ_table[:15]:
+            name, wt, phi, dose, contrib = row
+            print(f"  {name:<35} {wt:>6.4f} {phi:>12.3e} {dose:>12.3e} {contrib:>12.3e}")
     if len(organ_table) > 15:
         print(f"  ... 共 {len(organ_table)} 个器官")
 
@@ -588,34 +643,53 @@ def main():
         fluence_ready = prepare_mcnp_fluence(fluence_npy, mask)
         print(f"     [数据检验] 通过 -> 使用 MCNP 结果")
 
-        # 检测是否存在 EMESH 能量分档文件（fluence_E*_bin0.npy, ..., ebounds.npy）
-        stem      = f"fluence_E{energy:.3f}MeV"
-        eb_path   = out_dir / f"{stem}_ebounds.npy"
-        bin0_path = out_dir / f"{stem}_bin0.npy"
-        use_emesh = eb_path.exists() and bin0_path.exists()
+        stem = f"fluence_E{energy:.3f}MeV"
 
-        if use_emesh:
-            e_bounds = list(np.load(eb_path))
-            # 丢弃 MCNP5 1.14 默认哨兵结构（上界 ~1e36 MeV 无物理意义）
-            if e_bounds and e_bounds[-1] > 1000.0:
-                use_emesh = False
-                print(f"     [EMESH] 检测到 MCNP5 默认哨兵（上界={e_bounds[-1]:.0e}），回退到总注量模式")
-            n_bins   = len(e_bounds) - 1 if use_emesh else 0
-            fluence_bins = []
-            for k in range(n_bins):
-                bin_npy = out_dir / f"{stem}_bin{k}.npy"
-                if not bin_npy.exists():
-                    use_emesh = False
-                    break
-                fluence_bins.append(prepare_mcnp_fluence(np.load(bin_npy), mask))
+        # ── 优先：F6:P 计分（散射正确的器官能量沉积） ──────────────────────
+        import json as _json
+        f6_json_path = out_dir / f"{stem}_f6doses.json"
+        use_f6 = False
+        if f6_json_path.exists():
+            try:
+                with open(f6_json_path, 'r', encoding='utf-8') as _fh:
+                    f6_dict = _json.load(_fh)
+                if f6_dict:
+                    print(f"     [F6] 加载 F6 计分 {f6_json_path.name}，{len(f6_dict)} 个器官组")
+                    h_calc, organ_table = compute_h_eff_from_f6(f6_dict, organs)
+                    use_f6 = True
+            except Exception as _e:
+                print(f"     [F6] 读取失败: {_e}，回退到注量模式")
+
+        # ── 次优：EMESH 能量分档注量 ────────────────────────────────────────
+        use_emesh = False
+        if not use_f6:
+            eb_path   = out_dir / f"{stem}_ebounds.npy"
+            bin0_path = out_dir / f"{stem}_bin0.npy"
+            use_emesh = eb_path.exists() and bin0_path.exists()
             if use_emesh:
-                print(f"     [EMESH] 使用 {n_bins} 档能量分档注量计算剂量（消除散射光子能量高估）")
-                h_calc, organ_table = compute_h_eff_from_fluence_emesh(
-                    fluence_bins, e_bounds, mask, organs)
-            else:
-                print(f"     [EMESH] 部分 bin 文件缺失，退回到总注量模式")
+                e_bounds = list(np.load(eb_path))
+                if e_bounds and e_bounds[-1] > 1000.0:
+                    use_emesh = False
+                    print(f"     [EMESH] 检测到 MCNP5 默认哨兵（上界={e_bounds[-1]:.0e}），回退到总注量模式")
+                else:
+                    n_bins = len(e_bounds) - 1
+                    fluence_bins = []
+                    for k in range(n_bins):
+                        bin_npy = out_dir / f"{stem}_bin{k}.npy"
+                        if not bin_npy.exists():
+                            use_emesh = False
+                            break
+                        fluence_bins.append(prepare_mcnp_fluence(np.load(bin_npy), mask))
+                    if use_emesh:
+                        print(f"     [EMESH] 使用 {n_bins} 档能量分档注量")
+                        h_calc, organ_table = compute_h_eff_from_fluence_emesh(
+                            fluence_bins, e_bounds, mask, organs)
+                    else:
+                        print(f"     [EMESH] 部分 bin 文件缺失，退回到总注量模式")
 
-        if not use_emesh:
+        # ── 后备：总注量 × E × μ_en/ρ（高能时系统性高估） ─────────────────
+        if not use_f6 and not use_emesh:
+            print(f"     [总注量] 使用总注量 × E × μ_en/ρ（高能时可能高估 40-88%）")
             h_calc, organ_table = compute_h_eff_from_fluence(
                 fluence_ready, mask, organs, energy)
 
@@ -624,8 +698,8 @@ def main():
 
         print_organ_table(organ_table, energy)
 
-        flag = "OK" if abs(dev) <= 10 else ("~" if abs(dev) <= 20 else "FAIL")
-        mode_tag = "[EMESH]" if use_emesh else "[MCNP]"
+        flag     = "OK" if abs(dev) <= 10 else ("~" if abs(dev) <= 20 else "FAIL")
+        mode_tag = "[F6]" if use_f6 else ("[EMESH]" if use_emesh else "[MCNP]")
         print(f"\n  {mode_tag} h_E(calc)={h_calc:.4f}  h_E(ICRP-116)={h_ref:.4f}  "
               f"dev={dev:+.1f}%  {flag}")
 

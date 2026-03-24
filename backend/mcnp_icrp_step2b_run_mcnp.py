@@ -239,6 +239,13 @@ def run_one(case: dict, args, log_fh):
         log(f"  [错误] npy 未生成: {npy_path}", log_fh)
         return False
 
+    # F6:P 计分 JSON（提取脚本自动保存，此处仅记录）
+    f6_json = out_dir / f"{npy_path.stem}_f6doses.json"
+    if f6_json.exists():
+        log(f"  [OK] F6 计分保存: {f6_json.name}", log_fh)
+    else:
+        log(f"  [INFO] 未找到 F6 计分 JSON（可能该运行未包含 F6 tallies）", log_fh)
+
     # ── 6. 保存 meshtal 副本（带能量标签） ───────────────────────
     if meshtal.exists():
         dst_meshtal = out_dir / f"meshtal_E{energy:.3f}MeV"

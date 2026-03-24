@@ -374,6 +374,64 @@ def write_data_section(f, unique_ids, organs, media, energy_mev):
         f.write(f'c  EMESH: {n_bins} energy bins, upper bounds = [{bin_str}] MeV\n')
     f.write('c\n')
 
+    # ── F6:P 器官核能沉积计分（散射光子能量自动正确处理） ──────────────────
+    # F6:P 直接统计单位质量内能量沉积 (MeV/g/src)，不需要 EMESH 能量分档，
+    # 散射光子以其实际能量贡献，消除总注量×E_source 带来的高估（1 MeV 时约 78%）。
+    # 计分号 = (WT_RULES 索引 + 1) × 10 + 6 → 16, 26, 36, ...（需与 step3 一致）
+    # WT_RULES（必须与 mcnp_icrp_step3_compare.py 中 WT_RULES 完全一致，顺序相同）
+    _WT_RULES_F6 = [
+        (['testes', 'testis'],                               0.08),
+        (['ovaries', 'ovary'],                               0.08),
+        (['colon', 'large intestine'],                       0.12),
+        (['lung'],                                           0.12),
+        (['stomach wall', 'stomach'],                        0.12),
+        (['red bone marrow', 'red marrow', 'spongiosa'],     0.12),
+        (['urinary bladder', 'bladder wall', 'bladder'],     0.04),
+        (['oesophagus', 'esophagus'],                        0.04),
+        (['liver'],                                          0.04),
+        (['thyroid'],                                        0.04),
+        (['bone surface', 'endosteum'],                      0.01),
+        (['brain'],                                          0.01),
+        (['salivary gland', 'salivary'],                     0.01),
+        (['skin'],                                           0.01),
+        (['adrenal'],                                        0.12/14),
+        (['extrathoracic', 'et region'],                     0.12/14),
+        (['gallbladder', 'gall bladder'],                    0.12/14),
+        (['heart wall', 'heart muscle', 'heart'],            0.12/14),
+        (['kidney'],                                         0.12/14),
+        (['lymph node', 'lymph'],                            0.12/14),
+        (['muscle'],                                         0.12/14),
+        (['oral mucosa'],                                    0.12/14),
+        (['pancreas'],                                       0.12/14),
+        (['prostate'],                                       0.12/14),
+        (['small intestine'],                                0.12/14),
+        (['spleen'],                                         0.12/14),
+        (['thymus'],                                         0.12/14),
+        (['uterus', 'cervix'],                               0.12/14),
+    ]
+    from collections import defaultdict as _dd
+    _rule_groups = _dd(list)
+    for _oid in sorted(unique_ids):
+        if _oid == 0 or _oid not in organs:
+            continue
+        _, _, _name = organs[_oid]
+        _nlc = _name.lower()
+        for _idx, (_kws, _wt) in enumerate(_WT_RULES_F6):
+            if any(_k in _nlc for _k in _kws):
+                _rule_groups[_idx].append(_oid)
+                break
+    if _rule_groups:
+        f.write('c F6:P organ kerma tallies — scatter-inclusive dose (MeV/g/src)\n')
+        f.write('c Tally index = (wT_rule_index+1)*10+6  →  same mapping used in step3\n')
+        for _ridx in sorted(_rule_groups.keys()):
+            _oids = _rule_groups[_ridx]
+            _kws, _wt = _WT_RULES_F6[_ridx]
+            _tnum = (_ridx + 1) * 10 + 6
+            _ostr = ' '.join(str(_o) for _o in _oids)
+            f.write(f'c  F{_tnum}: {_kws[0]}  wT={_wt:.5f}  oids={_oids[:3]}{"..." if len(_oids)>3 else ""}\n')
+            f.write(f'F{_tnum}:P  {_ostr}\n')
+        f.write('c\n')
+
     # ── NPS & time limit ──
     # 1 MeV 光子产生大量 Compton 二次光子级联，总粒子数可达 10^8，
     # 10^7 初级粒子需约 10-15 小时。减少到 3×10^6 可在 ~3 小时内完成，

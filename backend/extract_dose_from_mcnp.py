@@ -358,6 +358,90 @@ def save_dose_npy(result, output_path: str):
         print(f"  能量档边界: {eb_path}")
 
 
+def parse_f6_tallies(output_file: str) -> dict:
+    """
+    从 MCNP .o 文件中解析 F6:P 计分结果（能量沉积，MeV/g/src）。
+
+    返回 dict:
+      {tally_num (int): {'value': float, 'rel_err': float}}
+
+    MCNP5 .o 文件中 F6 计分的典型格式：
+      1tally        16          nps = ...
+                           tally type 6    energy deposition ...
+       cell  96
+             1.23456E-07   0.0012
+       ...
+       total
+             1.78902E-07   0.0008
+    """
+    import json as _json
+
+    result = {}
+    try:
+        with open(output_file, 'r', errors='ignore') as fh:
+            lines = fh.readlines()
+    except Exception:
+        return result
+
+    cur_tally = None
+    in_tally6 = False
+
+    for i, raw in enumerate(lines):
+        line = raw.strip()
+
+        # 识别 "1tally  N" 行（可能有多个空格）
+        m = re.match(r'^1tally\s+(\d+)', line)
+        if m:
+            cur_tally = int(m.group(1))
+            in_tally6 = False
+            continue
+
+        if cur_tally is None:
+            continue
+
+        # 检测是否为 type-6 tally
+        if 'tally type 6' in line.lower() or 'energy deposition' in line.lower():
+            in_tally6 = True
+            continue
+
+        if not in_tally6:
+            continue
+
+        # 找 "total" 行后的数值
+        if re.match(r'^total\b', line, re.IGNORECASE):
+            # 下一行（或同行剩余）应包含数值
+            for j in range(i + 1, min(i + 4, len(lines))):
+                nxt = lines[j].strip()
+                if not nxt:
+                    continue
+                parts = nxt.split()
+                try:
+                    val = float(parts[0])
+                    rel = float(parts[1]) if len(parts) >= 2 else 0.0
+                    result[cur_tally] = {'value': val, 'rel_err': rel}
+                    print(f"  [F6] tally {cur_tally}: {val:.4e} ± {rel:.4f} (rel)")
+                except (ValueError, IndexError):
+                    pass
+                break
+            in_tally6 = False  # 每个 tally 只取一次 total
+
+    if result:
+        print(f"[F6] 共解析 {len(result)} 个 F6:P 计分")
+    else:
+        print("[F6] 未找到 F6:P 计分结果（可能该运行未写 F6 tallies）")
+    return result
+
+
+def save_f6_json(f6_dict: dict, npy_path) -> None:
+    """将 F6 计分结果保存为 JSON 文件（与 fluence npy 同目录，同前缀）。"""
+    import json as _json
+    npy_path = Path(npy_path)
+    json_path = npy_path.parent / (npy_path.stem + '_f6doses.json')
+    with open(json_path, 'w', encoding='utf-8') as fh:
+        _json.dump(f6_dict, fh, indent=2)
+    print(f"[F6] 计分已保存: {json_path}")
+
+
 def main():
     """主函数"""
     if len(sys.argv) < 2:
@@ -366,26 +450,31 @@ def main():
         print("  python extract_dose_from_mcnp.py C:/o/w123456.o")
         print("  python extract_dose_from_mcnp.py C:/o/w123456.o dose_data.npy")
         sys.exit(1)
-    
+
     output_file = sys.argv[1]
-    
+
     # 输出路径
     if len(sys.argv) >= 3:
         npy_path = sys.argv[2]
     else:
         npy_path = Path(output_file).parent / "dose_data.npy"
-    
+
     try:
-        # 提取剂量
+        # 提取 FMESH 注量
         result = extract_dose_from_mcnp(output_file)
 
         # 保存为.npy（支持 EMESH 分档）
         save_dose_npy(result, npy_path)
-        
+
+        # 提取并保存 F6 计分（散射正确的器官剂量）
+        f6 = parse_f6_tallies(output_file)
+        if f6:
+            save_f6_json(f6, npy_path)
+
         print("\n" + "="*60)
         print("[成功] 完成！")
         print("="*60)
-        
+
     except Exception as e:
         print(f"\n[错误] 错误: {e}", file=sys.stderr)
         import traceback
