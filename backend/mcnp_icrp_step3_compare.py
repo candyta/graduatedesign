@@ -656,7 +656,26 @@ def main():
                 if f6_dict:
                     print(f"     [F6] 加载 F6 计分 {f6_json_path.name}，{len(f6_dict)} 个器官组")
                     h_calc, organ_table = compute_h_eff_from_f6(f6_dict, organs)
-                    use_f6 = True
+                    # ── 物理合理性验证 ──────────────────────────────────────
+                    # MCNP5 晶格体模中 F6 计分存在已知规范化问题：对宇宙（universe）
+                    # 单元在晶格中被复制时，MCNP5 仅以单个体素质量归一化，而非全器官
+                    # 总质量，导致结果偏大约 N_voxels 倍（可达 10^5~10^6）。
+                    # 同时，prdmp 中间存档段的 "total" 行格式含累积和而非 per-src 值，
+                    # 若解析不当可再叠加 ~NPS 倍误差，最终 h_E 虚高约 10^12 倍。
+                    # 以下检验：若 F6 计算结果远超 ICRP-116 参考值，判定为不可信数据，
+                    # 回退到 FMESH 注量模式。
+                    _h_ref_check = ICRP116_REF.get(energy, 0.0)
+                    _f6_sane = True
+                    if _h_ref_check > 0 and h_calc > 200 * _h_ref_check:
+                        print(f"     [F6] ⚠ 检测到异常大值: h_E(F6)={h_calc:.3e} pSv·cm²"
+                              f" >> ICRP-116={_h_ref_check:.4f}（>{200}×）")
+                        print(f"     [F6]   根因: MCNP5 晶格 F6 规范化问题或 prdmp 累积值未正确提取。")
+                        print(f"     [F6]   修复建议: 在 MCNP 输入中为每个 F6 tally 添加 FM 卡"
+                              f"（乘以 1/N_voxels），或升级到 MCNP6 后重新运行 Step2b。")
+                        print(f"     [F6]   本次回退到 FMESH 注量模式。")
+                        _f6_sane = False
+                    if _f6_sane:
+                        use_f6 = True
             except Exception as _e:
                 print(f"     [F6] 读取失败: {_e}，回退到注量模式")
 

@@ -411,15 +411,40 @@ def parse_f6_tallies(output_file: str) -> dict:
         # MCNP5 格式: "total  value  rel_err" 三者在同一行（strip 后 parts[0]='total'）
         # 对多单元 F6 tally，MCNP5 先输出各单元的 total，最后输出所有单元合并的 total。
         # 不在第一次找到 total 时就退出，持续更新，保证取到最后一次 total（即合并结果）。
+        #
+        # ⚠ prdmp 中间存档格式陷阱：启用 prdmp 后 MCNP5 在每个存档点输出一份完整的
+        #   tally 统计表，格式为 "total  CUMSUM  MEAN  REL_ERR"（4 列），其中
+        #   CUMSUM = NPS × MEAN（量级 ~1e6），而非每源粒子的结果。
+        #   当函数持续覆盖并取最后一次 total 时，若最后一条恰好来自 TFC/统计汇总段，
+        #   其两列均为大数（例如 2.3e8 / 1.5e7），导致 h_E 虚高 ~10^12 倍。
+        #
+        # 修正策略：
+        #   1. 若 "total" 行含 ≥4 列且 col[1] >> col[2]（prdmp CUMSUM+MEAN 格式），
+        #      则提取 col[2] 作为 per-source 值。
+        #   2. 物理上界过滤：对于面积 ~9640 cm² 的平行束，F6 理论最大值
+        #      ≈ 1/BEAM_AREA × E_max × (μ_en/ρ)_max ≈ 0.02 MeV/g/src。
+        #      任何 val > 0.05 MeV/g/src 均为不合理数据，跳过（不覆盖已有结果）。
+        _F6_PHYS_MAX = 0.05  # MeV/g/src，覆盖任意合理光子束几何的上界（×2.5 安全余量）
         if re.match(r'^total\b', line, re.IGNORECASE):
             parts = line.split()
-            # parts = ['total', value, rel_err]
+            # parts = ['total', value, rel_err]  OR  ['total', CUMSUM, MEAN, REL_ERR]
             if len(parts) >= 2:
                 try:
-                    val = float(parts[1])
-                    rel = float(parts[2]) if len(parts) >= 3 else 0.0
-                    result[cur_tally] = {'value': val, 'rel_err': rel}
-                    print(f"  [F6] tally {cur_tally}: {val:.4e} ± {rel:.4f} (rel)")
+                    v1 = float(parts[1])
+                    v2 = float(parts[2]) if len(parts) >= 3 else 0.0
+                    v3 = float(parts[3]) if len(parts) >= 4 else 0.0
+                    # prdmp 格式检测：若 v1 >> v2（CUMSUM >> MEAN），用 v2 作为 per-src 值
+                    if len(parts) >= 4 and v1 > 1e4 and v2 > 0 and v2 < v1 * 1e-3:
+                        val, rel = v2, v3   # 提取 per-source 均值和相对误差
+                    else:
+                        val, rel = v1, v2
+                    # 物理上界过滤：跳过不合理大值，保留已有的合理结果
+                    if val > _F6_PHYS_MAX:
+                        print(f"  [F6] tally {cur_tally}: 跳过不合理大值 {val:.4e} MeV/g/src"
+                              f"（>{_F6_PHYS_MAX} 物理上界，可能来自 prdmp 累积值或 TFC 段）")
+                    else:
+                        result[cur_tally] = {'value': val, 'rel_err': rel}
+                        print(f"  [F6] tally {cur_tally}: {val:.4e} ± {rel:.4f} (rel)")
                 except (ValueError, IndexError):
                     # 回退：尝试下一行（极少数 MCNP 版本把值写在下一行）
                     for j in range(i + 1, min(i + 4, len(lines))):
@@ -430,8 +455,11 @@ def parse_f6_tallies(output_file: str) -> dict:
                         try:
                             val = float(nxt_parts[0])
                             rel = float(nxt_parts[1]) if len(nxt_parts) >= 2 else 0.0
-                            result[cur_tally] = {'value': val, 'rel_err': rel}
-                            print(f"  [F6] tally {cur_tally}: {val:.4e} ± {rel:.4f} (rel) [next-line]")
+                            if val > _F6_PHYS_MAX:
+                                print(f"  [F6] tally {cur_tally}: 跳过不合理大值 {val:.4e} (next-line)")
+                            else:
+                                result[cur_tally] = {'value': val, 'rel_err': rel}
+                                print(f"  [F6] tally {cur_tally}: {val:.4e} ± {rel:.4f} (rel) [next-line]")
                         except (ValueError, IndexError):
                             pass
                         break
