@@ -289,7 +289,7 @@ def write_surface_section(f):
     f.write('9999  so  300.0\n')
 
 
-def write_data_section(f, unique_ids, organs, media, energy_mev):
+def write_data_section(f, unique_ids, organs, media, energy_mev, mask=None):
     """写 Data 卡：mode, 材料, 源, 计分卡, nps。"""
     # ── mode & physics ──
     f.write('mode p\n')
@@ -428,8 +428,14 @@ def write_data_section(f, unique_ids, organs, media, energy_mev):
             _kws, _wt = _WT_RULES_F6[_ridx]
             _tnum = (_ridx + 1) * 10 + 6
             _ostr = ' '.join(str(_o) for _o in _oids)
-            f.write(f'c  F{_tnum}: {_kws[0]}  wT={_wt:.5f}  oids={_oids[:3]}{"..." if len(_oids)>3 else ""}\n')
+            # 计算该器官组的体素数，用于 FM 归一化卡（修正 MCNP5 晶格 F6 按单体素质量归一化的问题）
+            _n_vox = int(np.sum(np.isin(mask, _oids))) if mask is not None else 0
+            _fm_str = f'  n_vox={_n_vox}' if _n_vox > 0 else '  n_vox=unknown'
+            f.write(f'c  F{_tnum}: {_kws[0]}  wT={_wt:.5f}  oids={_oids[:3]}{"..." if len(_oids)>3 else ""}{_fm_str}\n')
             f.write(f'F{_tnum}:P  {_ostr}\n')
+            # FM 卡：MCNP5 晶格中 F6 以单体素质量归一化，需乘以 1/N_voxels 修正为全器官均值
+            if _n_vox > 0:
+                f.write(f'FM{_tnum}  {1.0 / _n_vox:.8e}  $ 1/N_voxels={_n_vox}: correct lattice F6 normalization\n')
         f.write('c\n')
 
     # ── NPS & time limit ──
@@ -485,7 +491,7 @@ def generate_input_file(mask: np.ndarray, organs: dict, media: dict,
         f.write('\n')   # 空行分隔 Surface / Data
 
         # ── Data 块 ──
-        write_data_section(f, unique_ids, organs, media, energy_mev)
+        write_data_section(f, unique_ids, organs, media, energy_mev, mask)
 
     size_mb = out_path.stat().st_size / 1e6
     print(f'    写入 {out_path.name}  ({size_mb:.2f} MB)')
