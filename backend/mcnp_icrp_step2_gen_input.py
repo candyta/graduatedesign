@@ -421,8 +421,8 @@ def write_data_section(f, unique_ids, organs, media, energy_mev):
                 _rule_groups[_idx].append(_oid)
                 break
     if _rule_groups:
-        f.write('c F6:P organ kerma tallies — scatter-inclusive dose (MeV/g/src)\n')
-        f.write('c Tally index = (wT_rule_index+1)*10+6  →  same mapping used in step3\n')
+        f.write('c F6:P organ kerma tallies - scatter-inclusive dose (MeV/g/src)\n')
+        f.write('c Tally index = (wT_rule_index+1)*10+6  -> same mapping used in step3\n')
         for _ridx in sorted(_rule_groups.keys()):
             _oids = _rule_groups[_ridx]
             _kws, _wt = _WT_RULES_F6[_ridx]
