@@ -2416,6 +2416,50 @@ const ICRP116_OUT_DIR  = path.join(__dirname, 'icrp_validation', 'mcnp_outputs')
 const ICRP116_SCRIPT   = path.join(__dirname, 'mcnp_icrp_step2b_run_mcnp.py');
 
 /**
+ * 清空 mcnp_outputs 目录中的所有计算结果文件（fluence*.npy、*_f6doses.json、*.csv、*.png 等）。
+ * 保留目录本身；任务运行时拒绝执行。
+ */
+function clearIcrp116Outputs() {
+    const fs = require('fs');
+    try {
+        if (!fs.existsSync(ICRP116_OUT_DIR)) {
+            fs.mkdirSync(ICRP116_OUT_DIR, { recursive: true });
+            return { cleared: 0 };
+        }
+        const files = fs.readdirSync(ICRP116_OUT_DIR);
+        let cleared = 0;
+        for (const f of files) {
+            fs.unlinkSync(require('path').join(ICRP116_OUT_DIR, f));
+            cleared++;
+        }
+        return { cleared };
+    } catch (e) {
+        return { cleared: 0, error: e.message };
+    }
+}
+
+/**
+ * POST /api/icrp116/reset
+ * 清空 mcnp_outputs 目录，重置任务状态。
+ * 供前端页面加载时调用，确保每次从干净状态开始。
+ * 任务运行中时拒绝（返回 success: false）。
+ */
+app.post('/api/icrp116/reset', (req, res) => {
+    if (icrp116Job.running) {
+        return res.json({ success: false, message: '验证任务正在运行中，无法重置' });
+    }
+    const result = clearIcrp116Outputs();
+    icrp116Job.completed    = false;
+    icrp116Job.failed       = false;
+    icrp116Job.logs         = [];
+    icrp116Job.doneEnergies = [];
+    icrp116Job.currentCase  = null;
+    icrp116Job.startTime    = null;
+    console.log(`[ICRP116] reset: 已清空 ${result.cleared} 个文件`);
+    res.json({ success: true, cleared: result.cleared });
+});
+
+/**
  * POST /api/icrp116/start-validation
  * 启动 MCNP5 ICRP-116 验证（后台运行，立即返回）
  * body: { energies: [0.01, 0.1, 1.0, 10.0] }  // 可选，默认全部
@@ -2424,6 +2468,10 @@ app.post('/api/icrp116/start-validation', (req, res) => {
     if (icrp116Job.running) {
         return res.json({ success: false, message: '验证任务正在运行中，请等待完成或先取消' });
     }
+
+    // 每次启动前清空旧结果，避免旧 .npy 与新 f6doses.json 混用
+    const cleared = clearIcrp116Outputs();
+    console.log(`[ICRP116] start-validation: 清空旧结果 ${cleared.cleared} 个文件`);
 
     // 重置状态
     icrp116Job.running      = true;
@@ -2669,6 +2717,7 @@ app.get('/api/icrp116/check-xsdir', (req, res) => {
 });
 
 console.log('[ICRP116] API端点已加载:');
+console.log('  - POST /api/icrp116/reset');
 console.log('  - POST /api/icrp116/start-validation');
 console.log('  - GET  /api/icrp116/status');
 console.log('  - POST /api/icrp116/cancel');
