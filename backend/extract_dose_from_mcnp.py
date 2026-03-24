@@ -407,23 +407,36 @@ def parse_f6_tallies(output_file: str) -> dict:
         if not in_tally6:
             continue
 
-        # 找 "total" 行后的数值
+        # 找 "total" 行的数值
+        # MCNP5 格式: "total  value  rel_err" 三者在同一行（strip 后 parts[0]='total'）
+        # 对多单元 F6 tally，MCNP5 先输出各单元的 total，最后输出所有单元合并的 total。
+        # 不在第一次找到 total 时就退出，持续更新，保证取到最后一次 total（即合并结果）。
         if re.match(r'^total\b', line, re.IGNORECASE):
-            # 下一行（或同行剩余）应包含数值
-            for j in range(i + 1, min(i + 4, len(lines))):
-                nxt = lines[j].strip()
-                if not nxt:
-                    continue
-                parts = nxt.split()
+            parts = line.split()
+            # parts = ['total', value, rel_err]
+            if len(parts) >= 2:
                 try:
-                    val = float(parts[0])
-                    rel = float(parts[1]) if len(parts) >= 2 else 0.0
+                    val = float(parts[1])
+                    rel = float(parts[2]) if len(parts) >= 3 else 0.0
                     result[cur_tally] = {'value': val, 'rel_err': rel}
                     print(f"  [F6] tally {cur_tally}: {val:.4e} ± {rel:.4f} (rel)")
                 except (ValueError, IndexError):
-                    pass
-                break
-            in_tally6 = False  # 每个 tally 只取一次 total
+                    # 回退：尝试下一行（极少数 MCNP 版本把值写在下一行）
+                    for j in range(i + 1, min(i + 4, len(lines))):
+                        nxt = lines[j].strip()
+                        if not nxt:
+                            continue
+                        nxt_parts = nxt.split()
+                        try:
+                            val = float(nxt_parts[0])
+                            rel = float(nxt_parts[1]) if len(nxt_parts) >= 2 else 0.0
+                            result[cur_tally] = {'value': val, 'rel_err': rel}
+                            print(f"  [F6] tally {cur_tally}: {val:.4e} ± {rel:.4f} (rel) [next-line]")
+                        except (ValueError, IndexError):
+                            pass
+                        break
+            # 不在此处设置 in_tally6 = False，继续寻找同 tally 后续的合并 total。
+            # 遇到下一个 "1tally N" 行时会自动重置 cur_tally 和 in_tally6。
 
     if result:
         print(f"[F6] 共解析 {len(result)} 个 F6:P 计分")
