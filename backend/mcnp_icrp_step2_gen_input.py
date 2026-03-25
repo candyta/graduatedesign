@@ -380,10 +380,12 @@ def write_data_section(f, unique_ids, organs, media, energy_mev, mask=None):
     # 添加能量分档
     bins = EMESH_BINS.get(energy_mev)
     if bins and len(bins) >= 2:  # need at least lower bound + one upper bound
-        n_bins = len(bins) - 1   # bins[0]=0.0 lower bound + n_bins upper bounds
-        bin_str = '  '.join(f'{b:.3f}' for b in bins)
-        f.write(f'     emesh={bin_str}\n')  # MCNP5 format: no =N prefix, list all boundaries
-        f.write(f'c  EMESH: {n_bins} energy bins, boundaries=[{bin_str}] MeV\n')
+        # bins[0]=0.0 is implicit lower bound in MCNP5; only upper bounds go in the card
+        upper = bins[1:]
+        n_bins = len(upper)
+        upper_str = '  '.join(f'{b:.3f}' for b in upper)
+        f.write(f'     emesh={upper_str}\n')  # MCNP5: upper bounds only, 0.0 lower bound is implicit
+        f.write(f'c  EMESH: {n_bins} energy bins, upper bounds=[{upper_str}] MeV\n')
     f.write('c\n')
 
     # ── F6:P 器官核能沉积计分（散射光子能量自动正确处理） ──────────────────
