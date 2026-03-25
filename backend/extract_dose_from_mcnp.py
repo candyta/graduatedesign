@@ -23,9 +23,16 @@ import re
 from pathlib import Path
 
 
-def extract_mesh_tally(mesh_file: str, grid_shape: tuple = None) -> dict:
+def extract_mesh_tally(mesh_file: str, grid_shape: tuple = None,
+                       tally_num: int = 14) -> dict:
     """
     从Mesh Tally文件提取数据，自动检测是否有 EMESH 能量分档。
+
+    Parameters
+    ----------
+    mesh_file  : meshtal 文件路径
+    grid_shape : 备用网格尺寸 (nx, ny, nz)，解析失败时使用
+    tally_num  : FMESH tally 编号，默认 14（FMESH14）；多 FMESH 方案时可为 24/34
 
     返回 dict:
       'total'  : np.ndarray shape (nz, ny, nx)  — 全能量合计注量
@@ -38,7 +45,16 @@ def extract_mesh_tally(mesh_file: str, grid_shape: tuple = None) -> dict:
       每行: X_center Y_center Z_center E_upper Result Rel_Error
       外层循环 Z(慢) → Y → X → E(快)
     """
-    print("\n[从Mesh Tally提取]")
+    tnum_str = str(tally_num)
+
+    def _is_target_tally(line):
+        """判断该行是否是目标 tally 的 'Mesh Tally Number N' 行。"""
+        if 'Mesh Tally Number' not in line:
+            return False
+        parts = line.split()
+        return parts and parts[-1] == tnum_str
+
+    print(f"\n[从Mesh Tally {tally_num} 提取]")
     print(f"文件: {mesh_file}")
 
     if not Path(mesh_file).exists():
@@ -48,19 +64,19 @@ def extract_mesh_tally(mesh_file: str, grid_shape: tuple = None) -> dict:
         lines = f.readlines()
 
     # ===== 第一遍：从meshtal头部解析网格尺寸 + 能量分档 =====
-    in_mesh14 = False
+    in_target = False
     parsing_dir = None
     dir_values  = {'X': [], 'Y': [], 'Z': []}
     e_bounds    = []   # 能量档边界
 
     for i, line in enumerate(lines):
-        if 'Mesh Tally Number' in line and '14' in line:
-            in_mesh14 = True
-            print(f"OK 找到Mesh Tally 14 在第{i+1}行")
+        if _is_target_tally(line):
+            in_target = True
+            print(f"OK 找到Mesh Tally {tally_num} 在第{i+1}行")
             continue
-        if in_mesh14 and 'Mesh Tally Number' in line and '14' not in line:
+        if in_target and 'Mesh Tally Number' in line and not _is_target_tally(line):
             break
-        if not in_mesh14:
+        if not in_target:
             continue
 
         stripped = line.strip()
@@ -106,6 +122,8 @@ def extract_mesh_tally(mesh_file: str, grid_shape: tuple = None) -> dict:
         if 'Result' in stripped and 'Rel' in stripped:
             break
 
+    in_mesh14 = in_target  # 别名，供下方第二遍扫描复用
+
     # 确定网格尺寸
     if dir_values['X'] and dir_values['Y'] and dir_values['Z']:
         nx = len(dir_values['X']) - 1
@@ -149,11 +167,11 @@ def extract_mesh_tally(mesh_file: str, grid_shape: tuple = None) -> dict:
     data_start_found = False
 
     for line in lines:
-        if 'Mesh Tally Number' in line and '14' in line:
+        if _is_target_tally(line):
             in_mesh14 = True
             data_start_found = False
             continue
-        if in_mesh14 and 'Mesh Tally Number' in line and '14' not in line:
+        if in_mesh14 and 'Mesh Tally Number' in line and not _is_target_tally(line):
             break
         if not in_mesh14:
             continue
@@ -483,6 +501,37 @@ def save_f6_json(f6_dict: dict, npy_path) -> None:
     print(f"[F6] 计分已保存: {json_path}")
 
 
+def save_extra_fmesh_bins(mesh_file: str, npy_path) -> None:
+    """
+    多 FMESH 方案：从 meshtal 中提取 FMESH24 和 FMESH34 的 bin 数据，
+    保存为 {stem}_fm24_bin0.npy、{stem}_fm24_bin1.npy（以及 fm34）。
+
+    仅当 meshtal 中实际存在对应 tally 时才保存；静默跳过不存在的 tally。
+    """
+    npy_path = Path(npy_path)
+    stem   = npy_path.stem    # e.g. "fluence_E1.000MeV"
+    parent = npy_path.parent
+
+    for tnum in (24, 34):
+        tag = f'fm{tnum}'
+        try:
+            r = extract_mesh_tally(mesh_file, tally_num=tnum)
+            if r['n_ebins'] < 2:
+                print(f"  [多FMESH] FMESH{tnum} 未检测到 2 个 EMESH 档，跳过")
+                continue
+            for k, bin_arr in enumerate(r['bins']):
+                p = parent / f"{stem}_{tag}_bin{k}.npy"
+                np.save(p, bin_arr)
+                print(f"  [多FMESH] 保存 FMESH{tnum} bin{k}: {p.name}  "
+                      f"({p.stat().st_size/1024:.1f} KB)")
+            eb_path = parent / f"{stem}_{tag}_ebounds.npy"
+            np.save(eb_path, np.array(r['e_bounds'], dtype=np.float64))
+            print(f"  [多FMESH] 保存 FMESH{tnum} ebounds: {eb_path.name}")
+        except Exception as exc:
+            # meshtal 中没有该 tally 时正常（非错误）
+            print(f"  [多FMESH] FMESH{tnum} 未找到或提取失败（{exc}），跳过")
+
+
 def main():
     """主函数"""
     if len(sys.argv) < 2:
@@ -506,6 +555,18 @@ def main():
 
         # 保存为.npy（支持 EMESH 分档）
         save_dose_npy(result, npy_path)
+
+        # 多 FMESH 方案：提取 FMESH24/34 的 bin 数据（若 INP 中有定义）
+        output_path = Path(output_file)
+        possible_mesh = [
+            output_path.parent / f"{output_path.stem}m.msht",
+            output_path.parent / "meshtal",
+            output_path.parent / f"mesh{output_path.stem}",
+            output_path.parent / f"{output_path.stem}.meshtal",
+        ]
+        found_mesh = next((p for p in possible_mesh if p.exists()), None)
+        if found_mesh:
+            save_extra_fmesh_bins(str(found_mesh), npy_path)
 
         # 提取并保存 F6 计分（散射正确的器官剂量）
         f6 = parse_f6_tallies(output_file)

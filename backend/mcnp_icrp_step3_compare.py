@@ -679,9 +679,60 @@ def main():
             except Exception as _e:
                 print(f"     [F6] 读取失败: {_e}，回退到注量模式")
 
-        # ── 次优：EMESH 能量分档注量 ────────────────────────────────────────
+        # ── 次优 A：多 FMESH 4 档（fm24/fm34 文件存在时优先） ─────────────────
         use_emesh = False
         if not use_f6:
+            fm14_b0 = out_dir / f"{stem}_bin0.npy"
+            fm24_b0 = out_dir / f"{stem}_fm24_bin0.npy"
+            fm24_b1 = out_dir / f"{stem}_fm24_bin1.npy"
+            fm34_b0 = out_dir / f"{stem}_fm34_bin0.npy"
+            fm34_b1 = out_dir / f"{stem}_fm34_bin1.npy"
+            use_multifmesh = all(p.exists() for p in (fm14_b0, fm24_b0, fm24_b1, fm34_b0, fm34_b1))
+
+            if use_multifmesh:
+                # 多 FMESH 方案：从 FMESH14/24/34 的 bin 文件相减，导出 4 有效档
+                # 各 FMESH: emesh = Ci  E_max → bin0=[0,Ci], bin1=[Ci,E_max]
+                # 读取 ebounds 以确定截止能量 C1/C2/C3
+                eb14 = out_dir / f"{stem}_ebounds.npy"
+                eb24 = out_dir / f"{stem}_fm24_ebounds.npy"
+                eb34 = out_dir / f"{stem}_fm34_ebounds.npy"
+                try:
+                    bounds14 = list(np.load(eb14)) if eb14.exists() else None
+                    bounds24 = list(np.load(eb24)) if eb24.exists() else None
+                    bounds34 = list(np.load(eb34)) if eb34.exists() else None
+                    # e_bounds: [0, C1, C2, C3, E_max]
+                    c1 = bounds14[1] if bounds14 and len(bounds14) >= 3 else None
+                    c2 = bounds24[1] if bounds24 and len(bounds24) >= 3 else None
+                    c3 = bounds34[1] if bounds34 and len(bounds34) >= 3 else None
+                    e_max = (bounds14[-1] if bounds14 else
+                             bounds24[-1] if bounds24 else
+                             bounds34[-1] if bounds34 else None)
+                    if None in (c1, c2, c3, e_max):
+                        raise ValueError("无法读取多 FMESH 截止能量")
+
+                    phi14_b0 = prepare_mcnp_fluence(np.load(fm14_b0), mask)
+                    phi24_b0 = prepare_mcnp_fluence(np.load(fm24_b0), mask)
+                    phi34_b0 = prepare_mcnp_fluence(np.load(fm34_b0), mask)
+                    phi34_b1 = prepare_mcnp_fluence(np.load(fm34_b1), mask)
+
+                    # 相减导出 4 有效档注量（可能出现微小负值，钳位为 0）
+                    eff_bin0 = phi14_b0                               # [0,   C1]
+                    eff_bin1 = np.clip(phi24_b0 - phi14_b0, 0, None) # [C1,  C2]
+                    eff_bin2 = np.clip(phi34_b0 - phi24_b0, 0, None) # [C2,  C3]
+                    eff_bin3 = phi34_b1                               # [C3, E_max]
+
+                    fluence_bins = [eff_bin0, eff_bin1, eff_bin2, eff_bin3]
+                    e_bounds_4   = [0.0, c1, c2, c3, e_max]
+                    use_emesh = True
+                    print(f"     [多FMESH] 使用 4 档有效分档: {e_bounds_4} MeV")
+                    h_calc, organ_table = compute_h_eff_from_fluence_emesh(
+                        fluence_bins, e_bounds_4, mask, organs)
+                except Exception as _mfe:
+                    print(f"     [多FMESH] 构建 4 档失败（{_mfe}），回退到 2 档 EMESH")
+                    use_multifmesh = False
+
+        # ── 次优 B：常规 2 档 EMESH ──────────────────────────────────────────
+        if not use_f6 and not use_emesh:
             eb_path   = out_dir / f"{stem}_ebounds.npy"
             bin0_path = out_dir / f"{stem}_bin0.npy"
             use_emesh = eb_path.exists() and bin0_path.exists()
@@ -718,7 +769,14 @@ def main():
         print_organ_table(organ_table, energy)
 
         flag     = "OK" if abs(dev) <= 10 else ("~" if abs(dev) <= 20 else "FAIL")
-        mode_tag = "[F6]" if use_f6 else ("[EMESH]" if use_emesh else "[MCNP]")
+        if use_f6:
+            mode_tag = "[F6]"
+        elif use_emesh and 'use_multifmesh' in dir() and use_multifmesh:
+            mode_tag = "[4档EMESH]"
+        elif use_emesh:
+            mode_tag = "[EMESH]"
+        else:
+            mode_tag = "[MCNP]"
         print(f"\n  {mode_tag} h_E(calc)={h_calc:.4f}  h_E(ICRP-116)={h_ref:.4f}  "
               f"dev={dev:+.1f}%  {flag}")
 
