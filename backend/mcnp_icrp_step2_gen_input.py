@@ -60,15 +60,27 @@ SRC_Y = -(PHANT_Y + 2.0)
 ENERGIES_MEV = [0.01, 0.10, 1.00, 10.00]
 
 # FMESH EMESH 能量分档（energy-resolved 注量→剂量换算，消除散射光子高估）
-# ⚠ MCNP5 1.14 (ld=05052003) EMESH 卡不兼容：无论格式如何均报
-#   "fatal error. entries are not monotonically increasing."
-# 目前置空禁用，Step3 自动回退到总注量模式。
-# 参考分档设计（待 MCNP5 1.60+/MCNP6 环境验证后启用）：
-#   0.01:  [0.012]
-#   0.10:  [0.050, 0.095, 0.110]
-#   1.00:  [0.200, 0.500, 0.800, 1.050]
-#   10.00: [1.000, 3.000, 7.000, 10.500]
-EMESH_BINS = {}   # 置空 → 禁用 EMESH
+#
+# 根因分析：之前格式 "EMESH=N  e1 e2..." 使用了 MCNP6 count-prefix 语法。
+# MCNP5 1.14 将 "N" 解析为第一个能量边界值（如 3.0 MeV），序列
+# [N, e1, e2, ...] = [3.0, 0.200, 0.500, ...] 非单调递增 → fatal error。
+#
+# MCNP5 正确格式：emesh=e0  e1  e2  ...  eN
+#   - 无 count 前缀
+#   - e0 = 0.000（显式下界，MCNP5 不自动添加）
+#   - 后续为各档上界，共 N+1 个值 = N 个能量档
+#
+# 每档注量从 meshtal 解析后由 Step3 用该档代表能量的 μ_en/ρ 独立换算剂量，
+# 消除"散射光子×初级光子能量"的系统性高估（1 MeV 约 +78%，10 MeV 约 +88%）。
+EMESH_BINS = {
+    # 0.01 MeV：10 keV 光子 MFP~0.04 cm，几乎全被软组织吸收，散射极少 → 无需分档
+    # 0.10 MeV：[0-0.08] 散射，[0.08-0.115] 近初级（Compton 最小反散射能 0.084 MeV）
+    0.10: [0.000, 0.080, 0.115],
+    # 1.00 MeV：[0-0.2] 多重散射，[0.2-0.8] 首次 Compton 散射，[0.8-1.1] 近初级
+    1.00: [0.000, 0.200, 0.800, 1.100],
+    # 10.00 MeV：[0-1.0] 散射，[1.0-7.0] 中档，[7.0-10.5] 近初级
+    10.00: [0.000, 1.000, 7.000, 10.500],
+}
 
 # MCNP5 光子截面库后缀
 # 默认 .04p (MCPLIB04)；若安装了更新版 .70p (MCPLIB70) 会由 detect_phot_lib 自动选择
@@ -367,11 +379,11 @@ def write_data_section(f, unique_ids, organs, media, energy_mev, mask=None):
     f.write(f'     kmesh={PHANT_Z:.3f}  kints={NZ}\n')
     # 添加能量分档
     bins = EMESH_BINS.get(energy_mev)
-    if bins and len(bins) >= 1:
-        n_bins = len(bins)   # MCNP5: EMESH=n e1 e2 ... en（仅上界，下界隐含为 0）
+    if bins and len(bins) >= 2:  # need at least lower bound + one upper bound
+        n_bins = len(bins) - 1   # bins[0]=0.0 lower bound + n_bins upper bounds
         bin_str = '  '.join(f'{b:.3f}' for b in bins)
-        f.write(f'     EMESH={n_bins}  {bin_str}\n')
-        f.write(f'c  EMESH: {n_bins} energy bins, upper bounds = [{bin_str}] MeV\n')
+        f.write(f'     emesh={bin_str}\n')  # MCNP5 format: no =N prefix, list all boundaries
+        f.write(f'c  EMESH: {n_bins} energy bins, boundaries=[{bin_str}] MeV\n')
     f.write('c\n')
 
     # ── F6:P 器官核能沉积计分（散射光子能量自动正确处理） ──────────────────
