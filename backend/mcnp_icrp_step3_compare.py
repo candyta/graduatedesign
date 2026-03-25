@@ -696,6 +696,7 @@ def main():
                 eb14 = out_dir / f"{stem}_ebounds.npy"
                 eb24 = out_dir / f"{stem}_fm24_ebounds.npy"
                 eb34 = out_dir / f"{stem}_fm34_ebounds.npy"
+                _fm_mode_tag = '[4档EMESH]'
                 try:
                     bounds14 = list(np.load(eb14)) if eb14.exists() else None
                     bounds24 = list(np.load(eb24)) if eb24.exists() else None
@@ -710,25 +711,43 @@ def main():
                     if None in (c1, c2, c3, e_max):
                         raise ValueError("无法读取多 FMESH 截止能量")
 
-                    phi14_b0 = prepare_mcnp_fluence(np.load(fm14_b0), mask)
-                    phi24_b0 = prepare_mcnp_fluence(np.load(fm24_b0), mask)
-                    phi34_b0 = prepare_mcnp_fluence(np.load(fm34_b0), mask)
-                    phi34_b1 = prepare_mcnp_fluence(np.load(fm34_b1), mask)
+                    # ── 10 MeV 特殊处理：回退到 FMESH24 2 档 ──────────────────
+                    # 在 8-10 MeV 附近对产截面使 μ_en/ρ 非单调递增，
+                    # 4 档代表能量 9.17 MeV 给出 E×μ=0.183，远高于
+                    # 2 档代表能量 7.25 MeV 的 0.127，消除了原本的偶然补偿，
+                    # 反而使偏差从 +14.2% 升至 +28.9%。
+                    # 因此对 10 MeV 直接使用 FMESH24（[0,C2]/[C2,E_max]）作为 2 档。
+                    if energy >= 9.0 and bounds24 and len(bounds24) >= 3:
+                        phi24_b0_arr = prepare_mcnp_fluence(np.load(fm24_b0), mask)
+                        phi24_b1_arr = prepare_mcnp_fluence(np.load(fm24_b1), mask)
+                        e_bounds_2 = [bounds24[0], bounds24[1], bounds24[2]]
+                        fluence_bins = [phi24_b0_arr, phi24_b1_arr]
+                        use_emesh = True
+                        _fm_mode_tag = '[FMESH24-2档]'
+                        print(f"     [FMESH24-2档] 10 MeV 使用 FMESH24 直接 2 档"
+                              f"（避免对产区间 4 档高估）: {e_bounds_2} MeV")
+                        h_calc, organ_table = compute_h_eff_from_fluence_emesh(
+                            fluence_bins, e_bounds_2, mask, organs)
+                    else:
+                        # 常规 4 档：相减导出有效档注量（微小负值钳位为 0）
+                        phi14_b0 = prepare_mcnp_fluence(np.load(fm14_b0), mask)
+                        phi24_b0 = prepare_mcnp_fluence(np.load(fm24_b0), mask)
+                        phi34_b0 = prepare_mcnp_fluence(np.load(fm34_b0), mask)
+                        phi34_b1 = prepare_mcnp_fluence(np.load(fm34_b1), mask)
 
-                    # 相减导出 4 有效档注量（可能出现微小负值，钳位为 0）
-                    eff_bin0 = phi14_b0                               # [0,   C1]
-                    eff_bin1 = np.clip(phi24_b0 - phi14_b0, 0, None) # [C1,  C2]
-                    eff_bin2 = np.clip(phi34_b0 - phi24_b0, 0, None) # [C2,  C3]
-                    eff_bin3 = phi34_b1                               # [C3, E_max]
+                        eff_bin0 = phi14_b0                               # [0,   C1]
+                        eff_bin1 = np.clip(phi24_b0 - phi14_b0, 0, None) # [C1,  C2]
+                        eff_bin2 = np.clip(phi34_b0 - phi24_b0, 0, None) # [C2,  C3]
+                        eff_bin3 = phi34_b1                               # [C3, E_max]
 
-                    fluence_bins = [eff_bin0, eff_bin1, eff_bin2, eff_bin3]
-                    e_bounds_4   = [0.0, c1, c2, c3, e_max]
-                    use_emesh = True
-                    print(f"     [多FMESH] 使用 4 档有效分档: {e_bounds_4} MeV")
-                    h_calc, organ_table = compute_h_eff_from_fluence_emesh(
-                        fluence_bins, e_bounds_4, mask, organs)
+                        fluence_bins = [eff_bin0, eff_bin1, eff_bin2, eff_bin3]
+                        e_bounds_4   = [0.0, c1, c2, c3, e_max]
+                        use_emesh = True
+                        print(f"     [多FMESH] 使用 4 档有效分档: {e_bounds_4} MeV")
+                        h_calc, organ_table = compute_h_eff_from_fluence_emesh(
+                            fluence_bins, e_bounds_4, mask, organs)
                 except Exception as _mfe:
-                    print(f"     [多FMESH] 构建 4 档失败（{_mfe}），回退到 2 档 EMESH")
+                    print(f"     [多FMESH] 构建档失败（{_mfe}），回退到 2 档 EMESH")
                     use_multifmesh = False
 
         # ── 次优 B：常规 2 档 EMESH ──────────────────────────────────────────
@@ -772,7 +791,7 @@ def main():
         if use_f6:
             mode_tag = "[F6]"
         elif use_emesh and 'use_multifmesh' in dir() and use_multifmesh:
-            mode_tag = "[4档EMESH]"
+            mode_tag = _fm_mode_tag if '_fm_mode_tag' in dir() else "[多FMESH]"
         elif use_emesh:
             mode_tag = "[EMESH]"
         else:
