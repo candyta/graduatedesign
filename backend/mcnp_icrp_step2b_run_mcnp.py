@@ -124,6 +124,13 @@ def run_one(case: dict, args, log_fh):
 
     log(f"━━━ E = {energy:.3f} MeV  [{inp_name}] ━━━", log_fh)
 
+    # 若输出 npy 已存在且非空，跳过重跑（防止页面刷新覆盖已完成的计算）
+    npy_check = Path(args.out_dir) / f"fluence_E{energy:.3f}MeV.npy"
+    if npy_check.exists() and npy_check.stat().st_size > 1000:
+        log(f"  [跳过] {npy_check.name} 已存在 ({npy_check.stat().st_size // 1024} KB)，"
+            f"不重新运行 MCNP。如需重跑请手动删除该文件。", log_fh)
+        return True
+
     inp_src = Path(args.inp_dir) / inp_name
     if not inp_src.exists():
         log(f"  [错误] 输入文件不存在: {inp_src}", log_fh)
@@ -318,15 +325,12 @@ def ensure_prerequisites(args, cases, log_fh) -> bool:
     inp_dir  = Path(args.inp_dir)
     needed   = [c["inp_name"] for c in cases]
 
-    # 始终重新生成 .inp 文件，确保使用最新格式（避免旧文件超出 80 列）
-    log(f"[准备] 将重新生成 {len(needed)} 个 .inp 文件（强制刷新）", log_fh)
-    for n in needed:
-        p = inp_dir / n
-        if p.exists():
-            p.unlink()
-
-    missing  = needed  # 全部视为缺失，触发 Step2
-    log("[准备] 将自动运行 Step1/Step2 生成输入文件 ...", log_fh)
+    # 只生成缺失的 .inp 文件，保留已有文件（避免页面刷新时重跑覆盖已有计算）
+    missing = [n for n in needed if not (inp_dir / n).exists()]
+    if not missing:
+        log(f"[准备] 所有 {len(needed)} 个 .inp 文件已存在，跳过重新生成", log_fh)
+        return True
+    log(f"[准备] 将生成 {len(missing)} 个缺失的 .inp 文件 ...", log_fh)
 
     zip_path  = Path(backend) / ICRP110_ZIP
     mask_path = Path(backend) / ORGAN_MASK
