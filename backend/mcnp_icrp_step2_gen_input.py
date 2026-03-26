@@ -475,17 +475,16 @@ def write_data_section(f, unique_ids, organs, media, energy_mev, mask=None):
         f.write('c\n')
 
     # ── NPS & time limit ──
-    # 1 MeV 光子产生大量 Compton 二次光子级联，总粒子数可达 10^8，
-    # 10^7 初级粒子需约 10-15 小时。减少到 3×10^6 可在 ~3 小时内完成，
-    # 统计误差约 3-4%（仍在 ±10% 精度范围内）。
-    nps = 3_000_000 if abs(energy_mev - 1.0) < 0.01 else 10_000_000
+    # 统一使用 10^8，满足体素体模 FMESH 统计精度要求（单体素相对误差 ~2-5%）。
+    # 预计运行时间：0.01 MeV ~2 h，0.1 MeV ~4 h，1 MeV ~20 h，10 MeV ~8 h。
+    nps = 100_000_000
     prdmp_interval = max(500_000, nps // 10)
     f.write('c Number of source histories\n')
     f.write(f'nps {nps}\n')
     f.write(f'prdmp {prdmp_interval} {prdmp_interval} 1\n')
     # ctme: computer-time limit in minutes.  Safety valve — if nps completes
     # first, ctme is ignored.  Set generously to avoid premature termination.
-    f.write('ctme 720\n')
+    f.write('ctme 1800\n')
 
 
 def generate_input_file(mask: np.ndarray, organs: dict, media: dict,
