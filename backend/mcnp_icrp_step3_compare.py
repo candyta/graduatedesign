@@ -87,6 +87,7 @@ WT_RULES = [
     (['lung'],                                           0.12),
     (['stomach wall', 'stomach'],                        0.12),
     (['red bone marrow', 'red marrow', 'spongiosa'],     0.12),   # 红骨髓
+    (['breast', 'mammary', 'glandular tissue'],          0.12),   # 乳腺 (ICRP-103 Table A.1)
     (['urinary bladder', 'bladder wall', 'bladder'],     0.04),
     (['oesophagus', 'esophagus'],                        0.04),
     (['liver'],                                          0.04),
