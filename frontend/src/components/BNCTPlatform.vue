@@ -1631,6 +1631,13 @@
               </label>
             </div>
 
+            <div class="icrp116-sex-avg-row">
+              <label class="icrp116-sex-avg-label">
+                <input type="checkbox" v-model="icrp116SexAvg" :disabled="icrp116Running" />
+                <span>启用性别平均 <strong>(AM + AF 体模)</strong> — 与 ICRP-116 标准方法一致</span>
+              </label>
+            </div>
+
             <div class="icrp116-btn-row">
               <button
                 class="btn btn-primary"
@@ -1654,21 +1661,50 @@
 
             <!-- 进度状态 -->
             <div v-if="icrp116Running || icrp116Status.doneEnergies.length" class="icrp116-progress">
+              <!-- AM 阶段 -->
+              <div class="icrp116-phase-label" v-if="icrp116Status.sexAvg">
+                <span class="phase-badge phase-am">AM 体模</span>
+                <span v-if="icrp116Status.phase === 'AF' || icrp116Status.afDoneEnergies.length" class="phase-done-mark">完成 ✓</span>
+                <span v-else-if="icrp116Running" class="phase-active-mark">运行中...</span>
+              </div>
               <div class="icrp116-progress-items">
                 <div
                   v-for="e in icrp116Energies"
                   :key="e.value"
                   :class="['icrp116-e-chip',
                     icrp116Status.doneEnergies.includes(e.value) ? 'done' :
-                    (icrp116Running && icrp116Status.currentCase === e.value ? 'active' : 'pending')]"
+                    (icrp116Running && icrp116Status.currentCase === e.value && icrp116Status.phase === 'AM' ? 'active' : 'pending')]"
                 >
                   <span class="chip-icon">
                     {{ icrp116Status.doneEnergies.includes(e.value) ? '✓' :
-                       (icrp116Running && icrp116Status.currentCase === e.value ? '⟳' : '○') }}
+                       (icrp116Running && icrp116Status.currentCase === e.value && icrp116Status.phase === 'AM' ? '⟳' : '○') }}
                   </span>
                   {{ e.label }}
                 </div>
               </div>
+              <!-- AF 阶段（仅性别平均时显示） -->
+              <template v-if="icrp116Status.sexAvg && (icrp116Status.phase === 'AF' || icrp116Status.afDoneEnergies.length)">
+                <div class="icrp116-phase-label" style="margin-top:8px">
+                  <span class="phase-badge phase-af">AF 体模</span>
+                  <span v-if="!icrp116Running || icrp116Status.phase !== 'AF'" class="phase-done-mark">完成 ✓</span>
+                  <span v-else class="phase-active-mark">运行中...</span>
+                </div>
+                <div class="icrp116-progress-items">
+                  <div
+                    v-for="e in icrp116Energies"
+                    :key="'af-'+e.value"
+                    :class="['icrp116-e-chip',
+                      icrp116Status.afDoneEnergies.includes(e.value) ? 'done' :
+                      (icrp116Running && icrp116Status.afCurrentCase === e.value ? 'active' : 'pending')]"
+                  >
+                    <span class="chip-icon">
+                      {{ icrp116Status.afDoneEnergies.includes(e.value) ? '✓' :
+                         (icrp116Running && icrp116Status.afCurrentCase === e.value ? '⟳' : '○') }}
+                    </span>
+                    {{ e.label }}
+                  </div>
+                </div>
+              </template>
             </div>
           </div>
 
@@ -1698,14 +1734,17 @@
           <!-- 完成状态 / 结果文件 -->
           <div v-if="icrp116Status.completed" class="icrp116-result-banner success-banner">
             <strong>✓ 全部计算完成！</strong>
-            已生成 {{ icrp116Status.resultFiles.length }} 个通量文件（fluence_E*.npy）。<br>
+            AM: {{ icrp116Status.resultFiles.length }} 个通量文件
+            <template v-if="icrp116Status.sexAvg">
+              　AF: {{ icrp116Status.afResultFiles.length }} 个通量文件
+            </template>
+            <br>
             <span style="font-size:0.9em;">
-              结果已保存至 <code>icrp_validation/mcnp_outputs/</code>，
-              可运行第三步分析脚本与 ICRP-116 参考值对比。
+              结果已保存至 <code>icrp_validation/mcnp_outputs/</code>
+              <template v-if="icrp116Status.sexAvg">
+                （AM）和 <code>mcnp_outputs_AF/</code>（AF）
+              </template>
             </span>
-            <ul v-if="icrp116Status.resultFiles.length" class="icrp116-result-files">
-              <li v-for="f in icrp116Status.resultFiles" :key="f">📄 {{ f }}</li>
-            </ul>
           </div>
           <div v-if="icrp116Status.failed && !icrp116Running" class="icrp116-result-banner error-banner">
             <strong>✗ 任务失败或已取消。</strong> 请检查上方日志排查问题。
@@ -1777,35 +1816,78 @@
 
             <!-- 结果表格 -->
             <div v-if="icrp116Step3Result && icrp116Step3Result.length" class="s3-results">
-              <h4>对比结果（偏差 ≤10% 判为 PASS）</h4>
-              <table class="s3-table">
-                <thead>
-                  <tr>
-                    <th>能量 (MeV)</th>
-                    <th>h<sub>E</sub> 计算值 (pSv·cm²)</th>
-                    <th>ICRP-116 参考值 (pSv·cm²)</th>
-                    <th>偏差</th>
-                    <th>判定</th>
-                    <th>数据源</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="row in icrp116Step3Result" :key="row.energy">
-                    <td>{{ row.energy.toFixed(3) }}</td>
-                    <td>{{ row.h_calc.toFixed(4) }}</td>
-                    <td>{{ row.h_ref.toFixed(4) }}</td>
-                    <td :class="Math.abs(row.deviation) <= 10 ? 'cell-pass' : 'cell-fail'">
-                      {{ row.deviation > 0 ? '+' : '' }}{{ row.deviation.toFixed(1) }}%
-                    </td>
-                    <td :class="row.pass === 'PASS' ? 'cell-pass' : 'cell-fail'">
-                      {{ row.pass === 'PASS' ? 'PASS ✓' : 'FAIL ✗' }}
-                    </td>
-                    <td :class="row.source === 'MCNP' ? 'cell-pass' : 'cell-warn'">
-                      {{ row.source === 'MCNP' ? 'MCNP ✓' : '解析模型' }}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+              <!-- 性别平均结果表 -->
+              <template v-if="icrp116Step3Result[0] && icrp116Step3Result[0].h_AM !== undefined">
+                <h4>性别平均对比结果 h<sub>E</sub> = (AM + AF) / 2（偏差 ≤10% 判为 PASS）</h4>
+                <table class="s3-table">
+                  <thead>
+                    <tr>
+                      <th>能量 (MeV)</th>
+                      <th>h<sub>E</sub>,AM (pSv·cm²)</th>
+                      <th>h<sub>E</sub>,AF (pSv·cm²)</th>
+                      <th>h<sub>E</sub>,avg (pSv·cm²)</th>
+                      <th>ICRP-116 参考值</th>
+                      <th>偏差 AM</th>
+                      <th>偏差 AF</th>
+                      <th>偏差 avg</th>
+                      <th>判定</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="row in icrp116Step3Result" :key="row.energy">
+                      <td>{{ row.energy.toFixed(3) }}</td>
+                      <td>{{ row.h_AM.toFixed(4) }}</td>
+                      <td>{{ row.h_AF.toFixed(4) }}</td>
+                      <td><strong>{{ row.h_avg.toFixed(4) }}</strong></td>
+                      <td>{{ row.h_ref.toFixed(4) }}</td>
+                      <td :class="Math.abs(row.dev_AM) <= 10 ? 'cell-pass' : 'cell-fail'">
+                        {{ row.dev_AM > 0 ? '+' : '' }}{{ row.dev_AM.toFixed(1) }}%
+                      </td>
+                      <td :class="Math.abs(row.dev_AF) <= 10 ? 'cell-pass' : 'cell-fail'">
+                        {{ row.dev_AF > 0 ? '+' : '' }}{{ row.dev_AF.toFixed(1) }}%
+                      </td>
+                      <td :class="Math.abs(row.dev_avg) <= 10 ? 'cell-pass' : 'cell-fail'">
+                        <strong>{{ row.dev_avg > 0 ? '+' : '' }}{{ row.dev_avg.toFixed(1) }}%</strong>
+                      </td>
+                      <td :class="row.pass === 'PASS' ? 'cell-pass' : 'cell-fail'">
+                        {{ row.pass === 'PASS' ? 'PASS ✓' : 'FAIL ✗' }}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </template>
+              <!-- AM 单独结果表（无性别平均时） -->
+              <template v-else>
+                <h4>对比结果（偏差 ≤10% 判为 PASS）</h4>
+                <table class="s3-table">
+                  <thead>
+                    <tr>
+                      <th>能量 (MeV)</th>
+                      <th>h<sub>E</sub> 计算值 (pSv·cm²)</th>
+                      <th>ICRP-116 参考值 (pSv·cm²)</th>
+                      <th>偏差</th>
+                      <th>判定</th>
+                      <th>数据源</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="row in icrp116Step3Result" :key="row.energy">
+                      <td>{{ row.energy.toFixed(3) }}</td>
+                      <td>{{ row.h_calc.toFixed(4) }}</td>
+                      <td>{{ row.h_ref.toFixed(4) }}</td>
+                      <td :class="Math.abs(row.deviation) <= 10 ? 'cell-pass' : 'cell-fail'">
+                        {{ row.deviation > 0 ? '+' : '' }}{{ row.deviation.toFixed(1) }}%
+                      </td>
+                      <td :class="row.pass === 'PASS' ? 'cell-pass' : 'cell-fail'">
+                        {{ row.pass === 'PASS' ? 'PASS ✓' : 'FAIL ✗' }}
+                      </td>
+                      <td :class="row.source === 'MCNP' ? 'cell-pass' : 'cell-warn'">
+                        {{ row.source === 'MCNP' ? 'MCNP ✓' : '解析模型' }}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </template>
             </div>
 
             <!-- 对比图 -->
@@ -2621,11 +2703,14 @@ export default {
         { value: 10.00, label: '10.00 MeV' },
       ],
       icrp116Selected: [0.01, 0.10, 1.00, 10.00],
+      icrp116SexAvg:   true,   // 启用性别平均 (AM+AF)
       icrp116Running:  false,
       icrp116Status: {
         completed: false, failed: false,
         currentCase: null, doneEnergies: [],
         elapsedSec: 0, logs: [], resultFiles: [],
+        sexAvg: false, phase: 'AM',
+        afDoneEnergies: [], afCurrentCase: null, afResultFiles: [],
       },
       icrp116PollTimer: null,
       // Step 3 对比分析
@@ -4082,11 +4167,14 @@ export default {
         completed: false, failed: false,
         currentCase: null, doneEnergies: [],
         elapsedSec: 0, logs: [], resultFiles: [],
+        sexAvg: this.icrp116SexAvg, phase: 'AM',
+        afDoneEnergies: [], afCurrentCase: null, afResultFiles: [],
       };
 
       try {
         const resp = await axios.post(`${API_BASE}/api/icrp116/start-validation`, {
-          energies: this.icrp116Selected
+          energies: this.icrp116Selected,
+          sexAvg:   this.icrp116SexAvg,
         });
         if (!resp.data.success) {
           this.icrp116Status.logs.push({
@@ -7468,7 +7556,17 @@ export default {
 .icrp116-btn-row { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; }
 .icrp116-elapsed { color: #718096; font-size: 0.88rem; }
 
+.icrp116-sex-avg-row { margin: 0.5rem 0 0.8rem; }
+.icrp116-sex-avg-label { display: flex; align-items: center; gap: 0.5rem; font-size: 0.92rem; cursor: pointer; color: #2d3748; }
+.icrp116-sex-avg-label input { cursor: pointer; width: 15px; height: 15px; }
+
 .icrp116-progress { margin-top: 1rem; }
+.icrp116-phase-label { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.3rem; font-size: 0.85rem; }
+.phase-badge { display: inline-block; padding: 0.15rem 0.55rem; border-radius: 10px; font-weight: 700; font-size: 0.8rem; }
+.phase-badge.phase-am { background: #bee3f8; color: #2b6cb0; }
+.phase-badge.phase-af { background: #fed7e2; color: #97266d; }
+.phase-done-mark { color: #38a169; font-weight: 600; }
+.phase-active-mark { color: #3182ce; }
 .icrp116-progress-items { display: flex; gap: 0.6rem; flex-wrap: wrap; }
 .icrp116-e-chip { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.3rem 0.7rem; border-radius: 20px; font-size: 0.85rem; border: 1px solid #e2e8f0; background: #edf2f7; color: #718096; }
 .icrp116-e-chip.done { background: #c6f6d5; border-color: #68d391; color: #276749; }

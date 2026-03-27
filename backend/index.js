@@ -2409,11 +2409,19 @@ const icrp116Job = {
     failed: false,
     currentCase: null,
     doneEnergies: [],
+    // 性别平均 (AM+AF) 扩展字段
+    sexAvg: false,
+    phase: 'AM',          // 'AM' | 'AF'
+    afCurrentCase: null,
+    afDoneEnergies: [],
 };
 
-const ICRP116_INP_DIR  = path.join(__dirname, 'icrp_validation', 'mcnp_inputs');
-const ICRP116_OUT_DIR  = path.join(__dirname, 'icrp_validation', 'mcnp_outputs');
-const ICRP116_SCRIPT   = path.join(__dirname, 'mcnp_icrp_step2b_run_mcnp.py');
+const ICRP116_INP_DIR     = path.join(__dirname, 'icrp_validation', 'mcnp_inputs');
+const ICRP116_OUT_DIR     = path.join(__dirname, 'icrp_validation', 'mcnp_outputs');
+const ICRP116_AF_OUT_DIR  = ICRP116_OUT_DIR + '_AF';
+const ICRP116_AF_MASK     = path.join(__dirname, 'icrp_validation', 'organ_mask_127x63x111_AF.npy');
+const ICRP116_AF_ZIP      = path.join(__dirname, '..', 'P110 data V1.2', 'AF.zip');
+const ICRP116_SCRIPT      = path.join(__dirname, 'mcnp_icrp_step2b_run_mcnp.py');
 
 /**
  * 清空 mcnp_outputs 目录中的所有计算结果文件（fluence*.npy、*_f6doses.json、*.csv、*.png 等）。
@@ -2470,24 +2478,35 @@ app.post('/api/icrp116/start-validation', (req, res) => {
     }
 
     // 重置状态（不清空文件，由 Python 脚本的跳过逻辑决定是否重跑）
-    icrp116Job.running      = true;
-    icrp116Job.completed    = false;
-    icrp116Job.failed       = false;
-    icrp116Job.logs         = [];
-    icrp116Job.doneEnergies = [];
-    icrp116Job.currentCase  = null;
-    icrp116Job.startTime    = Date.now();
+    icrp116Job.running        = true;
+    icrp116Job.completed      = false;
+    icrp116Job.failed         = false;
+    icrp116Job.logs           = [];
+    icrp116Job.doneEnergies   = [];
+    icrp116Job.currentCase    = null;
+    icrp116Job.startTime      = Date.now();
+    icrp116Job.sexAvg         = false;
+    icrp116Job.phase          = 'AM';
+    icrp116Job.afCurrentCase  = null;
+    icrp116Job.afDoneEnergies = [];
 
-    const { energies } = req.body || {};
+    const { energies, sexAvg } = req.body || {};
+    icrp116Job.sexAvg = !!sexAvg;
+
     const args = [
         ICRP116_SCRIPT,
         '--inp-dir',     ICRP116_INP_DIR,
         '--out-dir',     ICRP116_OUT_DIR,
         '--backend-dir', __dirname,
-        '--xsdir',       String.raw`D:\LANL\xsdir`,   // 用于自动检测光子截面库
+        '--xsdir',       String.raw`D:\LANL\xsdir`,
+        '--nps',         '10000000',
     ];
     if (Array.isArray(energies) && energies.length > 0) {
         args.push('--only', ...energies.map(String));
+    }
+    // AF 体模控制
+    if (!sexAvg) {
+        args.push('--no-run-af');
     }
 
     console.log('[ICRP116] 启动验证:', args.slice(1).join(' '));
@@ -2506,15 +2525,28 @@ app.post('/api/icrp116/start-validation', (req, res) => {
     proc.stdout.on('data', (data) => {
         data.toString().split('\n').filter(l => l.trim()).forEach(line => {
             pushLog(line);
+            // 检测 AF 阶段开始
+            if (line.includes('[AF]') && line.includes('开始 AF 体模运行')) {
+                icrp116Job.phase = 'AF';
+            }
             // 解析当前能量
-            const mCur  = line.match(/E\s*=\s*([\d.]+)\s*MeV/);
-            if (mCur) icrp116Job.currentCase = parseFloat(mCur[1]);
-            // 解析完成能量
+            const mCur = line.match(/E\s*=\s*([\d.]+)\s*MeV/);
+            if (mCur) {
+                const e = parseFloat(mCur[1]);
+                if (icrp116Job.phase === 'AF') icrp116Job.afCurrentCase = e;
+                else icrp116Job.currentCase = e;
+            }
+            // 解析完成能量（AM/AF 汇总行）
             const mDone = line.match(/E=([\d.]+)\s*MeV\s*:\s*OK/i);
             if (mDone) {
                 const e = parseFloat(mDone[1]);
-                if (!icrp116Job.doneEnergies.includes(e))
-                    icrp116Job.doneEnergies.push(e);
+                if (icrp116Job.phase === 'AF') {
+                    if (!icrp116Job.afDoneEnergies.includes(e))
+                        icrp116Job.afDoneEnergies.push(e);
+                } else {
+                    if (!icrp116Job.doneEnergies.includes(e))
+                        icrp116Job.doneEnergies.push(e);
+                }
             }
         });
     });
@@ -2550,7 +2582,7 @@ app.get('/api/icrp116/status', (req, res) => {
         ? Math.floor((Date.now() - icrp116Job.startTime) / 1000)
         : 0;
 
-    // 检查已完成的 npy 文件
+    // 检查已完成的 npy 文件（AM）
     const resultFiles = [];
     try {
         const files = require('fs').readdirSync(ICRP116_OUT_DIR);
@@ -2558,15 +2590,29 @@ app.get('/api/icrp116/status', (req, res) => {
              .forEach(f => resultFiles.push(f));
     } catch (_) {}
 
+    // 检查已完成的 AF npy 文件
+    const afResultFiles = [];
+    try {
+        const files = require('fs').readdirSync(ICRP116_AF_OUT_DIR);
+        files.filter(f => f.startsWith('fluence_') && f.endsWith('.npy'))
+             .forEach(f => afResultFiles.push(f));
+    } catch (_) {}
+
     res.json({
-        running:       icrp116Job.running,
-        completed:     icrp116Job.completed,
-        failed:        icrp116Job.failed,
-        currentCase:   icrp116Job.currentCase,
-        doneEnergies:  icrp116Job.doneEnergies,
-        elapsedSec:    elapsed,
-        logs:          icrp116Job.logs.slice(-200),
+        running:        icrp116Job.running,
+        completed:      icrp116Job.completed,
+        failed:         icrp116Job.failed,
+        currentCase:    icrp116Job.currentCase,
+        doneEnergies:   icrp116Job.doneEnergies,
+        elapsedSec:     elapsed,
+        logs:           icrp116Job.logs.slice(-200),
         resultFiles,
+        // AF 性别平均扩展字段
+        sexAvg:         icrp116Job.sexAvg,
+        phase:          icrp116Job.phase,
+        afCurrentCase:  icrp116Job.afCurrentCase,
+        afDoneEnergies: icrp116Job.afDoneEnergies,
+        afResultFiles,
     });
 });
 
@@ -2600,12 +2646,23 @@ const ICRP116_CSV_PATH     = path.join(ICRP116_OUT_DIR, 'icrp116_comparison.csv'
 const ICRP116_PNG_PATH     = path.join(ICRP116_OUT_DIR, 'icrp116_comparison.png');
 
 app.post('/api/icrp116/run-step3', (req, res) => {
+    const fs = require('fs');
     const args = [
         ICRP116_STEP3_SCRIPT,
         '--out-dir', ICRP116_OUT_DIR,
         '--mask',    ICRP116_MASK_PATH,
         '--zip',     ICRP116_ZIP_PATH,
     ];
+    // 自动检测 AF 输出：若有 AF npy 文件且有 AF 掩膜，则传入性别平均参数
+    const hasAFNpy  = fs.existsSync(ICRP116_AF_OUT_DIR) &&
+        fs.readdirSync(ICRP116_AF_OUT_DIR).some(f => f.endsWith('.npy'));
+    const hasAFMask = fs.existsSync(ICRP116_AF_MASK);
+    if (hasAFNpy && hasAFMask) {
+        args.push('--af-out-dir', ICRP116_AF_OUT_DIR,
+                  '--af-mask',    ICRP116_AF_MASK,
+                  '--af-zip',     ICRP116_AF_ZIP);
+        console.log('[ICRP116-Step3] 检测到 AF 输出，启用性别平均');
+    }
     console.log('[ICRP116-Step3] 启动:', args.slice(1).join(' '));
 
     const proc = spawn(PYTHON_PATH, args, { cwd: __dirname });
@@ -2625,22 +2682,45 @@ app.post('/api/icrp116/run-step3', (req, res) => {
             console.error('[Step3] 退出码', code, stderr.slice(0, 500));
             return res.json({ success: false, message: `Step3 退出码 ${code}：${stderr.slice(0, 200)}`, logs });
         }
-        // 读取 CSV 结果
+        // 读取 CSV 结果（优先读取性别平均 CSV，其次标准 AM CSV）
         try {
-            const csv = require('fs').readFileSync(ICRP116_CSV_PATH, 'utf-8');
+            const sexAvgCsvPath = path.join(ICRP116_OUT_DIR, 'icrp116_comparison_sexavg.csv');
+            const useSexAvg = hasAFNpy && hasAFMask && fs.existsSync(sexAvgCsvPath);
+            const csvPath = useSexAvg ? sexAvgCsvPath : ICRP116_CSV_PATH;
+            const csv = fs.readFileSync(csvPath, 'utf-8');
             const lines = csv.split('\n').map(l => l.trim()).filter(l => l);
-            const results = lines.slice(1).map(line => {
-                const [energy, h_calc, h_ref, deviation, pass_flag, source] = line.split(',');
-                return {
-                    energy:    parseFloat(energy),
-                    h_calc:    parseFloat(h_calc),
-                    h_ref:     parseFloat(h_ref),
-                    deviation: parseFloat(deviation),
-                    pass:      (pass_flag || '').trim(),
-                    source:    (source    || '').trim(),
-                };
-            }).filter(r => !isNaN(r.energy));
-            res.json({ success: true, results, logs });
+            let results;
+            if (useSexAvg) {
+                // 8列: Energy_MeV,h_AM_pSv_cm2,h_AF_pSv_cm2,h_avg_pSv_cm2,h_ref_pSv_cm2,dev_AM_pct,dev_AF_pct,dev_avg_pct,pass
+                results = lines.slice(1).map(line => {
+                    const [energy, h_AM, h_AF, h_avg, h_ref, dev_AM, dev_AF, dev_avg, pass_flag] = line.split(',');
+                    return {
+                        energy:  parseFloat(energy),
+                        h_AM:    parseFloat(h_AM),
+                        h_AF:    parseFloat(h_AF),
+                        h_avg:   parseFloat(h_avg),
+                        h_ref:   parseFloat(h_ref),
+                        dev_AM:  parseFloat(dev_AM),
+                        dev_AF:  parseFloat(dev_AF),
+                        dev_avg: parseFloat(dev_avg),
+                        pass:    (pass_flag || '').trim(),
+                    };
+                }).filter(r => !isNaN(r.energy));
+            } else {
+                // 6列: Energy_MeV,h_calc_pSv_cm2,h_ref_pSv_cm2,deviation_pct,pass,source
+                results = lines.slice(1).map(line => {
+                    const [energy, h_calc, h_ref, deviation, pass_flag, source] = line.split(',');
+                    return {
+                        energy:    parseFloat(energy),
+                        h_calc:    parseFloat(h_calc),
+                        h_ref:     parseFloat(h_ref),
+                        deviation: parseFloat(deviation),
+                        pass:      (pass_flag || '').trim(),
+                        source:    (source    || '').trim(),
+                    };
+                }).filter(r => !isNaN(r.energy));
+            }
+            res.json({ success: true, results, sexAvg: useSexAvg, logs });
         } catch (e) {
             res.json({ success: false, message: 'CSV 读取失败: ' + e.message, logs });
         }
