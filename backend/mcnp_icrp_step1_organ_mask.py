@@ -34,6 +34,13 @@ AM_DIMS = {
     'voxel_mm': (2.137, 2.137, 8.0),   # 体素尺寸 mm (X, Y, Z)
 }
 
+AF_DIMS = {
+    'columns': 299,
+    'rows':    137,
+    'slices':  348,
+    'voxel_mm': (1.775, 1.775, 4.84),
+}
+
 # 降采样目标尺寸（与现有 MCNP 工作流保持一致）
 DOWNSAMPLE_TARGET = (127, 63, 111)   # (nx, ny, nz)
 
@@ -91,32 +98,45 @@ def parse_organs_dat(lines):
     return organs
 
 
-def load_voxel_data_from_zip(zip_path: str) -> tuple:
+def load_voxel_data_from_zip(zip_path: str, phantom: str = 'AM') -> tuple:
     """
-    从 AM.zip 读取:
-      AM.dat        → 体素数组 shape (254, 127, 222)  dtype int16
-      AM_organs.dat → 器官定义字典
+    从 AM.zip 或 AF.zip 读取体素数据和器官定义。
+
+    Parameters
+    ----------
+    zip_path : str
+        路径指向 AM.zip 或 AF.zip
+    phantom : str
+        'AM' 或 'AF'
 
     Returns
     -------
-    voxel : np.ndarray  shape (ncol=254, nrow=127, nslice=222)
+    voxel : np.ndarray  shape (ncol, nrow, nslice) = (X, Y, Z)
     organs : dict  {organ_id: {...}}
     """
-    dims = AM_DIMS
+    if phantom == 'AF':
+        dims = AF_DIMS
+        dat_entry    = 'AF/AF.dat'
+        organs_entry = 'AF/AF_organs.dat'
+    else:
+        dims = AM_DIMS
+        dat_entry    = 'AM/AM.dat'
+        organs_entry = 'AM/AM_organs.dat'
+
     ncol, nrow, nslice = dims['columns'], dims['rows'], dims['slices']
     total = ncol * nrow * nslice
 
-    print(f"[步骤1] 打开 {zip_path} ...")
+    print(f"[步骤1] 打开 {zip_path} (phantom={phantom}) ...")
     with zipfile.ZipFile(zip_path, 'r') as z:
         # 读器官定义
-        with z.open('AM/AM_organs.dat') as f:
+        with z.open(organs_entry) as f:
             organ_lines = f.read().decode('utf-8', errors='replace').splitlines()
         organs = parse_organs_dat(organ_lines)
         print(f"  解析器官定义: {len(organs)} 个 organ_id")
 
         # 读体素数据
-        print(f"  读取 AM.dat ({ncol}×{nrow}×{nslice} = {total:,} 体素) ...")
-        with z.open('AM/AM.dat') as f:
+        print(f"  读取 {dat_entry} ({ncol}×{nrow}×{nslice} = {total:,} 体素) ...")
+        with z.open(dat_entry) as f:
             raw_text = f.read().decode('utf-8', errors='replace')
 
     all_numbers = np.fromiter(
@@ -127,7 +147,7 @@ def load_voxel_data_from_zip(zip_path: str) -> tuple:
     # 存储顺序: 外层 slice → row → col (Z慢 → Y → X快)
     voxel = all_numbers.reshape((nslice, nrow, ncol))
     # 转置为 (col, row, slice) = (X, Y, Z) 便于后续按空间方向处理
-    voxel = voxel.transpose(2, 1, 0)  # shape: (254, 127, 222)
+    voxel = voxel.transpose(2, 1, 0)  # shape: (ncol, nrow, nslice)
     print(f"  体素数组 shape={voxel.shape}, 非零={np.count_nonzero(voxel):,}")
     return voxel, organs
 
@@ -201,16 +221,20 @@ def build_organ_mask(voxel_ds: np.ndarray, organs: dict) -> tuple:
 def main():
     parser = argparse.ArgumentParser(description='ICRP-110 验证 Step1: 生成器官掩膜')
     parser.add_argument('--data-zip', default='../P110 data V1.2/AM.zip',
-                        help='AM.zip 路径')
+                        help='AM.zip 或 AF.zip 路径')
     parser.add_argument('--out-dir', default='./icrp_validation',
                         help='输出目录')
+    parser.add_argument('--phantom', default='AM', choices=['AM', 'AF'],
+                        help='体模类型: AM (成年男性) 或 AF (成年女性)')
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    phantom = args.phantom
+
     # ── 1. 加载原始体素数据 ──
-    voxel_full, organs = load_voxel_data_from_zip(args.data_zip)
+    voxel_full, organs = load_voxel_data_from_zip(args.data_zip, phantom=phantom)
 
     # ── 2. 降采样 ──
     print(f"\n[步骤2] 降采样 {voxel_full.shape} → {DOWNSAMPLE_TARGET} ...")
@@ -218,8 +242,9 @@ def main():
     print(f"  降采样后 shape={voxel_ds.shape}, 非零={np.count_nonzero(voxel_ds):,}")
 
     # 计算降采样后的体素尺寸 (cm)
-    vox_mm = AM_DIMS['voxel_mm']  # (2.137, 2.137, 8.0) mm
-    src = AM_DIMS['columns'], AM_DIMS['rows'], AM_DIMS['slices']
+    dims = AF_DIMS if phantom == 'AF' else AM_DIMS
+    vox_mm = dims['voxel_mm']
+    src = dims['columns'], dims['rows'], dims['slices']
     tgt = DOWNSAMPLE_TARGET
     ds_vox_cm = (
         vox_mm[0] * src[0] / tgt[0] / 10.0,  # X
@@ -231,7 +256,11 @@ def main():
     print(f"  体模总尺寸 (cm): X={phantom_size_cm[0]}, Y={phantom_size_cm[1]}, Z={phantom_size_cm[2]}")
 
     # ── 3. 保存掩膜 ──
-    mask_path = out_dir / 'organ_mask_127x63x111.npy'
+    if phantom == 'AF':
+        mask_fname = 'organ_mask_127x63x111_AF.npy'
+    else:
+        mask_fname = 'organ_mask_127x63x111.npy'
+    mask_path = out_dir / mask_fname
     np.save(mask_path, voxel_ds)
     print(f"\n[保存] 器官掩膜 → {mask_path}")
 
@@ -246,8 +275,8 @@ def main():
 
     # ── 5. 保存元数据 JSON ──
     meta = {
-        'phantom':       'AM',
-        'source_shape':  [AM_DIMS['columns'], AM_DIMS['rows'], AM_DIMS['slices']],
+        'phantom':       phantom,
+        'source_shape':  [dims['columns'], dims['rows'], dims['slices']],
         'ds_shape':      list(DOWNSAMPLE_TARGET),
         'ds_voxel_cm':   [round(v, 6) for v in ds_vox_cm],
         'phantom_cm':    list(phantom_size_cm),
@@ -256,11 +285,12 @@ def main():
         # 密度映射 organ_id → density
         'density_map':   {str(k): v['density'] for k, v in organs.items()},
     }
-    meta_path = out_dir / 'organ_mask_meta.json'
+    meta_fname = f'organ_mask_meta_{phantom}.json' if phantom == 'AF' else 'organ_mask_meta.json'
+    meta_path = out_dir / meta_fname
     with open(meta_path, 'w', encoding='utf-8') as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
     print(f"\n[保存] 元数据    → {meta_path}")
-    print("\nOK 第一步完成，可运行第二步生成 MCNP5 输入文件。")
+    print(f"\nOK 第一步完成 (phantom={phantom})，可运行第二步生成 MCNP5 输入文件。")
 
 
 if __name__ == '__main__':

@@ -415,35 +415,37 @@ def write_data_section(f, unique_ids, organs, media, energy_mev, mask=None):
     # 散射光子以其实际能量贡献，消除总注量×E_source 带来的高估（1 MeV 时约 78%）。
     # 计分号 = (WT_RULES 索引 + 1) × 10 + 6 → 16, 26, 36, ...（需与 step3 一致）
     # WT_RULES（必须与 mcnp_icrp_step3_compare.py 中 WT_RULES 完全一致，顺序相同）
+    _W_F6 = 0.12 / 14
     _WT_RULES_F6 = [
         (['testes', 'testis'],                               0.08),
         (['ovaries', 'ovary'],                               0.08),
-        (['colon', 'large intestine'],                       0.12),
+        (['colon', 'large intestine', 'rectum'],             0.12),
         (['lung'],                                           0.12),
         (['stomach wall', 'stomach'],                        0.12),
         (['red bone marrow', 'red marrow', 'spongiosa'],     0.12),
+        (['breast', 'mammary', 'glandular tissue'],          0.12),
         (['urinary bladder', 'bladder wall', 'bladder'],     0.04),
         (['oesophagus', 'esophagus'],                        0.04),
         (['liver'],                                          0.04),
         (['thyroid'],                                        0.04),
-        (['bone surface', 'endosteum'],                      0.01),
+        (['bone surface', 'endosteum', 'cortical'],          0.01),
         (['brain'],                                          0.01),
         (['salivary gland', 'salivary'],                     0.01),
         (['skin'],                                           0.01),
-        (['adrenal'],                                        0.12/14),
-        (['extrathoracic', 'et region'],                     0.12/14),
-        (['gallbladder', 'gall bladder'],                    0.12/14),
-        (['heart wall', 'heart muscle', 'heart'],            0.12/14),
-        (['kidney'],                                         0.12/14),
-        (['lymph node', 'lymph'],                            0.12/14),
-        (['muscle'],                                         0.12/14),
-        (['oral mucosa'],                                    0.12/14),
-        (['pancreas'],                                       0.12/14),
-        (['prostate'],                                       0.12/14),
-        (['small intestine'],                                0.12/14),
-        (['spleen'],                                         0.12/14),
-        (['thymus'],                                         0.12/14),
-        (['uterus', 'cervix'],                               0.12/14),
+        (['adrenal'],                                        _W_F6),
+        (['extrathoracic', 'et region', 'nasal passage'],    _W_F6),
+        (['gallbladder', 'gall bladder'],                    _W_F6),
+        (['heart wall', 'heart muscle', 'heart'],            _W_F6),
+        (['kidney'],                                         _W_F6),
+        (['lymph node', 'lymph'],                            _W_F6),
+        (['muscle'],                                         _W_F6),
+        (['oral mucosa'],                                    _W_F6),
+        (['pancreas'],                                       _W_F6),
+        (['prostate'],                                       _W_F6),
+        (['small intestine'],                                _W_F6),
+        (['spleen'],                                         _W_F6),
+        (['thymus'],                                         _W_F6),
+        (['uterus', 'cervix'],                               _W_F6),
     ]
     from collections import defaultdict as _dd
     _rule_groups = _dd(list)
@@ -475,16 +477,19 @@ def write_data_section(f, unique_ids, organs, media, energy_mev, mask=None):
         f.write('c\n')
 
     # ── NPS & time limit ──
-    # 统一使用 10^8，满足体素体模 FMESH 统计精度要求（单体素相对误差 ~2-5%）。
+    # 默认使用 10^7；可通过 generate_input_file 的 nps 参数覆盖。
     # 预计运行时间：0.01 MeV ~2 h，0.1 MeV ~4 h，1 MeV ~20 h，10 MeV ~8 h。
-    nps = 100_000_000
+    if not hasattr(write_data_section, '_nps'):
+        write_data_section._nps = 10_000_000
+    nps = write_data_section._nps
     prdmp_interval = max(500_000, nps // 10)
+    ctme = 1800 if nps >= 50_000_000 else 720
     f.write('c Number of source histories\n')
     f.write(f'nps {nps}\n')
     f.write(f'prdmp {prdmp_interval} {prdmp_interval} 1\n')
     # ctme: computer-time limit in minutes.  Safety valve — if nps completes
     # first, ctme is ignored.  Set generously to avoid premature termination.
-    f.write('ctme 1800\n')
+    f.write(f'ctme {ctme}\n')
 
 
 def generate_input_file(mask: np.ndarray, organs: dict, media: dict,
