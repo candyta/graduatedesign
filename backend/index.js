@@ -2469,11 +2469,7 @@ app.post('/api/icrp116/start-validation', (req, res) => {
         return res.json({ success: false, message: '验证任务正在运行中，请等待完成或先取消' });
     }
 
-    // 每次启动前清空旧结果，避免旧 .npy 与新 f6doses.json 混用
-    const cleared = clearIcrp116Outputs();
-    console.log(`[ICRP116] start-validation: 清空旧结果 ${cleared.cleared} 个文件`);
-
-    // 重置状态
+    // 重置状态（不清空文件，由 Python 脚本的跳过逻辑决定是否重跑）
     icrp116Job.running      = true;
     icrp116Job.completed    = false;
     icrp116Job.failed       = false;

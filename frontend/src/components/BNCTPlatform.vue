@@ -3137,16 +3137,6 @@ export default {
       console.warn('[初始化] 清除会话文件失败（可忽略）:', err.message);
     }
 
-    // 页面刷新时清空 ICRP-116 验证输出目录，避免旧文件（npy/json/csv/png）残留干扰新一轮计算
-    try {
-      const r = await axios.post(`${API_BASE}/api/icrp116/reset`);
-      if (r.data.success) {
-        console.log(`[ICRP116] 已清空旧输出文件 ${r.data.cleared} 个`);
-      }
-    } catch (err) {
-      console.warn('[ICRP116] reset 失败（可忽略）:', err.message);
-    }
-
     // mounted时尚无CT数据，tumor_position保持默认[0,0,0]（CT中心）
   },
 
