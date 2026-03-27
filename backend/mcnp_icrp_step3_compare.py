@@ -83,7 +83,7 @@ _W = 0.12 / 14   # 余量器官每个 wT
 WT_RULES = [
     (['testes', 'testis'],                               0.08),   # 性腺(男)
     (['ovaries', 'ovary'],                               0.08),   # 性腺(女)
-    (['colon', 'large intestine'],                       0.12),
+    (['colon', 'large intestine', 'rectum'],              0.12),  # 结肠含直肠壁
     (['lung'],                                           0.12),
     (['stomach wall', 'stomach'],                        0.12),
     (['red bone marrow', 'red marrow', 'spongiosa'],     0.12),   # 红骨髓
@@ -92,13 +92,13 @@ WT_RULES = [
     (['oesophagus', 'esophagus'],                        0.04),
     (['liver'],                                          0.04),
     (['thyroid'],                                        0.04),
-    (['bone surface', 'endosteum'],                      0.01),
+    (['bone surface', 'endosteum', 'cortical'],           0.01),  # 骨表面:皮质骨作代理
     (['brain'],                                          0.01),
     (['salivary gland', 'salivary'],                     0.01),
     (['skin'],                                           0.01),
     # 余量器官 (0.12 / 14 each)
     (['adrenal'],                                        _W),
-    (['extrathoracic', 'et region'],                     _W),
+    (['extrathoracic', 'et region', 'nasal passage'],     _W),  # ET气道 (ET1/ET2)
     (['gallbladder', 'gall bladder'],                    _W),
     (['heart wall', 'heart muscle', 'heart'],            _W),
     (['kidney'],                                         _W),
