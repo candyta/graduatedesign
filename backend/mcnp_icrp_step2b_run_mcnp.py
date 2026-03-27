@@ -41,6 +41,10 @@ STEP2_SCRIPT  = "mcnp_icrp_step2_gen_input.py"
 ICRP110_ZIP   = os.path.join("..", "P110 data V1.2", "AM.zip")
 ORGAN_MASK    = os.path.join("icrp_validation", "organ_mask_127x63x111.npy")
 
+# ─── AF 体模路径 ──────────────────────────────────────────────────
+AF_ORGAN_MASK  = os.path.join("icrp_validation", "organ_mask_127x63x111_AF.npy")
+AF_ICRP110_ZIP = os.path.join("..", "P110 data V1.2", "AF.zip")
+
 # ─── 默认路径（与现有 run_batch.py / g5.bat 体系一致） ───────────
 DEFAULT_G5_BAT    = r"D:\LANL\g5.bat"
 DEFAULT_XSDIR     = r"D:\LANL\xsdir"  # MCNP5 截面目录文件
@@ -57,12 +61,20 @@ DEFAULT_OUT_DIR   = os.path.join(DEFAULT_BACKEND,
 WAIT_TIMEOUT   = 12 * 3600   # 12 小时（足以覆盖 1 MeV 慢速情况）
 WAIT_INTERVAL  = 30           # 每 30 s 检查一次
 
-# 4 个验证能量点
+# 4 个验证能量点（AM）
 ENERGY_CASES = [
     {"energy": 0.010, "inp_name": "ap_photon_E0.010MeV.inp", "mcnp_base": "icrp01"},
     {"energy": 0.100, "inp_name": "ap_photon_E0.100MeV.inp", "mcnp_base": "icrp02"},
     {"energy": 1.000, "inp_name": "ap_photon_E1.000MeV.inp", "mcnp_base": "icrp03"},
     {"energy": 10.00, "inp_name": "ap_photon_E10.000MeV.inp","mcnp_base": "icrp04"},
+]
+
+# 4 个验证能量点（AF）— 使用不同 mcnp_base 避免文件名冲突
+AF_ENERGY_CASES = [
+    {"energy": 0.010, "inp_name": "af_photon_E0.010MeV.inp", "mcnp_base": "icrp05"},
+    {"energy": 0.100, "inp_name": "af_photon_E0.100MeV.inp", "mcnp_base": "icrp06"},
+    {"energy": 1.000, "inp_name": "af_photon_E1.000MeV.inp", "mcnp_base": "icrp07"},
+    {"energy": 10.00, "inp_name": "af_photon_E10.000MeV.inp","mcnp_base": "icrp08"},
 ]
 
 # ─────────────────────────────────────────────────────────────────
@@ -116,16 +128,27 @@ def wait_for_file(path: str, timeout: int, interval: int, log_fh=None) -> bool:
     return False
 
 
-def run_one(case: dict, args, log_fh):
-    """运行单个能量点的完整流程。"""
+def run_one(case: dict, args, log_fh, out_dir: str = None):
+    """运行单个能量点的完整流程。
+
+    Parameters
+    ----------
+    case    : dict  — {"energy": float, "inp_name": str, "mcnp_base": str}
+    args    : argparse.Namespace
+    log_fh  : file handle
+    out_dir : str or None — 覆盖 args.out_dir（AF 运行时传入 AF 输出目录）
+    """
     energy   = case["energy"]
     inp_name = case["inp_name"]
-    base     = case["mcnp_base"]   # 短名：icrp01 … icrp04（无点，MCNP5 兼容）
+    base     = case["mcnp_base"]   # 短名：icrp01 … icrp08（无点，MCNP5 兼容）
+
+    if out_dir is None:
+        out_dir = args.out_dir
 
     log(f"━━━ E = {energy:.3f} MeV  [{inp_name}] ━━━", log_fh)
 
     # 若输出 npy 已存在且非空，跳过重跑（防止页面刷新覆盖已完成的计算）
-    npy_check = Path(args.out_dir) / f"fluence_E{energy:.3f}MeV.npy"
+    npy_check = Path(out_dir) / f"fluence_E{energy:.3f}MeV.npy"
     if npy_check.exists() and npy_check.stat().st_size > 1000:
         log(f"  [跳过] {npy_check.name} 已存在 ({npy_check.stat().st_size // 1024} KB)，"
             f"不重新运行 MCNP。如需重跑请手动删除该文件。", log_fh)
@@ -211,7 +234,7 @@ def run_one(case: dict, args, log_fh):
         log(f"  找到输出文件: {out_o}", log_fh)
 
     # ── 5. 提取 meshtal → npy ─────────────────────────────────────
-    out_dir = Path(args.out_dir)
+    out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     npy_path = out_dir / f"fluence_E{energy:.3f}MeV.npy"
 
@@ -316,9 +339,13 @@ def resolve_phot_lib(args, log_fh):
     return None
 
 
-def ensure_prerequisites(args, cases, log_fh) -> bool:
+def ensure_prerequisites(args, cases, log_fh, phantom: str = 'AM') -> bool:
     """
     检查所需 .inp 文件是否存在；若缺失，自动运行 Step1 和/或 Step2 补全。
+
+    Parameters
+    ----------
+    phantom : 'AM' 或 'AF'
     返回 True 表示准备就绪，False 表示出错。
     """
     backend  = args.backend_dir
@@ -328,21 +355,30 @@ def ensure_prerequisites(args, cases, log_fh) -> bool:
     # 只生成缺失的 .inp 文件，保留已有文件（避免页面刷新时重跑覆盖已有计算）
     missing = [n for n in needed if not (inp_dir / n).exists()]
     if not missing:
-        log(f"[准备] 所有 {len(needed)} 个 .inp 文件已存在，跳过重新生成", log_fh)
+        log(f"[准备-{phantom}] 所有 {len(needed)} 个 .inp 文件已存在，跳过重新生成", log_fh)
         return True
-    log(f"[准备] 将生成 {len(missing)} 个缺失的 .inp 文件 ...", log_fh)
+    log(f"[准备-{phantom}] 将生成 {len(missing)} 个缺失的 .inp 文件 ...", log_fh)
 
-    zip_path  = Path(backend) / ICRP110_ZIP
-    mask_path = Path(backend) / ORGAN_MASK
+    if phantom == 'AF':
+        zip_path  = Path(backend) / AF_ICRP110_ZIP
+        mask_path = Path(backend) / AF_ORGAN_MASK
+    else:
+        zip_path  = Path(backend) / ICRP110_ZIP
+        mask_path = Path(backend) / ORGAN_MASK
 
-    # ── 若 zip 不存在，尝试从 AM/ 目录自动打包 ────────────────────
+    # ── 若 zip 不存在（仅 AM 支持自动打包） ────────────────────────
     if not zip_path.exists():
-        am_dir = Path(backend) / "AM"
-        if not _try_build_zip(zip_path, am_dir, log_fh):
-            log(f"[错误] 找不到 ICRP-110 数据包: {zip_path}", log_fh)
-            log(f"  也未找到解压目录: {am_dir}", log_fh)
-            log("  请将 AM.zip 放在 backend/P110 data V1.2/ 目录下", log_fh)
-            log("  或将 AM.dat / AM_organs.dat / AM_media.dat 放在 backend/AM/ 目录下", log_fh)
+        if phantom == 'AM':
+            am_dir = Path(backend) / "AM"
+            if not _try_build_zip(zip_path, am_dir, log_fh):
+                log(f"[错误] 找不到 ICRP-110 数据包: {zip_path}", log_fh)
+                log(f"  也未找到解压目录: {am_dir}", log_fh)
+                log("  请将 AM.zip 放在 backend/P110 data V1.2/ 目录下", log_fh)
+                log("  或将 AM.dat / AM_organs.dat / AM_media.dat 放在 backend/AM/ 目录下", log_fh)
+                return False
+        else:
+            log(f"[错误] 找不到 ICRP-110 AF 数据包: {zip_path}", log_fh)
+            log("  请将 AF.zip 放在 backend/P110 data V1.2/ 目录下", log_fh)
             return False
 
     # ── Step 1：生成器官掩膜（仅当掩膜不存在时） ──────────────────
@@ -351,47 +387,50 @@ def ensure_prerequisites(args, cases, log_fh) -> bool:
             log(f"[错误] 找不到 ICRP-110 数据包: {zip_path}", log_fh)
             return False
 
-        log(f"[准备] Step1 → 生成器官掩膜: {mask_path}", log_fh)
-        rc = run_subprocess_logged(
-            [sys.executable,
-             str(Path(backend) / STEP1_SCRIPT),
-             "--data-zip", str(zip_path),
-             "--out-dir",  str(mask_path.parent)],
-            cwd=backend, log_fh=log_fh,
-        )
+        log(f"[准备-{phantom}] Step1 → 生成器官掩膜: {mask_path}", log_fh)
+        step1_cmd = [sys.executable,
+                     str(Path(backend) / STEP1_SCRIPT),
+                     "--data-zip", str(zip_path),
+                     "--out-dir",  str(mask_path.parent),
+                     "--phantom",  phantom]
+        rc = run_subprocess_logged(step1_cmd, cwd=backend, log_fh=log_fh)
         if rc != 0:
-            log(f"[错误] Step1 失败 (退出码={rc})", log_fh)
+            log(f"[错误] Step1 ({phantom}) 失败 (退出码={rc})", log_fh)
             return False
     else:
-        log(f"[准备] 器官掩膜已存在: {mask_path}", log_fh)
+        log(f"[准备-{phantom}] 器官掩膜已存在: {mask_path}", log_fh)
 
     # ── Step 2：生成 .inp 文件 ─────────────────────────────────────
     phot_lib = resolve_phot_lib(args, log_fh)
     if phot_lib is None:
         log("[致命] 无可用光子截面库，无法生成 MCNP 输入文件，终止运行", log_fh)
         return False
-    log(f"[准备] Step2 → 生成 .inp 文件到: {inp_dir}  (光子库: {phot_lib})", log_fh)
-    rc = run_subprocess_logged(
-        [sys.executable,
-         str(Path(backend) / STEP2_SCRIPT),
-         "--mask",     str(mask_path),
-         "--zip",      str(zip_path),
-         "--out-dir",  str(inp_dir),
-         "--phot-lib", phot_lib,
-         "--xsdir",    args.xsdir],
-        cwd=backend, log_fh=log_fh,
-    )
+    log(f"[准备-{phantom}] Step2 → 生成 .inp 文件到: {inp_dir}  (光子库: {phot_lib})", log_fh)
+
+    # 确定 nps 参数
+    nps_arg = str(getattr(args, 'nps', 10_000_000))
+
+    step2_cmd = [sys.executable,
+                 str(Path(backend) / STEP2_SCRIPT),
+                 "--mask",     str(mask_path),
+                 "--zip",      str(zip_path),
+                 "--out-dir",  str(inp_dir),
+                 "--phot-lib", phot_lib,
+                 "--xsdir",    args.xsdir,
+                 "--phantom",  phantom,
+                 "--nps",      nps_arg]
+    rc = run_subprocess_logged(step2_cmd, cwd=backend, log_fh=log_fh)
     if rc != 0:
-        log(f"[错误] Step2 失败 (退出码={rc})", log_fh)
+        log(f"[错误] Step2 ({phantom}) 失败 (退出码={rc})", log_fh)
         return False
 
     # 最终确认
     still_missing = [n for n in needed if not (inp_dir / n).exists()]
     if still_missing:
-        log(f"[错误] Step2 完成后仍缺少文件: {still_missing}", log_fh)
+        log(f"[错误] Step2 ({phantom}) 完成后仍缺少文件: {still_missing}", log_fh)
         return False
 
-    log("[准备] OK 所有 .inp 文件已生成", log_fh)
+    log(f"[准备-{phantom}] OK 所有 .inp 文件已生成", log_fh)
     return True
 
 
@@ -402,7 +441,7 @@ def main():
     parser.add_argument("--inp-dir",     default=DEFAULT_INP_DIR,
                         help="Step2 生成的 .inp 文件目录")
     parser.add_argument("--out-dir",     default=DEFAULT_OUT_DIR,
-                        help="fluence npy 输出目录")
+                        help="fluence npy 输出目录（AM）")
     parser.add_argument("--g5-bat",      default=DEFAULT_G5_BAT,
                         help="g5.bat 完整路径")
     parser.add_argument("--work-dir",    default=DEFAULT_WORK_DIR,
@@ -416,18 +455,34 @@ def main():
                              "不指定则从 xsdir 自动检测")
     parser.add_argument("--xsdir",       default=DEFAULT_XSDIR,
                         help="MCNP5 xsdir 路径，用于自动检测可用光子库")
+    # ── AF 支持 ──────────────────────────────────────────────────
+    parser.add_argument("--run-af",      action="store_true", default=True,
+                        help="同时运行 AF 体模（默认开启）；用 --no-run-af 关闭")
+    parser.add_argument("--no-run-af",   dest="run_af", action="store_false",
+                        help="不运行 AF 体模")
+    parser.add_argument("--af-out-dir",  default=None,
+                        help="AF fluence npy 输出目录（默认: --out-dir 值加 _AF 后缀）")
+    parser.add_argument("--nps",         default=10_000_000, type=int,
+                        help="MCNP5 源粒子数（传给 Step2，默认 10_000_000）")
     args = parser.parse_args()
+
+    # 确定 AF 输出目录
+    if args.af_out_dir is None:
+        args.af_out_dir = args.out_dir.rstrip("/\\") + "_AF"
 
     # 创建日志文件
     Path(args.out_dir).mkdir(parents=True, exist_ok=True)
     log_path = Path(args.out_dir) / "run_log.txt"
 
     print(f"━━━ ICRP-116 AP 光子 MCNP5 验证运行 ━━━")
-    print(f"  inp-dir   : {args.inp_dir}")
-    print(f"  out-dir   : {args.out_dir}")
-    print(f"  g5-bat    : {args.g5_bat}")
-    print(f"  work-dir  : {args.work_dir}")
-    print(f"  log       : {log_path}\n")
+    print(f"  inp-dir    : {args.inp_dir}")
+    print(f"  out-dir    : {args.out_dir}")
+    print(f"  af-out-dir : {args.af_out_dir}")
+    print(f"  run-af     : {args.run_af}")
+    print(f"  g5-bat     : {args.g5_bat}")
+    print(f"  work-dir   : {args.work_dir}")
+    print(f"  nps        : {args.nps:,}")
+    print(f"  log        : {log_path}\n")
 
     # 检查 g5.bat
     if not Path(args.g5_bat).exists():
@@ -435,45 +490,81 @@ def main():
         print("  请确认 MCNP5 已安装，并通过 --g5-bat 指定正确路径")
         sys.exit(1)
 
-    cases = ENERGY_CASES
+    am_cases = ENERGY_CASES
     if args.only:
-        cases = [c for c in ENERGY_CASES if c["energy"] in args.only]
-        if not cases:
+        am_cases = [c for c in ENERGY_CASES if c["energy"] in args.only]
+        if not am_cases:
             print(f"[错误] --only 指定的能量 {args.only} 在 ENERGY_CASES 中不存在")
             sys.exit(1)
 
-    with open(log_path, "w", encoding="utf-8") as log_fh:
-        log(f"开始运行，共 {len(cases)} 个能量点", log_fh)
+    af_cases = AF_ENERGY_CASES
+    if args.only:
+        af_cases = [c for c in AF_ENERGY_CASES if c["energy"] in args.only]
 
-        # 确保 .inp 文件存在（必要时自动运行 Step1 + Step2）
-        if not ensure_prerequisites(args, cases, log_fh):
-            log("[致命] 前置步骤失败，验证中止", log_fh)
+    with open(log_path, "w", encoding="utf-8") as log_fh:
+        log(f"开始运行，AM 共 {len(am_cases)} 个能量点", log_fh)
+
+        # ── AM: 确保 .inp 文件存在 ────────────────────────────────────
+        if not ensure_prerequisites(args, am_cases, log_fh, phantom='AM'):
+            log("[致命] AM 前置步骤失败，验证中止", log_fh)
             sys.exit(1)
 
-        results = {}
-        for case in cases:
-            ok = run_one(case, args, log_fh)
-            results[case["energy"]] = "OK" if ok else "FAILED"
+        # ── AM: 运行 MCNP5 ───────────────────────────────────────────
+        am_results = {}
+        for case in am_cases:
+            ok = run_one(case, args, log_fh, out_dir=args.out_dir)
+            am_results[case["energy"]] = "OK" if ok else "FAILED"
 
-        log("━━━ 汇总 ━━━", log_fh)
-        for e, status in results.items():
+        log("━━━ AM 汇总 ━━━", log_fh)
+        for e, status in am_results.items():
             log(f"  E={e:.3f} MeV : {status}", log_fh)
 
-        failed = [e for e, s in results.items() if s != "OK"]
-        if failed:
-            log(f"[警告] {len(failed)} 个能量点失败: {failed}", log_fh)
+        # ── AF: 确保 .inp 文件存在并运行 ─────────────────────────────
+        af_results = {}
+        if args.run_af and af_cases:
+            log(f"\n[AF] 开始 AF 体模运行，共 {len(af_cases)} 个能量点", log_fh)
+            Path(args.af_out_dir).mkdir(parents=True, exist_ok=True)
+
+            if not ensure_prerequisites(args, af_cases, log_fh, phantom='AF'):
+                log("[警告] AF 前置步骤失败，跳过 AF 运行", log_fh)
+            else:
+                for case in af_cases:
+                    ok = run_one(case, args, log_fh, out_dir=args.af_out_dir)
+                    af_results[case["energy"]] = "OK" if ok else "FAILED"
+
+                log("━━━ AF 汇总 ━━━", log_fh)
+                for e, status in af_results.items():
+                    log(f"  E={e:.3f} MeV : {status}", log_fh)
+
+        am_failed = [e for e, s in am_results.items() if s != "OK"]
+        af_failed = [e for e, s in af_results.items() if s != "OK"]
+
+        if am_failed:
+            log(f"[警告] AM: {len(am_failed)} 个能量点失败: {am_failed}", log_fh)
             log("  提示：检查 g5.bat 路径、MCNP5 核数据库、inp 文件格式", log_fh)
-        else:
+        if af_failed:
+            log(f"[警告] AF: {len(af_failed)} 个能量点失败: {af_failed}", log_fh)
+        if not am_failed and not af_failed:
             log("OK 全部完成！运行第三步脚本进行 ICRP-116 对比分析。", log_fh)
 
     # 最终打印
     print("\n运行结果汇总:")
-    for e, status in results.items():
-        print(f"  E={e:.3f} MeV : {status}")
+    print("  [AM]")
+    for e, status in am_results.items():
+        print(f"    E={e:.3f} MeV : {status}")
+    if af_results:
+        print("  [AF]")
+        for e, status in af_results.items():
+            print(f"    E={e:.3f} MeV : {status}")
 
-    if not failed:
-        print(f"\nOK 所有 fluence npy 文件已保存到 {args.out_dir}")
+    am_failed = [e for e, s in am_results.items() if s != "OK"]
+    if not am_failed:
+        print(f"\nOK AM fluence npy 文件已保存到 {args.out_dir}")
+        if af_results and not [e for e, s in af_results.items() if s != "OK"]:
+            print(f"OK AF fluence npy 文件已保存到 {args.af_out_dir}")
         print("  下一步: python mcnp_icrp_step3_compare.py")
+        if args.run_af:
+            print(f"  (含 AF 平均: --af-out-dir {args.af_out_dir})")
     else:
         sys.exit(1)
 

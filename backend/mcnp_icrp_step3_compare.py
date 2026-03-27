@@ -48,6 +48,12 @@ PHANT_Y_FULL = NY * VOX_Y   # 27.14 cm（体模 AP 方向全深度）
 # 4 个验证能量点
 ENERGIES = [0.010, 0.100, 1.000, 10.000]
 
+# ─── AF 体模 BEAM_AREA ────────────────────────────────────────────
+# AF phantom (downsampled 127×63×111), full physical size:
+#   X: 299 × 1.775 mm = 530.725 mm = 53.0725 cm
+#   Z: 348 × 4.84  mm = 1684.32 mm = 168.432 cm
+_AF_BEAM_AREA = (299 * 1.775 / 10) * (348 * 4.84 / 10)  # 53.0725 × 168.432 ≈ 8939 cm²
+
 # ─── ICRP-116 Table A.3 参考值（AP 光子，pSv·cm^2） ───────────────
 # 来源: ICRP Publication 116 (2010), Table A.3
 ICRP116_REF = {
@@ -199,6 +205,30 @@ def load_organs(zip_path: str) -> dict:
     """从 AM.zip 读取 AM_organs.dat，返回 {id: (tissue, density, name)}。"""
     with zipfile.ZipFile(zip_path, 'r') as z:
         text = z.read('AM/AM_organs.dat').decode('utf-8', errors='replace')
+    return parse_organs(text.splitlines())
+
+
+def _load_organs_from_zip(zip_path: str, phantom: str = 'AM') -> dict:
+    """
+    从 AM.zip 或 AF.zip 读取器官定义。
+
+    Parameters
+    ----------
+    zip_path : str
+        路径指向 AM.zip 或 AF.zip
+    phantom : str
+        'AM' 或 'AF'
+
+    Returns
+    -------
+    dict : {organ_id: (tissue_num, density, name)}
+    """
+    if phantom == 'AF':
+        organs_entry = 'AF/AF_organs.dat'
+    else:
+        organs_entry = 'AM/AM_organs.dat'
+    with zipfile.ZipFile(zip_path, 'r') as z:
+        text = z.read(organs_entry).decode('utf-8', errors='replace')
     return parse_organs(text.splitlines())
 
 
@@ -451,6 +481,155 @@ def compute_h_eff_from_f6(f6_dict: dict, organs: dict) -> tuple:
     return h_eff, organ_table
 
 
+def _compute_h_E_for_dir(out_dir: Path, mask: np.ndarray, organs: dict,
+                         beam_area: float) -> list:
+    """
+    对指定目录中的 fluence npy 文件计算各能量点的 h_E (pSv·cm²)。
+
+    Parameters
+    ----------
+    out_dir   : Path — fluence_E*.npy 所在目录
+    mask      : np.ndarray (NX, NY, NZ) — 器官掩膜
+    organs    : dict — {organ_id: (tissue_num, density, name)}
+    beam_area : float — 束流面积 cm²（AM 与 AF 不同）
+
+    Returns
+    -------
+    list of (energy, h_calc, h_ref, dev%)  — 仅包含成功计算的能量点
+    """
+    # 临时将模块级 BEAM_AREA 替换为指定值，计算完成后恢复
+    global BEAM_AREA
+    _orig_beam_area = BEAM_AREA
+    BEAM_AREA = beam_area
+
+    results = []
+    skipped = []
+
+    try:
+        for energy in ENERGIES:
+            npy_name = f"fluence_E{energy:.3f}MeV.npy"
+            npy_path = out_dir / npy_name
+
+            if not npy_path.exists():
+                skipped.append(energy)
+                continue
+
+            fluence_npy = np.load(npy_path)
+
+            if not is_data_reliable(fluence_npy, energy, mask=mask):
+                skipped.append(energy)
+                continue
+
+            fluence_ready = prepare_mcnp_fluence(fluence_npy, mask)
+
+            stem = f"fluence_E{energy:.3f}MeV"
+
+            # ── 优先：F6:P ───────────────────────────────────────────
+            import json as _json
+            f6_json_path = out_dir / f"{stem}_f6doses.json"
+            use_f6 = False
+            h_calc = None
+            organ_table = []
+            if f6_json_path.exists():
+                try:
+                    with open(f6_json_path, 'r', encoding='utf-8') as _fh:
+                        f6_dict = _json.load(_fh)
+                    if f6_dict:
+                        h_calc_f6, ot_f6 = compute_h_eff_from_f6(f6_dict, organs)
+                        _h_ref_check = ICRP116_REF.get(energy, 0.0)
+                        if _h_ref_check <= 0 or h_calc_f6 <= 200 * _h_ref_check:
+                            h_calc, organ_table, use_f6 = h_calc_f6, ot_f6, True
+                except Exception:
+                    pass
+
+            # ── 次优 A：多 FMESH 4 档 ────────────────────────────────
+            use_emesh = False
+            if not use_f6:
+                fm14_b0 = out_dir / f"{stem}_bin0.npy"
+                fm24_b0 = out_dir / f"{stem}_fm24_bin0.npy"
+                fm24_b1 = out_dir / f"{stem}_fm24_bin1.npy"
+                fm34_b0 = out_dir / f"{stem}_fm34_bin0.npy"
+                fm34_b1 = out_dir / f"{stem}_fm34_bin1.npy"
+                use_multifmesh = all(p.exists() for p in (fm14_b0, fm24_b0, fm24_b1, fm34_b0, fm34_b1))
+
+                if use_multifmesh:
+                    eb14 = out_dir / f"{stem}_ebounds.npy"
+                    eb24 = out_dir / f"{stem}_fm24_ebounds.npy"
+                    eb34 = out_dir / f"{stem}_fm34_ebounds.npy"
+                    try:
+                        bounds14 = list(np.load(eb14)) if eb14.exists() else None
+                        bounds24 = list(np.load(eb24)) if eb24.exists() else None
+                        bounds34 = list(np.load(eb34)) if eb34.exists() else None
+                        c1 = bounds14[1] if bounds14 and len(bounds14) >= 3 else None
+                        c2 = bounds24[1] if bounds24 and len(bounds24) >= 3 else None
+                        c3 = bounds34[1] if bounds34 and len(bounds34) >= 3 else None
+                        e_max = (bounds14[-1] if bounds14 else
+                                 bounds24[-1] if bounds24 else
+                                 bounds34[-1] if bounds34 else None)
+                        if None in (c1, c2, c3, e_max):
+                            raise ValueError("无法读取多 FMESH 截止能量")
+
+                        if energy >= 9.0 and bounds24 and len(bounds24) >= 3:
+                            phi24_b0_arr = prepare_mcnp_fluence(np.load(fm24_b0), mask)
+                            phi24_b1_arr = prepare_mcnp_fluence(np.load(fm24_b1), mask)
+                            e_bounds_2 = [bounds24[0], bounds24[1], bounds24[2]]
+                            fluence_bins = [phi24_b0_arr, phi24_b1_arr]
+                            use_emesh = True
+                            h_calc, organ_table = compute_h_eff_from_fluence_emesh(
+                                fluence_bins, e_bounds_2, mask, organs)
+                        else:
+                            phi14_b0 = prepare_mcnp_fluence(np.load(fm14_b0), mask)
+                            phi24_b0_a = prepare_mcnp_fluence(np.load(fm24_b0), mask)
+                            phi34_b0_a = prepare_mcnp_fluence(np.load(fm34_b0), mask)
+                            phi34_b1_a = prepare_mcnp_fluence(np.load(fm34_b1), mask)
+                            eff_bin0 = phi14_b0
+                            eff_bin1 = np.clip(phi24_b0_a - phi14_b0, 0, None)
+                            eff_bin2 = np.clip(phi34_b0_a - phi24_b0_a, 0, None)
+                            eff_bin3 = phi34_b1_a
+                            fluence_bins = [eff_bin0, eff_bin1, eff_bin2, eff_bin3]
+                            e_bounds_4 = [0.0, c1, c2, c3, e_max]
+                            use_emesh = True
+                            h_calc, organ_table = compute_h_eff_from_fluence_emesh(
+                                fluence_bins, e_bounds_4, mask, organs)
+                    except Exception:
+                        use_multifmesh = False
+
+            # ── 次优 B：2 档 EMESH ───────────────────────────────────
+            if not use_f6 and not use_emesh:
+                eb_path   = out_dir / f"{stem}_ebounds.npy"
+                bin0_path = out_dir / f"{stem}_bin0.npy"
+                if eb_path.exists() and bin0_path.exists():
+                    e_bounds = list(np.load(eb_path))
+                    if e_bounds and e_bounds[-1] <= 1000.0:
+                        n_bins = len(e_bounds) - 1
+                        fluence_bins = []
+                        _ok = True
+                        for k in range(n_bins):
+                            bin_npy = out_dir / f"{stem}_bin{k}.npy"
+                            if not bin_npy.exists():
+                                _ok = False
+                                break
+                            fluence_bins.append(prepare_mcnp_fluence(np.load(bin_npy), mask))
+                        if _ok:
+                            use_emesh = True
+                            h_calc, organ_table = compute_h_eff_from_fluence_emesh(
+                                fluence_bins, e_bounds, mask, organs)
+
+            # ── 后备：总注量 ─────────────────────────────────────────
+            if not use_f6 and not use_emesh:
+                h_calc, organ_table = compute_h_eff_from_fluence(
+                    fluence_ready, mask, organs, energy)
+
+            h_ref = ICRP116_REF[energy]
+            dev   = (h_calc - h_ref) / h_ref * 100
+            results.append((energy, h_calc, h_ref, dev))
+
+    finally:
+        BEAM_AREA = _orig_beam_area
+
+    return results
+
+
 def print_organ_table(organ_table, energy):
     """打印器官剂量贡献明细（前 15 位）。支持 F6 和 fluence 两种格式。"""
     # F6 rows have 6 elements (name, wt, f6_val, dose, contrib, rel_err)
@@ -556,6 +735,13 @@ def main():
         help="ICRP-110 AM.zip 路径（含 AM_organs.dat）")
     parser.add_argument("--no-plot", action="store_true",
         help="跳过生成图表")
+    # ── AF 性别平均支持 ──────────────────────────────────────────────
+    parser.add_argument("--af-out-dir", default=None,
+        help="AF fluence_E*.npy 所在目录（提供时启用性别平均 h_E）")
+    parser.add_argument("--af-mask", default=None,
+        help="AF 器官掩膜路径（默认: icrp_validation/organ_mask_127x63x111_AF.npy）")
+    parser.add_argument("--af-zip", default=None,
+        help="ICRP-110 AF.zip 路径（默认: ../P110 data V1.2/AF.zip）")
     args = parser.parse_args()
 
     out_dir  = Path(args.out_dir)
@@ -813,9 +999,9 @@ def main():
         print("     若无 .70p，检查 xsdir 中可用库后用 --phot-lib 重新生成输入文件")
         sys.exit(1)
 
-    # ── 汇总表格 ─────────────────────────────────────────────
+    # ── AM 汇总表格 ───────────────────────────────────────────
     print("\n" + "=" * 65)
-    print(f"  {'能量(MeV)':<12} {'h_计算':>12} {'h_ICRP-116':>12} {'偏差':>8}  判定")
+    print(f"  [AM] {'能量(MeV)':<12} {'h_计算':>12} {'h_ICRP-116':>12} {'偏差':>8}  判定")
     print("  " + "-" * 60)
     passed = 0
     for e, hc, hr, d in results:
@@ -828,12 +1014,93 @@ def main():
     print(f"  通过率（±10%）: {passed}/{len(results)}")
     print("=" * 65)
 
-    # ── 保存 CSV ──────────────────────────────────────────────
+    # ── 保存 AM CSV ───────────────────────────────────────────
     save_csv(results, out_dir)
 
-    # ── 绘图 ─────────────────────────────────────────────────
+    # ── 绘图（AM）────────────────────────────────────────────
     if not args.no_plot:
         try_plot(results, out_dir)
+
+    # ── AF 性别平均 ───────────────────────────────────────────
+    if args.af_out_dir:
+        af_out_dir = Path(args.af_out_dir)
+        af_mask_path = Path(args.af_mask) if args.af_mask else \
+                       Path("icrp_validation/organ_mask_127x63x111_AF.npy")
+        af_zip_path  = Path(args.af_zip) if args.af_zip else \
+                       Path("../P110 data V1.2/AF.zip")
+
+        af_errors = []
+        if not af_out_dir.exists():
+            af_errors.append(f"AF 输出目录不存在: {af_out_dir}")
+        if not af_mask_path.exists():
+            af_errors.append(f"AF 器官掩膜不存在: {af_mask_path}")
+        if not af_zip_path.exists():
+            af_errors.append(f"AF.zip 不存在: {af_zip_path}")
+        if af_errors:
+            for e in af_errors:
+                print(f"[AF 警告] {e}")
+            print("[AF] 跳过性别平均计算")
+        else:
+            print(f"\n[AF] 加载 AF 器官掩膜: {af_mask_path}")
+            af_mask = np.load(af_mask_path)
+            assert af_mask.shape == (NX, NY, NZ), \
+                f"AF 掩膜 shape 应为 ({NX},{NY},{NZ})，实为 {af_mask.shape}"
+
+            print(f"[AF] 加载 AF 器官定义: {af_zip_path}")
+            af_organs = _load_organs_from_zip(str(af_zip_path), phantom='AF')
+            print(f"     共 {len(af_organs)} 个器官")
+
+            print(f"[AF] 计算 AF h_E (beam_area={_AF_BEAM_AREA:.2f} cm²) ...")
+            af_results = _compute_h_E_for_dir(af_out_dir, af_mask, af_organs,
+                                              beam_area=_AF_BEAM_AREA)
+
+            if not af_results:
+                print("[AF] 未能计算任何 AF 能量点，跳过性别平均")
+            else:
+                # 建立 AM/AF 结果字典（以能量为 key）
+                am_dict = {e: (hc, hr, d) for e, hc, hr, d in results}
+                af_dict = {e: (hc, hr, d) for e, hc, hr, d in af_results}
+
+                # 仅对 AM 和 AF 都有结果的能量点做平均
+                common_energies = sorted(set(am_dict) & set(af_dict))
+
+                if common_energies:
+                    print("\n" + "=" * 90)
+                    print(f"  {'Energy(MeV)':<12} {'h_E,AM':>10} {'h_E,AF':>10} "
+                          f"{'h_E,avg':>10} {'ICRP-116':>10} "
+                          f"{'dev_AM%':>8} {'dev_AF%':>8} {'dev_avg%':>9}  判定")
+                    print("  " + "-" * 85)
+                    avg_results = []
+                    for e in common_energies:
+                        h_am, h_ref, d_am = am_dict[e]
+                        h_af, _,     d_af = af_dict[e]
+                        h_avg = (h_am + h_af) / 2.0
+                        d_avg = (h_avg - h_ref) / h_ref * 100
+                        ok = abs(d_avg) <= 10
+                        sym = "PASS" if ok else ("~<20%" if abs(d_avg) <= 20 else "FAIL")
+                        print(f"  {e:<12.3f} {h_am:>10.4f} {h_af:>10.4f} "
+                              f"{h_avg:>10.4f} {h_ref:>10.4f} "
+                              f"{d_am:>+8.1f} {d_af:>+8.1f} {d_avg:>+9.1f}%  {sym}")
+                        avg_results.append((e, h_avg, h_ref, d_avg))
+                    print("  " + "-" * 85)
+                    avg_passed = sum(1 for _, _, _, d in avg_results if abs(d) <= 10)
+                    print(f"  性别平均通过率（±10%）: {avg_passed}/{len(avg_results)}")
+                    print("=" * 90)
+
+                    # 保存性别平均 CSV
+                    csv_avg = out_dir / "icrp116_comparison_sexavg.csv"
+                    lines = ["Energy_MeV,h_AM_pSv_cm2,h_AF_pSv_cm2,h_avg_pSv_cm2,"
+                             "h_ref_pSv_cm2,dev_AM_pct,dev_AF_pct,dev_avg_pct,pass"]
+                    for e in common_energies:
+                        h_am, h_ref, d_am = am_dict[e]
+                        h_af, _,     d_af = af_dict[e]
+                        h_avg = (h_am + h_af) / 2.0
+                        d_avg = (h_avg - h_ref) / h_ref * 100
+                        ok = "PASS" if abs(d_avg) <= 10 else "FAIL"
+                        lines.append(f"{e:.3f},{h_am:.4f},{h_af:.4f},{h_avg:.4f},"
+                                     f"{h_ref:.4f},{d_am:+.1f},{d_af:+.1f},{d_avg:+.1f},{ok}")
+                    csv_avg.write_text("\n".join(lines), encoding="utf-8")
+                    print(f"\n[CSV] 性别平均结果已保存: {csv_avg}")
 
     print("\n完成！结果文件位于:", out_dir)
 

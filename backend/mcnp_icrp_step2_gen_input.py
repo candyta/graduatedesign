@@ -191,9 +191,15 @@ def parse_media(lines):
     return media
 
 
-def load_data(mask_path: str, zip_path: str):
+def load_data(mask_path: str, zip_path: str, phantom: str = 'AM'):
     """
     加载掩膜 + 器官/组织数据。
+
+    Parameters
+    ----------
+    mask_path : str
+    zip_path  : str
+    phantom   : 'AM' 或 'AF'
 
     Returns
     -------
@@ -204,9 +210,16 @@ def load_data(mask_path: str, zip_path: str):
     mask = np.load(mask_path)
     assert mask.shape == DS_SHAPE, f"掩膜 shape 应为 {DS_SHAPE}，实为 {mask.shape}"
 
+    if phantom == 'AF':
+        organs_entry = 'AF/AF_organs.dat'
+        media_entry  = 'AF/AF_media.dat'
+    else:
+        organs_entry = 'AM/AM_organs.dat'
+        media_entry  = 'AM/AM_media.dat'
+
     with zipfile.ZipFile(zip_path, 'r') as z:
-        organs_text = z.read('AM/AM_organs.dat').decode('utf-8', errors='replace')
-        media_text  = z.read('AM/AM_media.dat' ).decode('utf-8', errors='replace')
+        organs_text = z.read(organs_entry).decode('utf-8', errors='replace')
+        media_text  = z.read(media_entry ).decode('utf-8', errors='replace')
 
     organs = parse_organs(organs_text.splitlines())
     media  = parse_media(media_text.splitlines())
@@ -493,7 +506,8 @@ def write_data_section(f, unique_ids, organs, media, energy_mev, mask=None):
 
 
 def generate_input_file(mask: np.ndarray, organs: dict, media: dict,
-                        energy_mev: float, out_path: Path):
+                        energy_mev: float, out_path: Path,
+                        phantom: str = 'AM'):
     """为指定能量生成一个 MCNP5 输入文件。"""
 
     # 1. 找掩膜中实际出现的 organ_id
@@ -511,7 +525,7 @@ def generate_input_file(mask: np.ndarray, organs: dict, media: dict,
     # 3. 写文件
     with open(out_path, 'w', encoding='ascii') as f:
         # Title（第一行，≤80 字符）
-        title = f'ICRP-110 AM AP Photon E={energy_mev:.3f}MeV  ICRP-116 Validation'
+        title = f'ICRP-110 {phantom} AP Photon E={energy_mev:.3f}MeV  ICRP-116 Validation'
         f.write(title[:80] + '\n')
         f.write('c\n')
         f.write(f'c  Source area: {2*PHANT_X:.2f} x {2*PHANT_Z:.2f} cm\n')
@@ -551,7 +565,43 @@ def main():
              '若不指定则自动从 xsdir 检测，检测失败则用默认 .04p (MCPLIB04)')
     parser.add_argument('--xsdir',    default=r'D:\LANL\xsdir',
         help='MCNP5 xsdir 文件路径，用于自动检测可用光子库')
+    parser.add_argument('--phantom',  default='AM', choices=['AM', 'AF'],
+        help='体模类型: AM (成年男性) 或 AF (成年女性)')
+    parser.add_argument('--nps',      default=10_000_000, type=int,
+        help='MCNP5 源粒子数 (默认: 10_000_000)')
     args = parser.parse_args()
+
+    phantom = args.phantom
+
+    # ── 若为 AF 体模，覆盖模块级物理常数 ────────────────────────────
+    global DS_VOX_CM, HALF_VOX, PHANT_X, PHANT_Y, PHANT_Z, SRC_Y, FILL_X, FILL_Y, FILL_Z
+    if phantom == 'AF':
+        # AF phantom constants (downsampled to 127x63x111)
+        _AF_FULL_X_CM = 299 * 1.775 / 10   # 53.0725 cm
+        _AF_FULL_Y_CM = 137 * 1.775 / 10   # 24.3175 cm
+        _AF_FULL_Z_CM = 348 * 4.84  / 10   # 168.432 cm
+        NX_DS, NY_DS, NZ_DS = DS_SHAPE
+        DS_VOX_CM = (
+            _AF_FULL_X_CM / NX_DS,   # 0.41789 cm
+            _AF_FULL_Y_CM / NY_DS,   # 0.38569 cm
+            _AF_FULL_Z_CM / NZ_DS,   # 1.51741 cm
+        )
+        HALF_VOX = tuple(v / 2 for v in DS_VOX_CM)
+        PHANT_X  = NX_DS * HALF_VOX[0]
+        PHANT_Y  = NY_DS * HALF_VOX[1]
+        PHANT_Z  = NZ_DS * HALF_VOX[2]
+        SRC_Y    = -(PHANT_Y + 2.0)
+        FILL_X   = (-(NX_DS // 2), NX_DS // 2)
+        FILL_Y   = (-(NY_DS // 2), NY_DS // 2)
+        FILL_Z   = (-(NZ_DS // 2), NZ_DS // 2)
+        print(f'[Step2] AF 体模物理常数:')
+        print(f'  DS_VOX_CM = {DS_VOX_CM}')
+        print(f'  PHANT XYZ = {PHANT_X:.4f} x {PHANT_Y:.4f} x {PHANT_Z:.4f} cm')
+        print(f'  SRC_Y     = {SRC_Y:.4f} cm')
+
+    # ── 配置 NPS ─────────────────────────────────────────────────────
+    write_data_section._nps = args.nps
+    print(f'[Step2] nps = {args.nps:,}')
 
     # ── 确定光子截面库后缀 ───────────────────────────────────
     global PHOT_SUFFIX, ZAID_MAP
@@ -572,22 +622,25 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print('[Step2] 加载数据 ...')
-    mask, organs, media = load_data(args.mask, args.zip)
+    mask, organs, media = load_data(args.mask, args.zip, phantom=phantom)
 
-    print(f'\n体模参数:')
+    print(f'\n体模参数 (phantom={phantom}):')
     print(f'  shape       = {DS_SHAPE}')
     print(f'  voxel cm    = {DS_VOX_CM}')
     print(f'  phantom cm  = {2*PHANT_X:.3f} x {2*PHANT_Y:.3f} x {2*PHANT_Z:.3f}')
     print(f'  fill range  = {FILL_X} {FILL_Y} {FILL_Z}')
     print(f'  source Y    = {SRC_Y:.3f} cm\n')
 
+    # ── 文件名前缀：AM → ap_，AF → af_ ───────────────────────
+    prefix = 'af_' if phantom == 'AF' else 'ap_'
+
     print('[Step2] 生成 MCNP5 输入文件 ...')
     for e in ENERGIES_MEV:
-        fname = f'ap_photon_E{e:.3f}MeV.inp'
+        fname = f'{prefix}photon_E{e:.3f}MeV.inp'
         out_path = out_dir / fname
-        generate_input_file(mask, organs, media, e, out_path)
+        generate_input_file(mask, organs, media, e, out_path, phantom=phantom)
 
-    print(f'\nOK 第二步完成，输入文件位于 {out_dir}/')
+    print(f'\nOK 第二步完成 (phantom={phantom})，输入文件位于 {out_dir}/')
     print('  后续: 用 MCNP5 运行各文件，再执行第三步提取器官剂量并与 ICRP-116 对比。')
 
 
