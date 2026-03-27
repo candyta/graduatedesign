@@ -1736,7 +1736,7 @@
             <strong>✓ 全部计算完成！</strong>
             AM: {{ icrp116Status.resultFiles.length }} 个通量文件
             <template v-if="icrp116Status.sexAvg">
-              　AF: {{ icrp116Status.afResultFiles.length }} 个通量文件
+              AF: {{ icrp116Status.afResultFiles.length }} 个通量文件
             </template>
             <br>
             <span style="font-size:0.9em;">
