@@ -24,6 +24,10 @@ from pathlib import Path
 
 import numpy as np
 
+# Windows GBK 控制台无法编码 Unicode 字符（如 ³），强制使用 UTF-8 输出
+if sys.stdout.encoding and sys.stdout.encoding.lower() not in ('utf-8', 'utf8'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+
 # ──────────────────────────────────────────────
 # AM 体模物理参数（ICRP 110, Table A.1 脚注）
 # ──────────────────────────────────────────────
