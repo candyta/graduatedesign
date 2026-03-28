@@ -54,13 +54,30 @@ ENERGIES = [0.010, 0.100, 1.000, 10.000]
 #   Z: 348 × 4.84  mm = 1684.32 mm = 168.432 cm
 _AF_BEAM_AREA = (299 * 1.775 / 10) * (348 * 4.84 / 10)  # 53.0725 × 168.432 ≈ 8939 cm²
 
-# ─── ICRP-116 Table A.3 参考值（AP 光子，pSv·cm^2） ───────────────
-# 来源: ICRP Publication 116 (2010), Table A.3
+# ─── 有效剂量参考值（AP 光子，pSv·cm²） ──────────────────────────────
+#
+# AM（成年男性）参考值
+# 来源: ICRP-74 (1996) Table A.17，AP 光子，Adult Male 列
+# 注: 0.01 MeV 和 10 MeV 值来源有待确认（ICRP-74 Table A.17 在极端能量
+#     与当前值可能存在差异；10 MeV 的 18.1 与 ICRP-74 的 8.35 不符，
+#     可能来自 ICRP-116 性别平均表或其他参考文献，待核实）。
 ICRP116_REF = {
-    0.010:  0.0288,
-    0.100:  0.340,
-    1.000:  2.76,
-    10.000: 18.1,
+    0.010:  0.0288,   # ⚠ 待核实（ICRP-74 AM 给出 0.0590）
+    0.100:  0.340,    # ICRP-74 Table A.17, AM
+    1.000:  2.76,     # ICRP-74 Table A.17, AM
+    10.000: 18.1,     # ⚠ 待核实（ICRP-74 AM 给出 8.35）
+}
+
+# AF（成年女性）参考值
+# 来源: ICRP-74 (1996) Table A.17，AP 光子，Adult Female 列
+# 注: 0.01 MeV 和 10 MeV 与 AM 同样存在来源不确定问题；
+#     10 MeV 使用 ICRP-74 AF/AM 比值（8.55/8.35）推算：18.1 × 1.024 ≈ 18.5，
+#     待查到可靠 AF 参考后更新。
+ICRP116_REF_AF = {
+    0.010:  0.0605,   # ICRP-74 Table A.17, AF（⚠ 同 AM 0.01 MeV 问题）
+    0.100:  0.360,    # ICRP-74 Table A.17, AF
+    1.000:  2.84,     # ICRP-74 Table A.17, AF
+    10.000: 18.5,     # 估算：18.1 × (8.55/8.35)，待核实
 }
 
 # ─── NIST XCOM μ_en/ρ（cm²/g） ──────────────────────────────────
@@ -482,7 +499,7 @@ def compute_h_eff_from_f6(f6_dict: dict, organs: dict) -> tuple:
 
 
 def _compute_h_E_for_dir(out_dir: Path, mask: np.ndarray, organs: dict,
-                         beam_area: float) -> list:
+                         beam_area: float, ref_dict: dict = None) -> list:
     """
     对指定目录中的 fluence npy 文件计算各能量点的 h_E (pSv·cm²)。
 
@@ -620,7 +637,8 @@ def _compute_h_E_for_dir(out_dir: Path, mask: np.ndarray, organs: dict,
                 h_calc, organ_table = compute_h_eff_from_fluence(
                     fluence_ready, mask, organs, energy)
 
-            h_ref = ICRP116_REF[energy]
+            _ref = ref_dict if ref_dict is not None else ICRP116_REF
+            h_ref = _ref[energy]
             dev   = (h_calc - h_ref) / h_ref * 100
             results.append((energy, h_calc, h_ref, dev))
 
@@ -1052,7 +1070,8 @@ def main():
 
             print(f"[AF] 计算 AF h_E (beam_area={_AF_BEAM_AREA:.2f} cm²) ...")
             af_results = _compute_h_E_for_dir(af_out_dir, af_mask, af_organs,
-                                              beam_area=_AF_BEAM_AREA)
+                                              beam_area=_AF_BEAM_AREA,
+                                              ref_dict=ICRP116_REF_AF)
 
             if not af_results:
                 print("[AF] 未能计算任何 AF 能量点，跳过性别平均")
