@@ -444,12 +444,13 @@ def compute_h_eff_from_fluence_emesh(fluence_bins: list, e_bounds: list,
 def compute_h_eff_from_f6(f6_dict: dict, organs: dict,
                           mask: np.ndarray = None) -> tuple:
     """
-    从 F6:P,E 计分结果（mode p e 真实能量沉积）计算 h_E (pSv·cm²)。
+    从 F6:P 计分结果（scatter-correct 光子 kerma 能量沉积）计算 h_E (pSv·cm²)。
 
     f6_dict : {tally_num (str/int): {'value': MeV/g/src, 'rel_err': float}}
     计分号 → WT_RULES 组索引: idx = (tally_num - 6) // 10 - 1
 
-    MCNP5 lattice 规范化：F6 原始值 = N_vox × D_organ_avg（除以单体素质量而非总质量）。
+    MCNP5 lattice 规范化：F6 原始值 = N_vox × D_organ_avg
+    （对所有同材质体素累加但仅除以单体素质量，而非总质量）。
     当 mask 不为 None 时，从掩膜计算每个器官组的 N_vox 并除以，还原 D_organ_avg。
 
     公式:

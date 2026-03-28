@@ -342,9 +342,8 @@ def write_surface_section(f):
 def write_data_section(f, unique_ids, organs, media, energy_mev, mask=None):
     """写 Data 卡：mode, 材料, 源, 计分卡, nps。"""
     # ── mode & physics ──
-    f.write('mode p e\n')
+    f.write('mode p\n')
     f.write('phys:p 20 0\n')
-    f.write('phys:e 20 0 0 0 0\n')   # 电子输运：emax=20 MeV，IWT=0（模拟真实电子输运）
     f.write('c\n')
 
     # ── 材料 ──
@@ -486,10 +485,11 @@ def write_data_section(f, unique_ids, organs, media, energy_mev, mask=None):
                 _rule_groups[_idx].append(_oid)
                 break
     if _rule_groups:
-        f.write('c F6:P,E organ absorbed dose tallies - mode p e, true energy deposition (MeV/g/src)\n')
+        f.write('c F6:P organ kerma tallies (MeV/g/src) - scatter-correct photon energy deposition\n')
         f.write('c Tally index = (wT_rule_index+1)*10+6  -> same mapping used in step3\n')
         f.write('c NOTE: MCNP5 lattice F6 sums over all N_vox copies but divides by ONE voxel mass,\n')
         f.write('c       so raw value = N_vox * D_organ_avg. Step3 divides by N_vox to get D_avg.\n')
+        f.write('c NOTE: FM cards intentionally omitted - MCNP5 ignores/misapplies FM on lattice F6.\n')
         for _ridx in sorted(_rule_groups.keys()):
             _oids = _rule_groups[_ridx]
             _kws, _wt = _WT_RULES_F6[_ridx]
@@ -499,8 +499,8 @@ def write_data_section(f, unique_ids, organs, media, energy_mev, mask=None):
             _n_vox = int(np.sum(np.isin(mask, _oids))) if mask is not None else 0
             _nv_str = f'  n_vox={_n_vox}' if _n_vox > 0 else '  n_vox=unknown'
             f.write(f'c  F{_tnum}: {_kws[0]}  wT={_wt:.5f}  oids={_oids[:3]}{"..." if len(_oids)>3 else ""}{_nv_str}\n')
-            f.write(f'F{_tnum}:P,E  {_ostr}\n')
-            # 不写 FM 卡 —— MCNP5 lattice F6 中 FM 卡被忽略或产生错误结果
+            f.write(f'F{_tnum}:P  {_ostr}\n')
+            # FM 卡不写 —— MCNP5 lattice F6 中 FM 被忽略或产生错误结果（输出 ~1 MeV/g/src）
             # N_vox 修正在 step3 post-processing 中通过掩膜计数完成
         f.write('c\n')
 
