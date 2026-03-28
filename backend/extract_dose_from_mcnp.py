@@ -442,7 +442,10 @@ def parse_f6_tallies(output_file: str) -> dict:
         #   2. 物理上界过滤：对于面积 ~9640 cm² 的平行束，F6 理论最大值
         #      ≈ 1/BEAM_AREA × E_max × (μ_en/ρ)_max ≈ 0.02 MeV/g/src。
         #      任何 val > 0.05 MeV/g/src 均为不合理数据，跳过（不覆盖已有结果）。
-        _F6_PHYS_MAX = 0.05  # MeV/g/src，覆盖任意合理光子束几何的上界（×2.5 安全余量）
+        # mode p e 改用 F6:P,E；MCNP5 lattice 未自动平均，原始值 = N_vox × D_avg。
+        # 对于红骨髓（N_vox ≈ 2e4）：原始值可达 2e4 × 5e-5 ≈ 1.0 MeV/g/src。
+        # 上界放宽至 10.0；step3 会除以 N_vox 还原器官均值。
+        _F6_PHYS_MAX = 10.0  # MeV/g/src
         if re.match(r'^total\b', line, re.IGNORECASE):
             parts = line.split()
             # parts = ['total', value, rel_err]  OR  ['total', CUMSUM, MEAN, REL_ERR]

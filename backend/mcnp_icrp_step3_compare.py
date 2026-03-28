@@ -441,27 +441,46 @@ def compute_h_eff_from_fluence_emesh(fluence_bins: list, e_bounds: list,
     return h_eff, organ_table
 
 
-def compute_h_eff_from_f6(f6_dict: dict, organs: dict) -> tuple:
+def compute_h_eff_from_f6(f6_dict: dict, organs: dict,
+                          mask: np.ndarray = None) -> tuple:
     """
-    从 F6:P 计分结果（散射正确的能量沉积）计算 h_E (pSv·cm²)。
+    从 F6:P,E 计分结果（mode p e 真实能量沉积）计算 h_E (pSv·cm²)。
 
     f6_dict : {tally_num (str/int): {'value': MeV/g/src, 'rel_err': float}}
     计分号 → WT_RULES 组索引: idx = (tally_num - 6) // 10 - 1
 
+    MCNP5 lattice 规范化：F6 原始值 = N_vox × D_organ_avg（除以单体素质量而非总质量）。
+    当 mask 不为 None 时，从掩膜计算每个器官组的 N_vox 并除以，还原 D_organ_avg。
+
     公式:
-      D_T (pGy/src)   = F6_value (MeV/g/src) × 1.602e2
+      D_T (pGy/src)   = (F6_raw / N_vox) × 1.602e2
       h_E (pSv·cm²)   = Σ_T wT × D_T × BEAM_AREA
     """
-    import json as _json
+    from collections import defaultdict
 
     # 将 str key 转为 int
     f6 = {int(k): v for k, v in f6_dict.items()}
+
+    # 预先建立 WT_RULES 关键字 → organ_ids 映射（用于计算 N_vox）
+    if mask is not None:
+        rule_oids: dict[int, list] = defaultdict(list)
+        for oid in np.unique(mask):
+            oid = int(oid)
+            if oid == 0 or oid not in organs:
+                continue
+            _, _, name = organs[oid]
+            nlc = name.lower()
+            for ridx, (kws, _) in enumerate(WT_RULES):
+                if any(k in nlc for k in kws):
+                    rule_oids[ridx].append(oid)
+                    break
+    else:
+        rule_oids = {}
 
     organ_table = []
     e_eff_pGy = 0.0
 
     for tnum, info in sorted(f6.items()):
-        # 反推 WT_RULES 索引
         idx = (tnum - 6) // 10 - 1
         if idx < 0 or idx >= len(WT_RULES):
             continue
@@ -471,14 +490,22 @@ def compute_h_eff_from_f6(f6_dict: dict, organs: dict) -> tuple:
         if val <= 0:
             continue
 
-        dose_pGy = val * 1.602e2           # MeV/g/src → pGy/src
+        # N_vox 修正：MCNP5 lattice F6 累加所有同类体素但仅除以单体素质量
+        # → raw = N_vox × D_avg；除以 N_vox 还原器官平均吸收剂量
+        n_vox = 1
+        if mask is not None and idx in rule_oids:
+            oids = rule_oids[idx]
+            if oids:
+                n_vox = max(1, int(np.sum(np.isin(mask, oids))))
+        d_avg = val / n_vox          # MeV/g/src，器官平均吸收剂量
+
+        dose_pGy = d_avg * 1.602e2   # MeV/g/src → pGy/src
         wt_dose  = wt * dose_pGy
         e_eff_pGy += wt_dose
 
         keywords = WT_RULES[idx][0]
         dname = keywords[0]
-        # 统计有多少器官 ids 参与（仅供显示）
-        organ_table.append((dname, wt, val, dose_pGy, wt_dose, rel))
+        organ_table.append((dname, wt, d_avg, dose_pGy, wt_dose, rel))
 
     h_eff = e_eff_pGy * BEAM_AREA
     organ_table.sort(key=lambda r: abs(r[4]), reverse=True)
@@ -539,7 +566,7 @@ def _compute_h_E_for_dir(out_dir: Path, mask: np.ndarray, organs: dict,
                     with open(f6_json_path, 'r', encoding='utf-8') as _fh:
                         f6_dict = _json.load(_fh)
                     if f6_dict:
-                        h_calc_f6, ot_f6 = compute_h_eff_from_f6(f6_dict, organs)
+                        h_calc_f6, ot_f6 = compute_h_eff_from_f6(f6_dict, organs, mask)
                         _h_ref_check = ICRP116_REF.get(energy, 0.0)
                         if _h_ref_check <= 0 or h_calc_f6 <= 200 * _h_ref_check:
                             h_calc, organ_table, use_f6 = h_calc_f6, ot_f6, True
@@ -846,24 +873,15 @@ def main():
                 with open(f6_json_path, 'r', encoding='utf-8') as _fh:
                     f6_dict = _json.load(_fh)
                 if f6_dict:
-                    print(f"     [F6] 加载 F6 计分 {f6_json_path.name}，{len(f6_dict)} 个器官组")
-                    h_calc, organ_table = compute_h_eff_from_f6(f6_dict, organs)
-                    # ── 物理合理性验证 ──────────────────────────────────────
-                    # MCNP5 晶格体模中 F6 计分存在已知规范化问题：对宇宙（universe）
-                    # 单元在晶格中被复制时，MCNP5 仅以单个体素质量归一化，而非全器官
-                    # 总质量，导致结果偏大约 N_voxels 倍（可达 10^5~10^6）。
-                    # 同时，prdmp 中间存档段的 "total" 行格式含累积和而非 per-src 值，
-                    # 若解析不当可再叠加 ~NPS 倍误差，最终 h_E 虚高约 10^12 倍。
-                    # 以下检验：若 F6 计算结果远超 ICRP-116 参考值，判定为不可信数据，
-                    # 回退到 FMESH 注量模式。
+                    print(f"     [F6] 加载 F6:P,E 计分 {f6_json_path.name}，{len(f6_dict)} 个器官组")
+                    h_calc, organ_table = compute_h_eff_from_f6(f6_dict, organs, mask)
+                    # N_vox 修正已在 compute_h_eff_from_f6 内部完成；此处只做基本合理性检验
                     _h_ref_check = ICRP116_REF.get(energy, 0.0)
                     _f6_sane = True
                     if _h_ref_check > 0 and h_calc > 200 * _h_ref_check:
                         print(f"     [F6] ⚠ 检测到异常大值: h_E(F6)={h_calc:.3e} pSv·cm²"
                               f" >> ICRP-116={_h_ref_check:.4f}（>{200}×）")
-                        print(f"     [F6]   根因: MCNP5 晶格 F6 规范化问题或 prdmp 累积值未正确提取。")
-                        print(f"     [F6]   修复建议: 在 MCNP 输入中为每个 F6 tally 添加 FM 卡"
-                              f"（乘以 1/N_voxels），或升级到 MCNP6 后重新运行 Step2b。")
+                        print(f"     [F6]   可能原因: prdmp 累积值未正确提取，或 N_vox 计数有误。")
                         print(f"     [F6]   本次回退到 FMESH 注量模式。")
                         _f6_sane = False
                     if _f6_sane:
