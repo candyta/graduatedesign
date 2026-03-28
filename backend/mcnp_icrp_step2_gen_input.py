@@ -231,6 +231,22 @@ def load_data(mask_path: str, zip_path: str, phantom: str = 'AM'):
 # MCNP5 输入文件生成
 # ═══════════════════════════════════════════════════════════════
 
+def _geom():
+    """
+    返回 (hx, hy, hz, px, py, pz)，其中 hx/hy/hz 取 6 位小数，
+    px=NX*hx, py=NY*hy, pz=NZ*hz，确保晶格延伸范围与体模容器边界完全一致。
+
+    AF 体素尺寸为无理数（0.41789...cm），直接用 :.4f 格式写入时，
+    晶格实际范围（NX×hx_rounded）与 PHANT_X（独立舍入）之间出现 ~0.006 cm
+    间隙，粒子进入该间隙后找不到晶格单元 → "zero lattice element hit"。
+    使用 6 位小数并从舍入后的 hx 推导 px，可彻底消除间隙。
+    """
+    hx = round(HALF_VOX[0], 6)
+    hy = round(HALF_VOX[1], 6)
+    hz = round(HALF_VOX[2], 6)
+    return hx, hy, hz, NX * hx, NY * hy, NZ * hz
+
+
 def _fmt_fill_array(fill_vals: np.ndarray, per_line: int = 15) -> str:
     """
     将 fill 数组格式化为 MCNP5 续行格式。
@@ -298,28 +314,26 @@ def write_lattice_cell(f, fill_vals):
 
 def write_surface_section(f):
     """写 Surface 卡。"""
-    hx, hy, hz = HALF_VOX
-    f.write(f'c Unit voxel base cell (half-spacing = {hx:.4f}, {hy:.4f}, {hz:.4f} cm)\n')
-    f.write(f'11  px   {hx:.4f}\n')
-    f.write(f'12  px  -{hx:.4f}\n')
-    f.write(f'13  py   {hy:.4f}\n')
-    f.write(f'14  py  -{hy:.4f}\n')
-    f.write(f'15  pz   {hz:.4f}\n')
-    f.write(f'16  pz  -{hz:.4f}\n')
+    hx, hy, hz, px, py, pz = _geom()
+    f.write(f'c Unit voxel base cell (half-spacing = {hx:.6f}, {hy:.6f}, {hz:.6f} cm)\n')
+    f.write(f'11  px   {hx:.6f}\n')
+    f.write(f'12  px  -{hx:.6f}\n')
+    f.write(f'13  py   {hy:.6f}\n')
+    f.write(f'14  py  -{hy:.6f}\n')
+    f.write(f'15  pz   {hz:.6f}\n')
+    f.write(f'16  pz  -{hz:.6f}\n')
     f.write('c\n')
-    # Use 4 decimal places so phantom surfaces equal the exact lattice extent.
-    # With :.3f, PHANT_X=27.1399 rounds UP to 27.140, creating a 0.0001 cm gap
-    # between the phantom bounding box and the lattice edge.  Source particles
-    # born in that sliver have no valid lattice element → "zero lattice element
-    # hit" → MCNP5 abort / hang.  Using :.4f gives 27.1399, exactly matching
-    # the lattice, eliminating the gap entirely.
-    f.write(f'c Phantom bounding box ({PHANT_X:.4f} x {PHANT_Y:.4f} x {PHANT_Z:.4f} cm)\n')
-    f.write(f'111  px   {PHANT_X:.4f}\n')
-    f.write(f'112  px  -{PHANT_X:.4f}\n')
-    f.write(f'113  py   {PHANT_Y:.4f}\n')
-    f.write(f'114  py  -{PHANT_Y:.4f}\n')
-    f.write(f'115  pz   {PHANT_Z:.4f}\n')
-    f.write(f'116  pz  -{PHANT_Z:.4f}\n')
+    # px = NX*hx (derived from same rounded hx used for surfaces 11-16),
+    # so lattice extent and phantom container boundary are guaranteed equal.
+    # This eliminates the "zero lattice element hit" error seen for AF phantom
+    # where irrational voxel sizes cause a gap under independent 4-decimal rounding.
+    f.write(f'c Phantom bounding box ({px:.6f} x {py:.6f} x {pz:.6f} cm)\n')
+    f.write(f'111  px   {px:.6f}\n')
+    f.write(f'112  px  -{px:.6f}\n')
+    f.write(f'113  py   {py:.6f}\n')
+    f.write(f'114  py  -{py:.6f}\n')
+    f.write(f'115  pz   {pz:.6f}\n')
+    f.write(f'116  pz  -{pz:.6f}\n')
     f.write('c\n')
     f.write('c World sphere\n')
     f.write('9999  so  300.0\n')
@@ -376,18 +390,17 @@ def write_data_section(f, unique_ids, organs, media, energy_mev, mask=None):
     f.write(f'c AP parallel photon beam  E={energy_mev:.3f} MeV\n')
     f.write(f'c Source plane: y={SRC_Y:.4f} cm  (anterior, +Y direction)\n')
     f.write(f'c Source area:  X=[{-PHANT_X:.4f}, {PHANT_X:.4f}]  Z=[{-PHANT_Z:.4f}, {PHANT_Z:.4f}] cm\n')
+    _, _, _, px, py, pz = _geom()
+    src_y = -(py + 2.0)
     f.write( 'SDEF  par=2\n')
     f.write(f'      erg={energy_mev:.4f}\n')
     f.write( '      dir=1  vec=0 1 0\n')
-    f.write(f'      x=d1  y={SRC_Y:.4f}  z=d2\n')
-    # Use 4 decimal places so source range matches lattice extent exactly.
-    # With :.3f, SI1 would allow x up to 27.140, but the lattice only covers
-    # |x| ≤ 27.1399.  Source particles born in the 0.0001 cm gap enter the
-    # phantom container cell but find no lattice element → "zero lattice
-    # element hit".  Using :.4f clamps the range to 27.1399 (exact lattice edge).
-    f.write(f'SI1  {-PHANT_X:.4f}  {PHANT_X:.4f}\n')
+    f.write(f'      x=d1  y={src_y:.6f}  z=d2\n')
+    # SI1/SI2 use px/pz derived from rounded hx/hz (same values as surfaces 111-116),
+    # so source particles can never spawn outside the lattice-covered volume.
+    f.write(f'SI1  {-px:.6f}  {px:.6f}\n')
     f.write( 'SP1  0  1\n')
-    f.write(f'SI2  {-PHANT_Z:.4f}  {PHANT_Z:.4f}\n')
+    f.write(f'SI2  {-pz:.6f}  {pz:.6f}\n')
     f.write( 'SP2  0  1\n')
     f.write('c\n')
 
@@ -398,10 +411,10 @@ def write_data_section(f, unique_ids, organs, media, energy_mev, mask=None):
         """写入单个 FMESH tally 卡（2 EMESH 档：[0,c_lo] 和 [c_lo,e_max]）。"""
         f.write(f'c FMESH{tnum}: bins [0,{c_lo:.2f}] and [{c_lo:.2f},{e_max:.3f}] MeV\n')
         f.write(f'FMESH{tnum}:p  geom=XYZ\n')
-        f.write(f'     origin={-PHANT_X:.3f} {-PHANT_Y:.3f} {-PHANT_Z:.3f}\n')
-        f.write(f'     imesh={PHANT_X:.3f}  iints={NX}\n')
-        f.write(f'     jmesh={PHANT_Y:.3f}  jints={NY}\n')
-        f.write(f'     kmesh={PHANT_Z:.3f}  kints={NZ}\n')
+        f.write(f'     origin={-px:.6f} {-py:.6f} {-pz:.6f}\n')
+        f.write(f'     imesh={px:.6f}  iints={NX}\n')
+        f.write(f'     jmesh={py:.6f}  jints={NY}\n')
+        f.write(f'     kmesh={pz:.6f}  kints={NZ}\n')
         f.write(f'     emesh={c_lo:.3f}  {e_max:.3f}\n')
         f.write('c\n')
 
@@ -417,10 +430,10 @@ def write_data_section(f, unique_ids, organs, media, energy_mev, mask=None):
         # 0.01/0.10 MeV：单 FMESH14，无 EMESH（总注量）
         f.write('c 3D mesh tally: photon fluence per source particle (no EMESH)\n')
         f.write('FMESH14:p  geom=XYZ\n')
-        f.write(f'     origin={-PHANT_X:.3f} {-PHANT_Y:.3f} {-PHANT_Z:.3f}\n')
-        f.write(f'     imesh={PHANT_X:.3f}  iints={NX}\n')
-        f.write(f'     jmesh={PHANT_Y:.3f}  jints={NY}\n')
-        f.write(f'     kmesh={PHANT_Z:.3f}  kints={NZ}\n')
+        f.write(f'     origin={-px:.6f} {-py:.6f} {-pz:.6f}\n')
+        f.write(f'     imesh={px:.6f}  iints={NX}\n')
+        f.write(f'     jmesh={py:.6f}  jints={NY}\n')
+        f.write(f'     kmesh={pz:.6f}  kints={NZ}\n')
         f.write('c\n')
 
     # ── F6:P 器官核能沉积计分（散射光子能量自动正确处理） ──────────────────
