@@ -488,6 +488,9 @@ def compute_h_eff_from_f6(f6_dict: dict, organs: dict,
         _, wt = WT_RULES[idx]
         val = info['value']
         rel = info.get('rel_err', 0.0)
+        if rel > 0.10:
+            print(f"  [F6] 跳过 tally {tnum} (rel_err={rel:.4f} > 10%，统计未收敛)")
+            continue
         if val <= 0:
             continue
 
@@ -569,8 +572,18 @@ def _compute_h_E_for_dir(out_dir: Path, mask: np.ndarray, organs: dict,
                     if f6_dict:
                         h_calc_f6, ot_f6 = compute_h_eff_from_f6(f6_dict, organs, mask)
                         _h_ref_check = ICRP116_REF.get(energy, 0.0)
-                        if _h_ref_check <= 0 or h_calc_f6 <= 200 * _h_ref_check:
+                        n_f6_organs = len(ot_f6)
+                        _within_range = (_h_ref_check <= 0 or h_calc_f6 <= 10 * _h_ref_check)
+                        _enough_organs = (n_f6_organs >= 5)
+                        if _within_range and _enough_organs:
                             h_calc, organ_table, use_f6 = h_calc_f6, ot_f6, True
+                        else:
+                            _reason = []
+                            if not _within_range:
+                                _reason.append(f"h_E(F6)={h_calc_f6:.4e} > 10×ref({_h_ref_check:.4e})")
+                            if not _enough_organs:
+                                _reason.append(f"有效器官组数不足({n_f6_organs}<5)")
+                            print(f"  [F6] ⚠ 回退到 FMESH: {'; '.join(_reason)}")
                 except Exception:
                     pass
 
