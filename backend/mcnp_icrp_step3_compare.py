@@ -898,8 +898,11 @@ def main():
                         print(f"     [F6]   可能原因: prdmp 累积值未正确提取，或 N_vox 计数有误。")
                         print(f"     [F6]   本次回退到 FMESH 注量模式。")
                         _f6_sane = False
-                    if _f6_sane:
+                    n_f6_organs = len(organ_table)
+                    if _f6_sane and n_f6_organs >= 5:
                         use_f6 = True
+                    elif _f6_sane:
+                        print(f"     [F6] ⚠ 回退到 FMESH: 有效器官组数不足({n_f6_organs}<5)")
             except Exception as _e:
                 print(f"     [F6] 读取失败: {_e}，回退到注量模式")
 
