@@ -93,6 +93,27 @@ MULTI_FMESH_CUTS = {
     10.00: (2.00, 5.00, 8.00, 10.50),
 }
 
+# ── DE/DF 注量-kerma 转换表（软组织 ICRU-44）──────────────────────────────
+#
+# MCNP5 DE/DF 乘子卡：FMESH 输出乘以能量相关因子 DF(E)，
+# 使每个光子以其实际能量贡献，彻底消除 EMESH 代表能量误差。
+#
+# DF(E) [pGy·cm²] = E [MeV] × (μ_en/ρ) [cm²/g] × 1.602e2
+# 来源: NIST XCOM，软组织 ICRU-44 (H10.1%, C11.1%, N2.6%, O76.2%)
+#
+# 用途：当 --de-df-mode 启用时，写入 FMESH14 + DE14/DF14，
+# 取代多 FMESH EMESH 方案，输出单位为 pGy/src（器官平均 kerma）。
+#
+_DEDF_ENERGIES = [0.001, 0.005, 0.010, 0.020, 0.030, 0.050, 0.080, 0.100,
+                  0.150, 0.200, 0.300, 0.400, 0.500, 0.600, 0.800, 1.000,
+                  1.500, 2.000, 3.000, 4.000, 5.000, 6.000, 8.000, 10.000]
+# DF = E × μ_en/ρ × 160.2  (pGy·cm²)
+_DEDF_SOFT_KERMA = [6.040e+02, 1.482e+02, 7.596e+00, 1.689e+00, 7.141e-01,
+                    3.353e-01, 3.910e-01, 4.079e-01, 6.680e-01, 9.512e-01,
+                    1.535e+00, 2.102e+00, 2.644e+00, 3.155e+00, 4.108e+00,
+                    4.912e+00, 6.745e+00, 8.298e+00, 1.082e+01, 1.312e+01,
+                    1.534e+01, 1.760e+01, 2.230e+01, 3.486e+01]
+
 # MCNP5 光子截面库后缀
 # 默认 .04p (MCPLIB04)；若安装了更新版 .70p (MCPLIB70) 会由 detect_phot_lib 自动选择
 PHOT_SUFFIX = '.04p'
@@ -339,7 +360,8 @@ def write_surface_section(f):
     f.write('9999  so  300.0\n')
 
 
-def write_data_section(f, unique_ids, organs, media, energy_mev, mask=None):
+def write_data_section(f, unique_ids, organs, media, energy_mev, mask=None,
+                       de_df_mode=False):
     """写 Data 卡：mode, 材料, 源, 计分卡, nps。"""
     # ── mode & physics ──
     f.write('mode p\n')
@@ -404,9 +426,16 @@ def write_data_section(f, unique_ids, organs, media, energy_mev, mask=None):
     f.write( 'SP2  0  1\n')
     f.write('c\n')
 
-    # ── 计分卡：3-D 网格通量（多 FMESH 能量分档，每个 tally 各 2 档） ──
-    # 多 FMESH 方案：FMESH14/24/34 各用不同截止能量，后处理相减得 4 档，
-    # 绕过 MCNP5 1.14 单 FMESH 最多 2 档的限制。
+    # ── 计分卡：3-D 网格通量 / kerma ──────────────────────────────────────
+    def _write_base_fmesh(tnum):
+        """写入不带 EMESH 的单 FMESH（总注量或 DE/DF kerma）。"""
+        f.write(f'FMESH{tnum}:p  geom=XYZ\n')
+        f.write(f'     origin={-px:.6f} {-py:.6f} {-pz:.6f}\n')
+        f.write(f'     imesh={px:.6f}  iints={NX}\n')
+        f.write(f'     jmesh={py:.6f}  jints={NY}\n')
+        f.write(f'     kmesh={pz:.6f}  kints={NZ}\n')
+        f.write('c\n')
+
     def _write_fmesh(tnum, c_lo, e_max):
         """写入单个 FMESH tally 卡（2 EMESH 档：[0,c_lo] 和 [c_lo,e_max]）。"""
         f.write(f'c FMESH{tnum}: bins [0,{c_lo:.2f}] and [{c_lo:.2f},{e_max:.3f}] MeV\n')
@@ -418,23 +447,50 @@ def write_data_section(f, unique_ids, organs, media, energy_mev, mask=None):
         f.write(f'     emesh={c_lo:.3f}  {e_max:.3f}\n')
         f.write('c\n')
 
-    cuts = MULTI_FMESH_CUTS.get(energy_mev)
-    if cuts:
-        c1, c2, c3, e_max = cuts
-        f.write('c 3D mesh tallies: multi-FMESH 4-bin energy resolution\n')
-        f.write(f'c  Effective bins: [0,{c1}] [{c1},{c2}] [{c2},{c3}] [{c3},{e_max}] MeV\n')
-        _write_fmesh(14, c1, e_max)
-        _write_fmesh(24, c2, e_max)
-        _write_fmesh(34, c3, e_max)
-    else:
-        # 0.01/0.10 MeV：单 FMESH14，无 EMESH（总注量）
-        f.write('c 3D mesh tally: photon fluence per source particle (no EMESH)\n')
-        f.write('FMESH14:p  geom=XYZ\n')
-        f.write(f'     origin={-px:.6f} {-py:.6f} {-pz:.6f}\n')
-        f.write(f'     imesh={px:.6f}  iints={NX}\n')
-        f.write(f'     jmesh={py:.6f}  jints={NY}\n')
-        f.write(f'     kmesh={pz:.6f}  kints={NZ}\n')
+    def _write_dedf_cards(tnum):
+        """写入 DE/DF 注量-kerma 转换乘子卡（软组织 ICRU-44）。
+        MCNP5 对 FMESH 输出乘以 DF(E) [pGy·cm²]，结果单位 pGy/src。
+        """
+        # 每行最多 6 个值（保证 80 列限制）
+        def _fmt_vals(vals, per_line=6):
+            out = []
+            for i in range(0, len(vals), per_line):
+                chunk = vals[i:i + per_line]
+                out.append('     ' + '  '.join(f'{v:.4e}' for v in chunk))
+            return '\n'.join(out)
+
+        f.write(f'c DE{tnum}/DF{tnum}: fluence-to-kerma conversion (soft tissue ICRU-44)\n')
+        f.write(f'c   DF [pGy·cm²] = E x (mu_en/rho) x 160.2  (NIST XCOM)\n')
+        f.write(f'c   FMESH output [pGy/src] = integral[ Phi(E) x DF(E) dE ]\n')
+        f.write(f'DE{tnum}\n')
+        f.write(_fmt_vals(_DEDF_ENERGIES))
+        f.write('\n')
+        f.write(f'DF{tnum}\n')
+        f.write(_fmt_vals(_DEDF_SOFT_KERMA))
+        f.write('\n')
         f.write('c\n')
+
+    if de_df_mode:
+        # DE/DF 模式：单 FMESH14（无 EMESH）+ DE14/DF14 乘子
+        # MCNP5 以每个光子的实际能量加权，消除 EMESH 代表能量误差
+        f.write('c 3D mesh tally: photon kerma per source particle (DE/DF mode)\n')
+        f.write('c   Output unit: pGy/src per voxel  (FMESH14 x DF14)\n')
+        f.write('c   Step3 use --de-df-mode to treat .npy as kerma (skip fluence->dose)\n')
+        _write_base_fmesh(14)
+        _write_dedf_cards(14)
+    else:
+        cuts = MULTI_FMESH_CUTS.get(energy_mev)
+        if cuts:
+            c1, c2, c3, e_max = cuts
+            f.write('c 3D mesh tallies: multi-FMESH 4-bin energy resolution\n')
+            f.write(f'c  Effective bins: [0,{c1}] [{c1},{c2}] [{c2},{c3}] [{c3},{e_max}] MeV\n')
+            _write_fmesh(14, c1, e_max)
+            _write_fmesh(24, c2, e_max)
+            _write_fmesh(34, c3, e_max)
+        else:
+            # 0.01/0.10 MeV：单 FMESH14，无 EMESH（总注量）
+            f.write('c 3D mesh tally: photon fluence per source particle (no EMESH)\n')
+            _write_base_fmesh(14)
 
     # ── F6:P 器官核能沉积计分（散射光子能量自动正确处理） ──────────────────
     # F6:P 直接统计单位质量内能量沉积 (MeV/g/src)，不需要 EMESH 能量分档，
@@ -522,7 +578,7 @@ def write_data_section(f, unique_ids, organs, media, energy_mev, mask=None):
 
 def generate_input_file(mask: np.ndarray, organs: dict, media: dict,
                         energy_mev: float, out_path: Path,
-                        phantom: str = 'AM'):
+                        phantom: str = 'AM', de_df_mode: bool = False):
     """为指定能量生成一个 MCNP5 输入文件。"""
 
     # 1. 找掩膜中实际出现的 organ_id
@@ -560,7 +616,8 @@ def generate_input_file(mask: np.ndarray, organs: dict, media: dict,
         f.write('\n')   # 空行分隔 Surface / Data
 
         # ── Data 块 ──
-        write_data_section(f, unique_ids, organs, media, energy_mev, mask)
+        write_data_section(f, unique_ids, organs, media, energy_mev, mask,
+                           de_df_mode=de_df_mode)
 
     size_mb = out_path.stat().st_size / 1e6
     print(f'    写入 {out_path.name}  ({size_mb:.2f} MB)')
@@ -584,6 +641,11 @@ def main():
         help='体模类型: AM (成年男性) 或 AF (成年女性)')
     parser.add_argument('--nps',      default=10_000_000, type=int,
         help='MCNP5 源粒子数 (默认: 10_000_000)')
+    parser.add_argument('--de-df-mode', action='store_true',
+        help='使用 DE/DF 注量-kerma 转换模式（推荐 MCNP5）：\n'
+             '  写入单 FMESH14 + DE14/DF14 软组织 kerma 乘子，\n'
+             '  取代多 FMESH EMESH 方案，消除代表能量误差。\n'
+             '  运行后须配合 Step3 --de-df-mode 使用。')
     args = parser.parse_args()
 
     phantom = args.phantom
@@ -649,14 +711,24 @@ def main():
     # ── 文件名前缀：AM → ap_，AF → af_ ───────────────────────
     prefix = 'af_' if phantom == 'AF' else 'ap_'
 
+    de_df_mode = args.de_df_mode
+    if de_df_mode:
+        print('[Step2] ★ DE/DF 模式：FMESH14 + DE14/DF14 软组织 kerma 乘子（推荐 MCNP5）')
+        print('        Step3 须同时加 --de-df-mode 参数')
+
     print('[Step2] 生成 MCNP5 输入文件 ...')
     for e in ENERGIES_MEV:
         fname = f'{prefix}photon_E{e:.3f}MeV.inp'
         out_path = out_dir / fname
-        generate_input_file(mask, organs, media, e, out_path, phantom=phantom)
+        generate_input_file(mask, organs, media, e, out_path,
+                            phantom=phantom, de_df_mode=de_df_mode)
 
     print(f'\nOK 第二步完成 (phantom={phantom})，输入文件位于 {out_dir}/')
-    print('  后续: 用 MCNP5 运行各文件，再执行第三步提取器官剂量并与 ICRP-116 对比。')
+    if de_df_mode:
+        print('  后续: 用 MCNP5 运行各文件，再执行:')
+        print('    python mcnp_icrp_step3_compare.py --de-df-mode')
+    else:
+        print('  后续: 用 MCNP5 运行各文件，再执行第三步提取器官剂量并与 ICRP-116 对比。')
 
 
 if __name__ == '__main__':

@@ -516,17 +516,90 @@ def compute_h_eff_from_f6(f6_dict: dict, organs: dict,
     return h_eff, organ_table
 
 
+def compute_h_eff_from_kerma(kerma: np.ndarray, mask: np.ndarray,
+                              organs: dict) -> tuple:
+    """
+    从 DE/DF 模式的 FMESH 输出（单位 pGy/src）计算 h_E (pSv·cm²)。
+
+    在 --de-df-mode 下，Step2 写入了 FMESH14 + DE14/DF14 乘子，
+    MCNP5 输出的 FMESH 值已乘以 DF(E) [pGy·cm²]，每个体素值单位为：
+        kerma_voxel [pGy/src] = integral[ Phi(E) × DF(E) dE ]
+
+    此函数直接用体素 kerma 均值计算器官剂量，无需再做 E×μ_en/ρ 变换。
+
+    公式：
+        D_T [pGy/src] = mean_{voxels ∈ T}( kerma_voxel )
+        h_E [pSv·cm²] = Σ_T wT × D_T × BEAM_AREA   (光子 wR=1, pGy≡pSv)
+
+    Parameters
+    ----------
+    kerma  : np.ndarray (NX, NY, NZ) — 已对齐至掩膜分辨率的 kerma 场
+    mask   : np.ndarray (NX, NY, NZ) — 器官掩膜
+    organs : dict — {organ_id: (tissue_num, density, name)}
+
+    Returns
+    -------
+    (h_eff, organ_table)  同 compute_h_eff_from_fluence
+    """
+    from collections import defaultdict
+
+    rule_groups = defaultdict(list)
+    for oid in np.unique(mask):
+        oid = int(oid)
+        if oid == 0 or oid not in organs:
+            continue
+        _, _, name = organs[oid]
+        nlc = name.lower()
+        for idx, (keywords, _) in enumerate(WT_RULES):
+            if any(k in nlc for k in keywords):
+                rule_groups[idx].append(oid)
+                break
+
+    organ_table = []
+    e_eff_pGy = 0.0
+
+    for rule_idx in sorted(rule_groups.keys()):
+        oids = rule_groups[rule_idx]
+        _, wt = WT_RULES[rule_idx]
+
+        group_mask = np.isin(mask, oids)
+        if not group_mask.any():
+            continue
+        # kerma 场已是 pGy/src（DE/DF 直接输出），取体素均值即为器官平均剂量
+        dose_pGy = float(kerma[group_mask].mean())
+        if dose_pGy <= 0:
+            continue
+
+        wt_dose = wt * dose_pGy
+        e_eff_pGy += wt_dose
+
+        first_name = organs[oids[0]][2]
+        if len(oids) == 1:
+            dname = first_name
+        else:
+            base = first_name.split(',')[0].strip()
+            dname = f"{base} ({len(oids)} regions)"
+        # organ_table: (name, wt, mean_kerma_pGy, dose_pGy, wt_dose)
+        organ_table.append((dname, wt, dose_pGy, dose_pGy, wt_dose))
+
+    h_eff = e_eff_pGy * BEAM_AREA
+    organ_table.sort(key=lambda r: abs(r[4]), reverse=True)
+    return h_eff, organ_table
+
+
 def _compute_h_E_for_dir(out_dir: Path, mask: np.ndarray, organs: dict,
-                         beam_area: float, ref_dict: dict = None) -> list:
+                         beam_area: float, ref_dict: dict = None,
+                         de_df_mode: bool = False) -> list:
     """
     对指定目录中的 fluence npy 文件计算各能量点的 h_E (pSv·cm²)。
 
     Parameters
     ----------
-    out_dir   : Path — fluence_E*.npy 所在目录
-    mask      : np.ndarray (NX, NY, NZ) — 器官掩膜
-    organs    : dict — {organ_id: (tissue_num, density, name)}
-    beam_area : float — 束流面积 cm²（AM 与 AF 不同）
+    out_dir    : Path — fluence_E*.npy 所在目录
+    mask       : np.ndarray (NX, NY, NZ) — 器官掩膜
+    organs     : dict — {organ_id: (tissue_num, density, name)}
+    beam_area  : float — 束流面积 cm²（AM 与 AF 不同）
+    de_df_mode : bool — True 时 .npy 为 DE/DF kerma [pGy/src]，跳过注量→剂量换算
 
     Returns
     -------
@@ -556,6 +629,15 @@ def _compute_h_E_for_dir(out_dir: Path, mask: np.ndarray, organs: dict,
                 continue
 
             fluence_ready = prepare_mcnp_fluence(fluence_npy, mask)
+
+            # ── DE/DF kerma 模式（Step2 用了 --de-df-mode）──────────────
+            if de_df_mode:
+                h_calc, organ_table = compute_h_eff_from_kerma(
+                    fluence_ready, mask, organs)
+                h_ref = (ref_dict or ICRP116_REF).get(energy, 0.0)
+                dev   = (h_calc - h_ref) / h_ref * 100 if h_ref > 0 else 0.0
+                results.append((energy, h_calc, h_ref, dev))
+                continue
 
             stem = f"fluence_E{energy:.3f}MeV"
 
@@ -788,6 +870,10 @@ def main():
         help="AF 器官掩膜路径（默认: icrp_validation/organ_mask_127x63x111_AF.npy）")
     parser.add_argument("--af-zip", default=None,
         help="ICRP-110 AF.zip 路径（默认: ../P110 data V1.2/AF.zip）")
+    parser.add_argument("--de-df-mode", action="store_true",
+        help="DE/DF kerma 模式：Step2 用 --de-df-mode 生成输入时使用。\n"
+             "  fluence_E*.npy 已是 pGy/src kerma，直接用于器官剂量，\n"
+             "  跳过 E×(μ_en/ρ) 注量→剂量换算步骤。")
     args = parser.parse_args()
 
     out_dir  = Path(args.out_dir)
@@ -812,7 +898,10 @@ def main():
     print(f"  out_dir  : {out_dir}")
     print(f"  mask     : {mask_path}")
     print(f"  zip      : {zip_path}")
-    print(f"  beam_area: {BEAM_AREA:.2f} cm^2\n")
+    print(f"  beam_area: {BEAM_AREA:.2f} cm^2")
+    if args.de_df_mode:
+        print("  ★ DE/DF kerma 模式（.npy 已是 pGy/src，直接求器官均值）")
+    print()
 
     print("[1/3] 加载器官掩膜 ...")
     mask = np.load(mask_path)
@@ -875,6 +964,19 @@ def main():
 
         fluence_ready = prepare_mcnp_fluence(fluence_npy, mask)
         print(f"     [数据检验] 通过 -> 使用 MCNP 结果")
+
+        # ── DE/DF kerma 模式（Step2 用 --de-df-mode 生成时使用） ──────────────
+        if args.de_df_mode:
+            print(f"     [DE/DF] kerma 模式：直接使用 pGy/src 输出，跳过注量→剂量换算")
+            h_calc, organ_table = compute_h_eff_from_kerma(fluence_ready, mask, organs)
+            h_ref = ICRP116_REF[energy]
+            dev   = (h_calc - h_ref) / h_ref * 100
+            print_organ_table(organ_table, energy)
+            flag = "OK" if abs(dev) <= 10 else ("~" if abs(dev) <= 20 else "FAIL")
+            print(f"\n  [DE/DF] h_E(calc)={h_calc:.4f}  h_E(ICRP-116)={h_ref:.4f}  "
+                  f"dev={dev:+.1f}%  {flag}")
+            results.append((energy, h_calc, h_ref, dev))
+            continue
 
         stem = f"fluence_E{energy:.3f}MeV"
 
@@ -1093,7 +1195,8 @@ def main():
             print(f"[AF] 计算 AF h_E (beam_area={_AF_BEAM_AREA:.2f} cm²) ...")
             af_results = _compute_h_E_for_dir(af_out_dir, af_mask, af_organs,
                                               beam_area=_AF_BEAM_AREA,
-                                              ref_dict=ICRP116_REF_AF)
+                                              ref_dict=ICRP116_REF_AF,
+                                              de_df_mode=args.de_df_mode)
 
             if not af_results:
                 print("[AF] 未能计算任何 AF 能量点，跳过性别平均")
