@@ -460,7 +460,7 @@ def write_data_section(f, unique_ids, organs, media, energy_mev, mask=None,
             return '\n'.join(out)
 
         f.write(f'c DE{tnum}/DF{tnum}: fluence-to-kerma conversion (soft tissue ICRU-44)\n')
-        f.write(f'c   DF [pGy·cm²] = E x (mu_en/rho) x 160.2  (NIST XCOM)\n')
+        f.write(f'c   DF [pGy*cm2] = E x (mu_en/rho) x 160.2  (NIST XCOM)\n')
         f.write(f'c   FMESH output [pGy/src] = integral[ Phi(E) x DF(E) dE ]\n')
         f.write(f'DE{tnum}\n')
         f.write(_fmt_vals(_DEDF_ENERGIES))
