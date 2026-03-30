@@ -1638,6 +1638,17 @@
               </label>
             </div>
 
+            <div class="icrp116-adv-row">
+              <label class="icrp116-adv-label">
+                <input type="checkbox" v-model="icrp116ForceRerun" :disabled="icrp116Running" />
+                <span>强制重跑（忽略已有 .npy 缓存，重新运行 MCNP5）</span>
+              </label>
+              <label class="icrp116-adv-label" style="margin-top:4px">
+                <input type="checkbox" v-model="icrp116DeDfMode" :disabled="icrp116Running" />
+                <span>DE/DF 精确模式（单 FMESH 通量→kerma 转换，消除 EMESH 代表能误差）</span>
+              </label>
+            </div>
+
             <div class="icrp116-btn-row">
               <button
                 class="btn btn-primary"
@@ -2702,9 +2713,11 @@ export default {
         { value: 1.00,  label: '1.00 MeV' },
         { value: 10.00, label: '10.00 MeV' },
       ],
-      icrp116Selected: [0.01, 0.10, 1.00, 10.00],
-      icrp116SexAvg:   true,   // 启用性别平均 (AM+AF)
-      icrp116Running:  false,
+      icrp116Selected:   [0.01, 0.10, 1.00, 10.00],
+      icrp116SexAvg:     true,   // 启用性别平均 (AM+AF)
+      icrp116ForceRerun: false,  // 强制重跑：忽略已有 npy 缓存
+      icrp116DeDfMode:   false,  // DE/DF 模式：fluence→kerma 单 FMESH 精确方法
+      icrp116Running:    false,
       icrp116Status: {
         completed: false, failed: false,
         currentCase: null, doneEnergies: [],
@@ -4173,8 +4186,10 @@ export default {
 
       try {
         const resp = await axios.post(`${API_BASE}/api/icrp116/start-validation`, {
-          energies: this.icrp116Selected,
-          sexAvg:   this.icrp116SexAvg,
+          energies:   this.icrp116Selected,
+          sexAvg:     this.icrp116SexAvg,
+          forceRerun: this.icrp116ForceRerun,
+          deDfMode:   this.icrp116DeDfMode,
         });
         if (!resp.data.success) {
           this.icrp116Status.logs.push({
@@ -4245,7 +4260,9 @@ export default {
       };
       try {
         pushLog('▶ 启动 Step3 分析脚本...');
-        const { data } = await axios.post(`${API_BASE}/api/icrp116/run-step3`);
+        const { data } = await axios.post(`${API_BASE}/api/icrp116/run-step3`, {
+          deDfMode: this.icrp116DeDfMode,
+        });
         if (data.logs && data.logs.length) {
           data.logs.forEach(l => pushLog(l));
         }
@@ -7556,9 +7573,13 @@ export default {
 .icrp116-btn-row { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; }
 .icrp116-elapsed { color: #718096; font-size: 0.88rem; }
 
-.icrp116-sex-avg-row { margin: 0.5rem 0 0.8rem; }
+.icrp116-sex-avg-row { margin: 0.5rem 0 0.4rem; }
 .icrp116-sex-avg-label { display: flex; align-items: center; gap: 0.5rem; font-size: 0.92rem; cursor: pointer; color: #2d3748; }
 .icrp116-sex-avg-label input { cursor: pointer; width: 15px; height: 15px; }
+
+.icrp116-adv-row { display: flex; flex-direction: column; margin: 0.2rem 0 0.8rem; padding: 0.5rem 0.8rem; background: #f7fafc; border-left: 3px solid #cbd5e0; border-radius: 4px; }
+.icrp116-adv-label { display: flex; align-items: center; gap: 0.5rem; font-size: 0.88rem; cursor: pointer; color: #4a5568; }
+.icrp116-adv-label input { cursor: pointer; width: 14px; height: 14px; }
 
 .icrp116-progress { margin-top: 1rem; }
 .icrp116-phase-label { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.3rem; font-size: 0.85rem; }

@@ -2490,7 +2490,7 @@ app.post('/api/icrp116/start-validation', (req, res) => {
     icrp116Job.afCurrentCase  = null;
     icrp116Job.afDoneEnergies = [];
 
-    const { energies, sexAvg } = req.body || {};
+    const { energies, sexAvg, forceRerun, deDfMode } = req.body || {};
     icrp116Job.sexAvg = !!sexAvg;
 
     const args = [
@@ -2507,6 +2507,12 @@ app.post('/api/icrp116/start-validation', (req, res) => {
     // AF 体模控制
     if (!sexAvg) {
         args.push('--no-run-af');
+    }
+    if (forceRerun) {
+        args.push('--force-rerun');
+    }
+    if (deDfMode) {
+        args.push('--de-df-mode');
     }
 
     console.log('[ICRP116] 启动验证:', args.slice(1).join(' '));
@@ -2647,6 +2653,7 @@ const ICRP116_PNG_PATH     = path.join(ICRP116_OUT_DIR, 'icrp116_comparison.png'
 
 app.post('/api/icrp116/run-step3', (req, res) => {
     const fs = require('fs');
+    const { deDfMode } = req.body || {};
     const args = [
         ICRP116_STEP3_SCRIPT,
         '--out-dir', ICRP116_OUT_DIR,
@@ -2662,6 +2669,10 @@ app.post('/api/icrp116/run-step3', (req, res) => {
                   '--af-mask',    ICRP116_AF_MASK,
                   '--af-zip',     ICRP116_AF_ZIP);
         console.log('[ICRP116-Step3] 检测到 AF 输出，启用性别平均');
+    }
+    if (deDfMode) {
+        args.push('--de-df-mode');
+        console.log('[ICRP116-Step3] DE/DF 精确模式已启用');
     }
     console.log('[ICRP116-Step3] 启动:', args.slice(1).join(' '));
 

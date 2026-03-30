@@ -149,10 +149,15 @@ def run_one(case: dict, args, log_fh, out_dir: str = None):
 
     # 若输出 npy 已存在且非空，跳过重跑（防止页面刷新覆盖已完成的计算）
     npy_check = Path(out_dir) / f"fluence_E{energy:.3f}MeV.npy"
+    force_rerun = getattr(args, 'force_rerun', False)
     if npy_check.exists() and npy_check.stat().st_size > 1000:
-        log(f"  [跳过] {npy_check.name} 已存在 ({npy_check.stat().st_size // 1024} KB)，"
-            f"不重新运行 MCNP。如需重跑请手动删除该文件。", log_fh)
-        return True
+        if force_rerun:
+            npy_check.unlink()
+            log(f"  [强制重跑] 已删除旧 {npy_check.name}，将重新运行 MCNP。", log_fh)
+        else:
+            log(f"  [跳过] {npy_check.name} 已存在 ({npy_check.stat().st_size // 1024} KB)，"
+                f"不重新运行 MCNP。如需重跑请勾选「强制重跑」或手动删除该文件。", log_fh)
+            return True
 
     inp_src = Path(args.inp_dir) / inp_name
     if not inp_src.exists():
@@ -352,6 +357,14 @@ def ensure_prerequisites(args, cases, log_fh, phantom: str = 'AM') -> bool:
     inp_dir  = Path(args.inp_dir)
     needed   = [c["inp_name"] for c in cases]
 
+    # DE/DF 模式：删除已有 .inp，强制 Step2 以 DE/DF 卡重新生成
+    if getattr(args, 'de_df_mode', False):
+        for n in needed:
+            p = inp_dir / n
+            if p.exists():
+                p.unlink()
+                log(f"[准备-{phantom}] DE/DF 模式：已删除旧输入 {n}，将重新生成", log_fh)
+
     # 只生成缺失的 .inp 文件，保留已有文件（避免页面刷新时重跑覆盖已有计算）
     missing = [n for n in needed if not (inp_dir / n).exists()]
     if not missing:
@@ -419,6 +432,8 @@ def ensure_prerequisites(args, cases, log_fh, phantom: str = 'AM') -> bool:
                  "--xsdir",    args.xsdir,
                  "--phantom",  phantom,
                  "--nps",      nps_arg]
+    if getattr(args, 'de_df_mode', False):
+        step2_cmd.append("--de-df-mode")
     rc = run_subprocess_logged(step2_cmd, cwd=backend, log_fh=log_fh)
     if rc != 0:
         log(f"[错误] Step2 ({phantom}) 失败 (退出码={rc})", log_fh)
@@ -464,6 +479,10 @@ def main():
                         help="AF fluence npy 输出目录（默认: --out-dir 值加 _AF 后缀）")
     parser.add_argument("--nps",         default=10_000_000, type=int,
                         help="MCNP5 源粒子数（传给 Step2，默认 10_000_000）")
+    parser.add_argument("--force-rerun", action="store_true", default=False,
+                        help="强制重跑：忽略已有 .npy 缓存，重新运行 MCNP5")
+    parser.add_argument("--de-df-mode",  action="store_true", default=False,
+                        help="DE/DF 模式：生成含 DE/DF 通量转kerma的单 FMESH 输入（消除 EMESH 代表能误差）")
     args = parser.parse_args()
 
     # 确定 AF 输出目录
@@ -482,6 +501,8 @@ def main():
     print(f"  g5-bat     : {args.g5_bat}")
     print(f"  work-dir   : {args.work_dir}")
     print(f"  nps        : {args.nps:,}")
+    print(f"  force-rerun: {args.force_rerun}")
+    print(f"  de-df-mode : {args.de_df_mode}")
     print(f"  log        : {log_path}\n")
 
     # 检查 g5.bat
