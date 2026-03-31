@@ -171,12 +171,30 @@ def run_one(case: dict, args, log_fh, out_dir: str = None):
     for ext in (".o", ".r", ".s", ".p", ".w", ".m", ""):
         old = work / (base + ext)
         if old.exists():
-            old.unlink()
-            log(f"  删除旧文件: {old.name}", log_fh)
+            # Windows: file may be briefly locked by antivirus or a lingering
+            # handle from the previous MCNP run.  Retry a few times before giving up.
+            for _attempt in range(4):
+                try:
+                    old.unlink()
+                    log(f"  删除旧文件: {old.name}", log_fh)
+                    break
+                except PermissionError:
+                    if _attempt < 3:
+                        time.sleep(2)
+                    else:
+                        log(f"  [警告] 无法删除旧文件 {old.name}（文件被占用），跳过", log_fh)
     meshtal = work / "meshtal"
     if meshtal.exists():
-        meshtal.unlink()
-        log("  删除旧 meshtal", log_fh)
+        for _attempt in range(4):
+            try:
+                meshtal.unlink()
+                log("  删除旧 meshtal", log_fh)
+                break
+            except PermissionError:
+                if _attempt < 3:
+                    time.sleep(2)
+                else:
+                    log("  [警告] 无法删除旧 meshtal（文件被占用），跳过", log_fh)
 
     # ── 2. 复制输入文件 ────────────────────────────────────────────
     dst_inp  = work / f"{base}.inp"
