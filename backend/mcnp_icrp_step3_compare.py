@@ -488,8 +488,12 @@ def compute_h_eff_from_f6(f6_dict: dict, organs: dict,
         _, wt = WT_RULES[idx]
         val = info['value']
         rel = info.get('rel_err', 0.0)
-        if rel > 0.10:
-            print(f"  [F6] 跳过 tally {tnum} (rel_err={rel:.4f} > 10%，统计未收敛)")
+        # MCNP5 prdmp TFC format stores rel as (1 + sigma/mean) rather than
+        # sigma/mean directly.  e.g. 0.04% error → stored as 1.0004.
+        # Normalise: if rel > 1.0 treat it as 1+sigma/mean and subtract 1.
+        actual_rel = (rel - 1.0) if rel > 1.0 else rel
+        if actual_rel > 0.10:
+            print(f"  [F6] 跳过 tally {tnum} (rel_err={actual_rel:.4f} > 10%，统计未收敛)")
             continue
         if val <= 0:
             continue
@@ -632,8 +636,23 @@ def _compute_h_E_for_dir(out_dir: Path, mask: np.ndarray, organs: dict,
 
             # ── DE/DF kerma 模式（Step2 用了 --de-df-mode）──────────────
             if de_df_mode:
-                h_calc, organ_table = compute_h_eff_from_kerma(
-                    fluence_ready, mask, organs)
+                import json as _json_dedf
+                stem_dd = f"fluence_E{energy:.3f}MeV"
+                f6_path_dd = out_dir / f"{stem_dd}_f6doses.json"
+                h_calc = None
+                if f6_path_dd.exists():
+                    try:
+                        with open(f6_path_dd, 'r', encoding='utf-8') as _fh2:
+                            f6d = _json_dedf.load(_fh2)
+                        if f6d:
+                            h_try2, _ = compute_h_eff_from_f6(f6d, organs, mask)
+                            _ref2 = (ref_dict or ICRP116_REF).get(energy, 0.0)
+                            if h_try2 > 0 and (_ref2 <= 0 or h_try2 <= 10 * _ref2):
+                                h_calc = h_try2
+                    except Exception:
+                        pass
+                if h_calc is None:
+                    h_calc, _ = compute_h_eff_from_kerma(fluence_ready, mask, organs)
                 h_ref = (ref_dict or ICRP116_REF).get(energy, 0.0)
                 dev   = (h_calc - h_ref) / h_ref * 100 if h_ref > 0 else 0.0
                 results.append((energy, h_calc, h_ref, dev))
@@ -967,8 +986,34 @@ def main():
 
         # ── DE/DF kerma 模式（Step2 用 --de-df-mode 生成时使用） ──────────────
         if args.de_df_mode:
-            print(f"     [DE/DF] kerma 模式：直接使用 pGy/src 输出，跳过注量→剂量换算")
-            h_calc, organ_table = compute_h_eff_from_kerma(fluence_ready, mask, organs)
+            import json as _json
+            stem_dedf = f"fluence_E{energy:.3f}MeV"
+            f6_json_dedf = out_dir / f"{stem_dedf}_f6doses.json"
+            h_calc = None
+            organ_table = []
+            # Try F6 first: F6:P uses actual material cross-sections per cell,
+            # which properly handles bone vs soft-tissue μ_en/ρ differences
+            # (important at 0.1 MeV where bone μ_en/ρ is 14.5% higher).
+            if f6_json_dedf.exists():
+                try:
+                    with open(f6_json_dedf, 'r', encoding='utf-8') as _fh:
+                        f6_dict = _json.load(_fh)
+                    if f6_dict:
+                        h_try, ot_try = compute_h_eff_from_f6(f6_dict, organs, mask)
+                        _ref_chk = ICRP116_REF.get(energy, 0.0)
+                        n_organs = len(ot_try)
+                        sane = (_ref_chk <= 0 or h_try <= 10 * _ref_chk) and n_organs >= 5
+                        if sane:
+                            h_calc = h_try
+                            organ_table = ot_try
+                            print(f"     [DE/DF+F6] 使用 F6:P 计分（器官材料精确μ_en/ρ）")
+                        else:
+                            print(f"     [DE/DF] F6 数据不满足条件（n={n_organs}, h={h_try:.4f}），回退 DE/DF kerma")
+                except Exception as _ef6:
+                    print(f"     [DE/DF] F6 读取失败: {_ef6}，回退 DE/DF kerma")
+            if h_calc is None:
+                print(f"     [DE/DF] kerma 模式：直接使用 pGy/src 输出，跳过注量→剂量换算")
+                h_calc, organ_table = compute_h_eff_from_kerma(fluence_ready, mask, organs)
             h_ref = ICRP116_REF[energy]
             dev   = (h_calc - h_ref) / h_ref * 100
             print_organ_table(organ_table, energy)

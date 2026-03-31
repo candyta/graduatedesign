@@ -361,11 +361,25 @@ def write_surface_section(f):
 
 
 def write_data_section(f, unique_ids, organs, media, energy_mev, mask=None,
-                       de_df_mode=False):
-    """写 Data 卡：mode, 材料, 源, 计分卡, nps。"""
+                       de_df_mode=False, coupled=False):
+    """写 Data 卡：mode, 材料, 源, 计分卡, nps。
+
+    Parameters
+    ----------
+    coupled : bool
+        True → mode p e (coupled photon-electron transport).
+        Enables secondary electron tracking so F6:P,E gives absorbed dose
+        instead of collision kerma — required for accurate results at ≥5 MeV
+        where charged-particle equilibrium (CPE) breaks down.
+    """
     # ── mode & physics ──
-    f.write('mode p\n')
-    f.write('phys:p 20 0\n')
+    if coupled:
+        f.write('mode p e\n')
+        f.write('phys:p 20 0\n')
+        f.write('phys:e 20 0\n')   # electron transport up to 20 MeV
+    else:
+        f.write('mode p\n')
+        f.write('phys:p 20 0\n')
     f.write('c\n')
 
     # ── 材料 ──
@@ -541,7 +555,12 @@ def write_data_section(f, unique_ids, organs, media, energy_mev, mask=None,
                 _rule_groups[_idx].append(_oid)
                 break
     if _rule_groups:
-        f.write('c F6:P organ kerma tallies (MeV/g/src) - scatter-correct photon energy deposition\n')
+        # In coupled mode (mode p e) use F6:P,E so that secondary electron
+        # energy deposition is included → gives absorbed dose, not just kerma.
+        # In photon-only mode use F6:P (collision kerma approximation).
+        _f6_particle = 'P,E' if coupled else 'P'
+        _f6_desc = 'absorbed dose' if coupled else 'kerma'
+        f.write(f'c F6:{_f6_particle} organ {_f6_desc} tallies (MeV/g/src)\n')
         f.write('c Tally index = (wT_rule_index+1)*10+6  -> same mapping used in step3\n')
         f.write('c NOTE: MCNP5 lattice F6 sums over all N_vox copies but divides by ONE voxel mass,\n')
         f.write('c       so raw value = N_vox * D_organ_avg. Step3 divides by N_vox to get D_avg.\n')
@@ -555,7 +574,7 @@ def write_data_section(f, unique_ids, organs, media, energy_mev, mask=None,
             _n_vox = int(np.sum(np.isin(mask, _oids))) if mask is not None else 0
             _nv_str = f'  n_vox={_n_vox}' if _n_vox > 0 else '  n_vox=unknown'
             f.write(f'c  F{_tnum}: {_kws[0]}  wT={_wt:.5f}  oids={_oids[:3]}{"..." if len(_oids)>3 else ""}{_nv_str}\n')
-            f.write(f'F{_tnum}:P  {_ostr}\n')
+            f.write(f'F{_tnum}:{_f6_particle}  {_ostr}\n')
             # FM 卡不写 —— MCNP5 lattice F6 中 FM 被忽略或产生错误结果（输出 ~1 MeV/g/src）
             # N_vox 修正在 step3 post-processing 中通过掩膜计数完成
         f.write('c\n')
@@ -578,8 +597,18 @@ def write_data_section(f, unique_ids, organs, media, energy_mev, mask=None,
 
 def generate_input_file(mask: np.ndarray, organs: dict, media: dict,
                         energy_mev: float, out_path: Path,
-                        phantom: str = 'AM', de_df_mode: bool = False):
-    """为指定能量生成一个 MCNP5 输入文件。"""
+                        phantom: str = 'AM', de_df_mode: bool = False,
+                        coupled: bool = False):
+    """为指定能量生成一个 MCNP5 输入文件。
+
+    Parameters
+    ----------
+    coupled : bool
+        True → mode p e (coupled photon-electron transport).
+        Recommended for E ≥ 5 MeV where CPE breaks down and kerma
+        approximation overestimates organ absorbed dose by >20%.
+        F6:P,E tallies will be written to give true absorbed dose.
+    """
 
     # 1. 找掩膜中实际出现的 organ_id
     unique_ids = set(int(v) for v in np.unique(mask))
@@ -617,7 +646,7 @@ def generate_input_file(mask: np.ndarray, organs: dict, media: dict,
 
         # ── Data 块 ──
         write_data_section(f, unique_ids, organs, media, energy_mev, mask,
-                           de_df_mode=de_df_mode)
+                           de_df_mode=de_df_mode, coupled=coupled)
 
     size_mb = out_path.stat().st_size / 1e6
     print(f'    写入 {out_path.name}  ({size_mb:.2f} MB)')
@@ -646,6 +675,12 @@ def main():
              '  写入单 FMESH14 + DE14/DF14 软组织 kerma 乘子，\n'
              '  取代多 FMESH EMESH 方案，消除代表能量误差。\n'
              '  运行后须配合 Step3 --de-df-mode 使用。')
+    parser.add_argument('--coupled', action='store_true',
+        help='耦合光子-电子输运模式 (mode p e)：\n'
+             '  写入 mode p e + phys:e，F6 计分改为 F6:P,E（吸收剂量）。\n'
+             '  在 E≥5 MeV 时必须使用：高能次级电子射程数厘米，带电\n'
+             '  粒子平衡（CPE）不成立，kerma 高估吸收剂量约 50-80%。\n'
+             '  注意：运行时间比 mode p 慢约 5-20 倍。')
     args = parser.parse_args()
 
     phantom = args.phantom
@@ -712,19 +747,27 @@ def main():
     prefix = 'af_' if phantom == 'AF' else 'ap_'
 
     de_df_mode = args.de_df_mode
+    coupled    = args.coupled
     if de_df_mode:
         print('[Step2] ★ DE/DF 模式：FMESH14 + DE14/DF14 软组织 kerma 乘子（推荐 MCNP5）')
         print('        Step3 须同时加 --de-df-mode 参数')
+    if coupled:
+        print('[Step2] ★ 耦合模式 (mode p e)：次级电子完整输运，F6:P,E 给出吸收剂量')
+        print('        适用于 E≥5 MeV；运行时间约为 mode p 的 5-20 倍')
 
     print('[Step2] 生成 MCNP5 输入文件 ...')
     for e in ENERGIES_MEV:
         fname = f'{prefix}photon_E{e:.3f}MeV.inp'
         out_path = out_dir / fname
         generate_input_file(mask, organs, media, e, out_path,
-                            phantom=phantom, de_df_mode=de_df_mode)
+                            phantom=phantom, de_df_mode=de_df_mode,
+                            coupled=coupled)
 
     print(f'\nOK 第二步完成 (phantom={phantom})，输入文件位于 {out_dir}/')
-    if de_df_mode:
+    if coupled:
+        print('  后续: 用 MCNP5 运行各文件（mode p e），再执行 Step3（不需要 --de-df-mode）')
+        print('  Step3 将优先使用 F6:P,E 吸收剂量数据。')
+    elif de_df_mode:
         print('  后续: 用 MCNP5 运行各文件，再执行:')
         print('    python mcnp_icrp_step3_compare.py --de-df-mode')
     else:

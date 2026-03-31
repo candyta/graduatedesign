@@ -459,6 +459,10 @@ def parse_f6_tallies(output_file: str) -> dict:
                         val, rel = v2, v3   # 提取 per-source 均值和相对误差
                     else:
                         val, rel = v1, v2
+                    # MCNP5 prdmp TFC 输出 rel 为 (1 + sigma/mean) 格式，例如
+                    # 0.04% 误差输出为 1.0004。归一化为纯 sigma/mean 供后续使用。
+                    if rel > 1.0:
+                        rel = rel - 1.0
                     # 物理上界过滤：跳过不合理大值，保留已有的合理结果
                     if val > _F6_PHYS_MAX:
                         print(f"  [F6] tally {cur_tally}: 跳过不合理大值 {val:.4e} MeV/g/src"
