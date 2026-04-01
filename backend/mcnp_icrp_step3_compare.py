@@ -241,18 +241,23 @@ def _load_organs_from_zip(zip_path: str, phantom: str = 'AM') -> dict:
 # ═══════════════════════════════════════════════════════════════
 
 def is_data_reliable(fluence_npy: np.ndarray, energy: float = None,
-                     mask: np.ndarray = None) -> bool:
+                     mask: np.ndarray = None,
+                     de_df_mode: bool = False,
+                     beam_area: float = None) -> bool:
     """
-    检测 fluence 是否为可信的 MCNP 结果，还是 extract 脚本的随机数回退数据。
-    同时检测低能量点（E ≤ 0.05 MeV）的物理合理性：10 keV 光子在软组织中
-    平均自由程仅 0.04 cm，深部器官注量应接近 0。
+    检测 fluence（或 DE/DF kerma）是否为可信的 MCNP 结果。
 
-    ⚠ 全局均值不能用于判断——ICRP-110 AM 体模约 60% 体素为体外"空气"
-      （体素坐标在体模包围盒内但不属于任何器官），10 keV 光子在空气中几乎
-      不衰减（MFP≈69 cm），因此即使截面库正常，全局均值 ≈ 61% × Φ_incident。
-    正确做法：只统计组织体素（mask>0）的均值：
-      截面库正常：组织均值 ≈ 0.01~1% × Φ_incident（强衰减）
-      截面库缺失：组织均值 ≈ 100% × Φ_incident（无衰减）
+    普通模式（de_df_mode=False）：
+      - 检测随机回退数据（max ≈ 1e-5，CV ≈ 0.577）
+      - E ≤ 0.05 MeV 低能物理合理性：组织均值不得超过入射注量的 30%
+
+    DE/DF kerma 模式（de_df_mode=True）：
+      .npy 存储 pGy/src，而非 cm⁻²/src。额外检验：
+      全局均值不得超过入射 kerma 的 3 倍。
+        入射 kerma = DF(E) / beam_area  (pGy/src)
+        DF(E) = E × (μ_en/ρ)_软组织 × 160.2  (pGy·cm²)
+      若均值超出 3 倍上界，说明 .npy 来自错误能量点（如 1 MeV 档存储了
+      10 MeV 数据）或未使用 --de-df-mode 生成输入，导致后续 h_E 严重高估。
 
     extract_from_standard_output 回退时返回 np.random.rand(...) * 1e-5：
       - max 恰好约 1e-5（精确上限）
@@ -282,6 +287,22 @@ def is_data_reliable(fluence_npy: np.ndarray, energy: float = None,
         # 截面库缺失：光子完全穿透，组织均值 ≈ 入射注量
         if mean_tissue > 0.30 * incident_fluence:
             return False   # 物理不合理：截面库未正确加载
+    # DE/DF kerma 模式：全局均值不得超过入射 kerma 的 3 倍
+    # 用于检测"1 MeV 档错存 10 MeV 数据"等能量错配情况。
+    # 全局均值包含体外约 60% 空气体素（kerma≈0），因此上界取 3× 已相当宽松。
+    if de_df_mode and energy is not None and energy > 0.05 and beam_area is not None:
+        mu_en = _interp_mu_en_rho(energy, _SOFT_INTERP_E, _SOFT_INTERP_MU)
+        df_e = energy * mu_en * 160.2          # pGy·cm²，软组织 KERMA 转换因子
+        incident_kerma = df_e / beam_area      # pGy/src，入射面处最大 kerma
+        global_mean = float(fluence_npy.mean())
+        if global_mean > 3.0 * incident_kerma:
+            print(f"  [数据检验] *** DE/DF kerma 异常：全局均值={global_mean:.3e} pGy/src"
+                  f" 超过入射 kerma×3 = {3.0*incident_kerma:.3e} pGy/src ***")
+            print(f"  E={energy} MeV 软组织 DF={df_e:.3e} pGy·cm²，beam_area={beam_area:.1f} cm²")
+            print(f"  可能原因: .npy 来自错误能量点（如 1 MeV 档实际包含 10 MeV 数据），")
+            print(f"            或 .inp 未使用 --de-df-mode 生成而 Step3 却以 --de-df-mode 处理。")
+            print(f"  解决: 删除该 .npy 文件并重新运行 Step2b（确保 --de-df-mode 一致）。")
+            return False
     return True
 
 
@@ -628,7 +649,8 @@ def _compute_h_E_for_dir(out_dir: Path, mask: np.ndarray, organs: dict,
 
             fluence_npy = np.load(npy_path)
 
-            if not is_data_reliable(fluence_npy, energy, mask=mask):
+            if not is_data_reliable(fluence_npy, energy, mask=mask,
+                                    de_df_mode=de_df_mode, beam_area=beam_area):
                 skipped.append(energy)
                 continue
 
@@ -652,6 +674,8 @@ def _compute_h_E_for_dir(out_dir: Path, mask: np.ndarray, organs: dict,
                     except Exception:
                         pass
                 if h_calc is None:
+                    if energy >= 5.0:
+                        print(f"  [DE/DF] ⚠ E={energy} MeV: CPE 不成立，kerma 近似高估约 40-65%")
                     h_calc, _ = compute_h_eff_from_kerma(fluence_ready, mask, organs)
                 h_ref = (ref_dict or ICRP116_REF).get(energy, 0.0)
                 dev   = (h_calc - h_ref) / h_ref * 100 if h_ref > 0 else 0.0
@@ -952,7 +976,8 @@ def main():
         print(f"     fluence shape={fluence_npy.shape}  "
               f"max={fluence_npy.max():.3e}  mean={fluence_npy.mean():.3e}")
 
-        if not is_data_reliable(fluence_npy, energy, mask=mask):
+        if not is_data_reliable(fluence_npy, energy, mask=mask,
+                                de_df_mode=args.de_df_mode, beam_area=BEAM_AREA):
             max_v = fluence_npy.max()
             mean_v = fluence_npy.mean()
             if max_v <= 0:
@@ -1013,6 +1038,9 @@ def main():
                     print(f"     [DE/DF] F6 读取失败: {_ef6}，回退 DE/DF kerma")
             if h_calc is None:
                 print(f"     [DE/DF] kerma 模式：直接使用 pGy/src 输出，跳过注量→剂量换算")
+                if energy >= 5.0:
+                    print(f"     [DE/DF] ⚠ E={energy} MeV：带电粒子平衡（CPE）在高能段不成立，")
+                    print(f"     kerma 近似将系统性高估有效剂量约 40-65%（需 mode p e 耦合输运修正）。")
                 h_calc, organ_table = compute_h_eff_from_kerma(fluence_ready, mask, organs)
             h_ref = ICRP116_REF[energy]
             dev   = (h_calc - h_ref) / h_ref * 100

@@ -122,7 +122,7 @@ def extract_mesh_tally(mesh_file: str, grid_shape: tuple = None,
         if 'Result' in stripped and 'Rel' in stripped:
             break
 
-    in_mesh14 = in_target  # 别名，供下方第二遍扫描复用
+    tally_found = in_target  # 记录是否在第一遍中找到目标 tally
 
     # 确定网格尺寸
     if dir_values['X'] and dir_values['Y'] and dir_values['Z']:
@@ -240,7 +240,8 @@ def extract_mesh_tally(mesh_file: str, grid_shape: tuple = None,
           f"范围[{total.min():.2e}, {total.max():.2e}]  均值={total.mean():.2e}")
 
     return {'total': total, 'bins': bins_list, 'e_bounds': e_bounds,
-            'n_ebins': n_ebins, 'nx': nx, 'ny': ny, 'nz': nz}
+            'n_ebins': n_ebins, 'nx': nx, 'ny': ny, 'nz': nz,
+            'tally_found': tally_found}
 
 
 def _legacy_array_from_result(result: dict) -> np.ndarray:
@@ -523,8 +524,11 @@ def save_extra_fmesh_bins(mesh_file: str, npy_path) -> None:
         tag = f'fm{tnum}'
         try:
             r = extract_mesh_tally(mesh_file, tally_num=tnum)
+            if not r.get('tally_found', True):
+                print(f"  [多FMESH] meshtal 中不存在 FMESH{tnum}，跳过（DE/DF 模式仅有 FMESH14）")
+                continue
             if r['n_ebins'] < 2:
-                print(f"  [多FMESH] FMESH{tnum} 未检测到 2 个 EMESH 档，跳过")
+                print(f"  [多FMESH] FMESH{tnum} 检测到 EMESH 档 < 2（n_ebins={r['n_ebins']}），跳过")
                 continue
             for k, bin_arr in enumerate(r['bins']):
                 p = parent / f"{stem}_{tag}_bin{k}.npy"
