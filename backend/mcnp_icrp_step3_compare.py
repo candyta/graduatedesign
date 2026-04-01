@@ -241,7 +241,8 @@ def _load_organs_from_zip(zip_path: str, phantom: str = 'AM') -> dict:
 # ═══════════════════════════════════════════════════════════════
 
 def is_data_reliable(fluence_npy: np.ndarray, energy: float = None,
-                     mask: np.ndarray = None) -> bool:
+                     mask: np.ndarray = None,
+                     de_df_mode: bool = False) -> bool:
     """
     检测 fluence 是否为可信的 MCNP 结果，还是 extract 脚本的随机数回退数据。
     同时检测低能量点（E ≤ 0.05 MeV）的物理合理性：10 keV 光子在软组织中
@@ -252,7 +253,13 @@ def is_data_reliable(fluence_npy: np.ndarray, energy: float = None,
       不衰减（MFP≈69 cm），因此即使截面库正常，全局均值 ≈ 61% × Φ_incident。
     正确做法：只统计组织体素（mask>0）的均值：
       截面库正常：组织均值 ≈ 0.01~1% × Φ_incident（强衰减）
-      截面库缺失：组织均值 ≈ 100% × Φ_incident（无衰减）
+      截面库缺失：光子完全穿透，组织均值 ≈ 入射注量
+
+    de_df_mode : bool
+        True 时 fluence_npy 存储的是 kerma（pGy/src），而非注量（cm⁻²/src）。
+        低能物理检验会先除以 DF(E) 换算回注量单位，再与入射注量比较，
+        避免单位不一致导致误报（DE/DF 模式下 DF(0.01 MeV)=7.6，
+        直接比较会把 pGy/sr 误作 cm⁻²/src，给出虚高的 "400%" 比值）。
 
     extract_from_standard_output 回退时返回 np.random.rand(...) * 1e-5：
       - max 恰好约 1e-5（精确上限）
@@ -278,6 +285,12 @@ def is_data_reliable(fluence_npy: np.ndarray, energy: float = None,
             mean_tissue = float(tissue_sel.mean()) if tissue_sel.size > 0 else 0.0
         else:
             mean_tissue = float(fluence_npy.mean())
+        # DE/DF 模式：npy 存的是 kerma (pGy/src)，需除以 DF(E) 换算回注量 (cm⁻²/src)
+        if de_df_mode and energy is not None:
+            df_factor = (_interp_mu_en_rho(energy, _SOFT_INTERP_E, _SOFT_INTERP_MU)
+                         * energy * 1.602e2)
+            if df_factor > 0:
+                mean_tissue = mean_tissue / df_factor
         # 截面库正常：组织均值远小于入射注量（强光电吸收）
         # 截面库缺失：光子完全穿透，组织均值 ≈ 入射注量
         if mean_tissue > 0.30 * incident_fluence:
@@ -628,7 +641,8 @@ def _compute_h_E_for_dir(out_dir: Path, mask: np.ndarray, organs: dict,
 
             fluence_npy = np.load(npy_path)
 
-            if not is_data_reliable(fluence_npy, energy, mask=mask):
+            if not is_data_reliable(fluence_npy, energy, mask=mask,
+                                        de_df_mode=de_df_mode):
                 skipped.append(energy)
                 continue
 
@@ -952,7 +966,8 @@ def main():
         print(f"     fluence shape={fluence_npy.shape}  "
               f"max={fluence_npy.max():.3e}  mean={fluence_npy.mean():.3e}")
 
-        if not is_data_reliable(fluence_npy, energy, mask=mask):
+        if not is_data_reliable(fluence_npy, energy, mask=mask,
+                                de_df_mode=args.de_df_mode):
             max_v = fluence_npy.max()
             mean_v = fluence_npy.mean()
             if max_v <= 0:
@@ -962,14 +977,20 @@ def main():
                 print(f"     解决：拉取最新代码，重启后端，重新运行 Step2b。")
             elif energy <= 0.05:
                 incident = 1.0 / BEAM_AREA
-                # 计算组织均值（与 is_data_reliable 一致）
                 mask_flu = mask.transpose(2, 1, 0)
                 tissue_sel = fluence_npy[mask_flu > 0]
-                tissue_mean = float(tissue_sel.mean()) if tissue_sel.size > 0 else mean_v
+                tissue_raw = float(tissue_sel.mean()) if tissue_sel.size > 0 else mean_v
+                # DE/DF 模式：tissue_raw 单位是 pGy/src，需换算回注量 cm⁻²/src
+                if args.de_df_mode:
+                    df_factor = (_interp_mu_en_rho(energy, _SOFT_INTERP_E, _SOFT_INTERP_MU)
+                                 * energy * 1.602e2)
+                    tissue_mean = tissue_raw / df_factor if df_factor > 0 else tissue_raw
+                else:
+                    tissue_mean = tissue_raw
                 ratio = tissue_mean / incident
                 print(f"     [数据检验] *** 物理不合理：低能光子未被衰减！ ***")
                 print(f"     E={energy} MeV 光子在软组织中平均自由程仅 ~0.04 cm，")
-                print(f"     组织体素均值 {tissue_mean:.3e} = {ratio:.1%} × 入射注量（应 < 1%）")
+                print(f"     组织注量均值 {tissue_mean:.3e} = {ratio:.1%} × 入射注量（应 < 1%）")
                 print(f"     原因：MCNP 光子截面库未正确加载——光子穿透体模无任何相互作用。")
                 print(f"     解决：确认 xsdir 含有光子截面库条目，重新运行 Step2b。")
             else:

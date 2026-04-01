@@ -375,13 +375,14 @@ def ensure_prerequisites(args, cases, log_fh, phantom: str = 'AM') -> bool:
     inp_dir  = Path(args.inp_dir)
     needed   = [c["inp_name"] for c in cases]
 
-    # DE/DF 模式：删除已有 .inp，强制 Step2 以 DE/DF 卡重新生成
-    if getattr(args, 'de_df_mode', False):
+    # DE/DF 或 coupled 模式：删除已有 .inp，强制 Step2 以新模式卡重新生成
+    if getattr(args, 'de_df_mode', False) or getattr(args, 'coupled', False):
         for n in needed:
             p = inp_dir / n
             if p.exists():
                 p.unlink()
-                log(f"[准备-{phantom}] DE/DF 模式：已删除旧输入 {n}，将重新生成", log_fh)
+                mode_tag = 'coupled' if getattr(args, 'coupled', False) else 'DE/DF'
+                log(f"[准备-{phantom}] {mode_tag} 模式：已删除旧输入 {n}，将重新生成", log_fh)
 
     # 只生成缺失的 .inp 文件，保留已有文件（避免页面刷新时重跑覆盖已有计算）
     missing = [n for n in needed if not (inp_dir / n).exists()]
@@ -452,6 +453,8 @@ def ensure_prerequisites(args, cases, log_fh, phantom: str = 'AM') -> bool:
                  "--nps",      nps_arg]
     if getattr(args, 'de_df_mode', False):
         step2_cmd.append("--de-df-mode")
+    if getattr(args, 'coupled', False):
+        step2_cmd.append("--coupled")
     rc = run_subprocess_logged(step2_cmd, cwd=backend, log_fh=log_fh)
     if rc != 0:
         log(f"[错误] Step2 ({phantom}) 失败 (退出码={rc})", log_fh)
@@ -501,6 +504,10 @@ def main():
                         help="强制重跑：忽略已有 .npy 缓存，重新运行 MCNP5")
     parser.add_argument("--de-df-mode",  action="store_true", default=False,
                         help="DE/DF 模式：生成含 DE/DF 通量转kerma的单 FMESH 输入（消除 EMESH 代表能误差）")
+    parser.add_argument("--coupled",     action="store_true", default=False,
+                        help="耦合光子-电子输运模式 (mode p e)：追踪次级电子，"
+                             "F6:P,E 给出吸收剂量而非 kerma，解决 ≥5 MeV 的 CPE 失效问题；"
+                             "与 --de-df-mode 互斥，优先使用本参数")
     args = parser.parse_args()
 
     # 确定 AF 输出目录
@@ -521,6 +528,7 @@ def main():
     print(f"  nps        : {args.nps:,}")
     print(f"  force-rerun: {args.force_rerun}")
     print(f"  de-df-mode : {args.de_df_mode}")
+    print(f"  coupled    : {args.coupled}")
     print(f"  log        : {log_path}\n")
 
     # 检查 g5.bat
