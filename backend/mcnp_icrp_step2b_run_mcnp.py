@@ -505,11 +505,11 @@ def main():
     parser.add_argument("--de-df-mode",  action="store_true", default=False,
                         help="DE/DF 模式：生成含 DE/DF 通量转kerma的单 FMESH 输入（消除 EMESH 代表能误差）")
     parser.add_argument("--coupled",     action="store_true", default=True,
-                        help="耦合光子-电子输运模式 (mode p e)：追踪次级电子，"
-                             "F6:P,E 给出吸收剂量而非 kerma，解决 ≥5 MeV 的 CPE 失效问题；"
+                        help="耦合光子-电子输运模式 (mode p e)：追踪次级电子确保光子输运物理正确，"
+                             "F6:P 统计光子kerma（MCNP5 不支持 F6:P,E，tally6 禁用电子）；"
                              "与 --de-df-mode 互斥，优先使用本参数（默认开启）")
     parser.add_argument("--no-coupled",  dest="coupled", action="store_false",
-                        help="关闭耦合模式，回退为纯光子 F6:P 模式")
+                        help="关闭耦合模式，回退为纯光子 mode p + F6:P 模式")
     args = parser.parse_args()
 
     # 确定 AF 输出目录

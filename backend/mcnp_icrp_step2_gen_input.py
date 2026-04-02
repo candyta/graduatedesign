@@ -555,11 +555,12 @@ def write_data_section(f, unique_ids, organs, media, energy_mev, mask=None,
                 _rule_groups[_idx].append(_oid)
                 break
     if _rule_groups:
-        # In coupled mode (mode p e) use F6:P,E so that secondary electron
-        # energy deposition is included → gives absorbed dose, not just kerma.
-        # In photon-only mode use F6:P (collision kerma approximation).
-        _f6_particle = 'P,E' if coupled else 'P'
-        _f6_desc = 'absorbed dose' if coupled else 'kerma'
+        # MCNP5 限制：F6 tally 不支持电子粒子符（F6:P,E 在 MCNP5 中致命错误）。
+        # mode p e 下仍用 F6:P（仅统计光子能量沉积，即 kerma），但 mode p e 本身
+        # 保证了光子输运的正确性（对产产生等高能过程）。
+        # 如需真正的吸收剂量（含电子沉积），需改用 *F8:P,E（pulse height tally，MCNP6）。
+        _f6_particle = 'P'
+        _f6_desc = 'photon kerma (F6:P, MCNP5 compatible)'
         f.write(f'c F6:{_f6_particle} organ {_f6_desc} tallies (MeV/g/src)\n')
         f.write('c Tally index = (wT_rule_index+1)*10+6  -> same mapping used in step3\n')
         f.write('c NOTE: MCNP5 lattice F6 sums over all N_vox copies but divides by ONE voxel mass,\n')
