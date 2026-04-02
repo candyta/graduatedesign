@@ -659,9 +659,11 @@ def _compute_h_E_for_dir(out_dir: Path, mask: np.ndarray, organs: dict,
                         with open(f6_path_dd, 'r', encoding='utf-8') as _fh2:
                             f6d = _json_dedf.load(_fh2)
                         if f6d:
-                            h_try2, _ = compute_h_eff_from_f6(f6d, organs, mask)
+                            h_try2, ot_try2 = compute_h_eff_from_f6(f6d, organs, mask)
                             _ref2 = (ref_dict or ICRP116_REF).get(energy, 0.0)
-                            if h_try2 > 0 and (_ref2 <= 0 or h_try2 <= 10 * _ref2):
+                            if (h_try2 > 0
+                                    and (_ref2 <= 0 or h_try2 <= 10 * _ref2)
+                                    and len(ot_try2) >= 5):
                                 h_calc = h_try2
                     except Exception:
                         pass
