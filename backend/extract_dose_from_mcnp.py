@@ -426,68 +426,62 @@ def parse_f6_tallies(output_file: str) -> dict:
             continue
 
         # 找 "total" 行的数值
-        # MCNP5 格式: "total  value  rel_err" 三者在同一行（strip 后 parts[0]='total'）
-        # 对多单元 F6 tally，MCNP5 先输出各单元的 total，最后输出所有单元合并的 total。
-        # 不在第一次找到 total 时就退出，持续更新，保证取到最后一次 total（即合并结果）。
+        # MCNP5 标准格式:  "total  MEAN  REL_ERR"       3列（strip 后 parts[0]='total'）
+        # MCNP5 prdmp格式: "total  CUMSUM  MEAN  REL_ERR" 4列（prdmp 中间存档，每个检查点输出）
+        # 某些 MCNP 版本:  "total"（单独一行，值在下一行）
         #
         # ⚠ prdmp 中间存档格式陷阱：启用 prdmp 后 MCNP5 在每个存档点输出一份完整的
         #   tally 统计表，格式为 "total  CUMSUM  MEAN  REL_ERR"（4 列），其中
-        #   CUMSUM = NPS × MEAN（量级 ~1e6），而非每源粒子的结果。
-        #   当函数持续覆盖并取最后一次 total 时，若最后一条恰好来自 TFC/统计汇总段，
-        #   其两列均为大数（例如 2.3e8 / 1.5e7），导致 h_E 虚高 ~10^12 倍。
+        #   CUMSUM = NPS × MEAN。对小器官（N_vox 小）CUMSUM 可能仅为 10~1000，
+        #   旧代码用幅度判断（v1 > 1e4）会漏判 → 误把 CUMSUM 当 MEAN 存储，再被
+        #   物理上界过滤掉。正确做法：4 列即为 prdmp，3 列即为标准，无需幅度判断。
         #
-        # 修正策略：
-        #   1. 若 "total" 行含 ≥4 列且 col[1] >> col[2]（prdmp CUMSUM+MEAN 格式），
-        #      则提取 col[2] 作为 per-source 值。
-        #   2. 物理上界过滤：对于面积 ~9640 cm² 的平行束，F6 理论最大值
-        #      ≈ 1/BEAM_AREA × E_max × (μ_en/ρ)_max ≈ 0.02 MeV/g/src。
-        #      任何 val > 0.05 MeV/g/src 均为不合理数据，跳过（不覆盖已有结果）。
-        # mode p e 改用 F6:P,E；MCNP5 lattice 未自动平均，原始值 = N_vox × D_avg。
-        # 对于红骨髓（N_vox ≈ 2e4）：原始值可达 2e4 × 5e-5 ≈ 1.0 MeV/g/src。
-        # 上界放宽至 10.0；step3 会除以 N_vox 还原器官均值。
+        # 物理上界过滤（防御性）：mode p e 下 F6:P,E 原始值 = N_vox × D_avg，
+        # 对最大器官（红骨髓 N_vox ≈ 2e4）也不应超过 10 MeV/g/src。
         _F6_PHYS_MAX = 10.0  # MeV/g/src
         if re.match(r'^total\b', line, re.IGNORECASE):
             parts = line.split()
-            # parts = ['total', value, rel_err]  OR  ['total', CUMSUM, MEAN, REL_ERR]
-            if len(parts) >= 2:
+            val = None
+            rel = 0.0
+            if len(parts) >= 4:
+                # prdmp 4列格式: total  CUMSUM  MEAN  REL_ERR → 取 parts[2], parts[3]
                 try:
-                    v1 = float(parts[1])
-                    v2 = float(parts[2]) if len(parts) >= 3 else 0.0
-                    v3 = float(parts[3]) if len(parts) >= 4 else 0.0
-                    # prdmp 格式检测：若 v1 >> v2（CUMSUM >> MEAN），用 v2 作为 per-src 值
-                    if len(parts) >= 4 and v1 > 1e4 and v2 > 0 and v2 < v1 * 1e-3:
-                        val, rel = v2, v3   # 提取 per-source 均值和相对误差
-                    else:
-                        val, rel = v1, v2
-                    # MCNP5 prdmp TFC 输出 rel 为 (1 + sigma/mean) 格式，例如
-                    # 0.04% 误差输出为 1.0004。归一化为纯 sigma/mean 供后续使用。
-                    if rel > 1.0:
-                        rel = rel - 1.0
-                    # 物理上界过滤：跳过不合理大值，保留已有的合理结果
-                    if val > _F6_PHYS_MAX:
-                        print(f"  [F6] tally {cur_tally}: 跳过不合理大值 {val:.4e} MeV/g/src"
-                              f"（>{_F6_PHYS_MAX} 物理上界，可能来自 prdmp 累积值或 TFC 段）")
-                    else:
-                        result[cur_tally] = {'value': val, 'rel_err': rel}
-                        print(f"  [F6] tally {cur_tally}: {val:.4e} ± {rel:.4f} (rel)")
+                    val = float(parts[2])
+                    rel = float(parts[3])
                 except (ValueError, IndexError):
-                    # 回退：尝试下一行（极少数 MCNP 版本把值写在下一行）
-                    for j in range(i + 1, min(i + 4, len(lines))):
-                        nxt = lines[j].strip()
-                        if not nxt:
-                            continue
-                        nxt_parts = nxt.split()
-                        try:
-                            val = float(nxt_parts[0])
-                            rel = float(nxt_parts[1]) if len(nxt_parts) >= 2 else 0.0
-                            if val > _F6_PHYS_MAX:
-                                print(f"  [F6] tally {cur_tally}: 跳过不合理大值 {val:.4e} (next-line)")
-                            else:
-                                result[cur_tally] = {'value': val, 'rel_err': rel}
-                                print(f"  [F6] tally {cur_tally}: {val:.4e} ± {rel:.4f} (rel) [next-line]")
-                        except (ValueError, IndexError):
-                            pass
-                        break
+                    pass
+            elif len(parts) >= 3:
+                # 标准 3列格式: total  MEAN  REL_ERR → 取 parts[1], parts[2]
+                try:
+                    val = float(parts[1])
+                    rel = float(parts[2])
+                except (ValueError, IndexError):
+                    pass
+            elif len(parts) == 1:
+                # "total" 单独占一行，值在下一行
+                for j in range(i + 1, min(i + 4, len(lines))):
+                    nxt = lines[j].strip()
+                    if not nxt:
+                        continue
+                    nxt_parts = nxt.split()
+                    try:
+                        val = float(nxt_parts[0])
+                        rel = float(nxt_parts[1]) if len(nxt_parts) >= 2 else 0.0
+                    except (ValueError, IndexError):
+                        pass
+                    break
+            if val is not None:
+                # MCNP5 prdmp TFC 输出 rel 为 (1 + sigma/mean) 格式，例如
+                # 0.04% 误差输出为 1.0004。归一化为纯 sigma/mean 供后续使用。
+                if rel > 1.0:
+                    rel = rel - 1.0
+                # 物理上界过滤：跳过不合理大值，保留已有的合理结果
+                if val > _F6_PHYS_MAX:
+                    print(f"  [F6] tally {cur_tally}: 跳过不合理大值 {val:.4e} MeV/g/src"
+                          f"（>{_F6_PHYS_MAX} 物理上界，可能来自 TFC 段）")
+                else:
+                    result[cur_tally] = {'value': val, 'rel_err': rel}
+                    print(f"  [F6] tally {cur_tally}: {val:.4e} ± {rel:.4f} (rel)")
             # 不在此处设置 in_tally6 = False，继续寻找同 tally 后续的合并 total。
             # 遇到下一个 "1tally N" 行时会自动重置 cur_tally 和 in_tally6。
 
