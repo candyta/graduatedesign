@@ -2462,17 +2462,28 @@ function clearIcrp116Outputs() {
  * 任务运行中时拒绝（返回 success: false）。
  */
 app.post('/api/icrp116/reset', (req, res) => {
-    if (icrp116Job.running) {
-        return res.json({ success: false, message: '验证任务正在运行中，无法重置' });
+    const force = req.body && req.body.force === true;
+    if (icrp116Job.running && !force) {
+        return res.json({ success: false, message: '验证任务正在运行中，无法重置（传 force:true 可强制重置）' });
+    }
+    // 强制重置：先尝试 kill 残留进程
+    if (icrp116Job.running && force) {
+        console.warn('[ICRP116] 强制重置：尝试 kill 残留进程');
+        try { if (icrp116Job.proc) icrp116Job.proc.kill(); } catch (_) {}
+        icrp116Job.running = false;
+        icrp116Job.proc    = null;
     }
     const result = clearIcrp116Outputs();
-    icrp116Job.completed    = false;
-    icrp116Job.failed       = false;
-    icrp116Job.logs         = [];
-    icrp116Job.doneEnergies = [];
-    icrp116Job.currentCase  = null;
-    icrp116Job.startTime    = null;
-    console.log(`[ICRP116] reset: 已清空 ${result.cleared} 个文件`);
+    icrp116Job.completed      = false;
+    icrp116Job.failed         = false;
+    icrp116Job.logs           = [];
+    icrp116Job.doneEnergies   = [];
+    icrp116Job.afDoneEnergies = (icrp116Job.afDoneEnergies ? [] : undefined) ?? [];
+    icrp116Job.currentCase    = null;
+    icrp116Job.afCurrentCase  = null;
+    icrp116Job.startTime      = null;
+    icrp116Job.phase          = 'AM';
+    console.log(`[ICRP116] reset: 已清空 ${result.cleared} 个文件${force ? '（强制）' : ''}`);
     res.json({ success: true, cleared: result.cleared });
 });
 
@@ -2583,6 +2594,14 @@ app.post('/api/icrp116/start-validation', (req, res) => {
             pushLog(`[错误] 进程退出码 ${code}，请检查日志`);
         }
         console.log('[ICRP116] 进程结束，code=', code);
+    });
+
+    proc.on('error', (e) => {
+        icrp116Job.running = false;
+        icrp116Job.proc    = null;
+        icrp116Job.failed  = true;
+        pushLog(`[错误] 启动失败: ${e.message}`);
+        console.error('[ICRP116] spawn error:', e.message);
     });
 
     res.json({ success: true, message: '验证任务已启动，请在日志面板查看进度' });

@@ -3232,7 +3232,44 @@ export default {
       await axios.post(`${API_BASE}/clear-session`);
       console.log('[初始化] 已清除上次会话文件，可以开始新的处理流程');
     } catch (err) {
+      // 409 表示 MCNP/ICRP-116 计算正在运行，不是真正的错误
       console.warn('[初始化] 清除会话文件失败（可忽略）:', err.message);
+    }
+
+    // 同步 ICRP-116 后端状态：页面刷新后前端状态丢失，但后端可能仍有任务在运行
+    try {
+      const { data: icrpStatus } = await axios.get(`${API_BASE}/api/icrp116/status`);
+      if (icrpStatus.running) {
+        console.log('[初始化] 检测到 ICRP-116 验证任务正在运行，恢复轮询');
+        this.icrp116Running = true;
+        // 恢复轮询，继续接收日志和进度
+        this.icrp116PollTimer = setInterval(async () => {
+          try {
+            const { data } = await axios.get(`${API_BASE}/api/icrp116/status`);
+            if (data.logs && data.logs.length) {
+              this.icrp116Logs.push(...data.logs);
+              if (this.icrp116Logs.length > 500) this.icrp116Logs.splice(0, this.icrp116Logs.length - 500);
+            }
+            this.icrp116Status = {
+              completed:       data.completed,
+              failed:          data.failed,
+              doneEnergies:    data.doneEnergies    || [],
+              currentCase:     data.currentCase,
+              resultFiles:     data.resultFiles     || [],
+              afDoneEnergies:  data.afDoneEnergies  || [],
+              afCurrentCase:   data.afCurrentCase,
+              afResultFiles:   data.afResultFiles   || [],
+            };
+            if (!data.running) {
+              this.icrp116Running = false;
+              clearInterval(this.icrp116PollTimer);
+              this.icrp116PollTimer = null;
+            }
+          } catch (_) { /* 忽略轮询错误 */ }
+        }, 3000);
+      }
+    } catch (err) {
+      console.warn('[初始化] ICRP-116 状态同步失败（可忽略）:', err.message);
     }
 
     // mounted时尚无CT数据，tumor_position保持默认[0,0,0]（CT中心）
