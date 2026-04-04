@@ -1839,6 +1839,15 @@ app.get('/api/wholebody/sessions', async (req, res) => {
 
 // ==================== 清除会话文件 ====================
 app.post('/clear-session', async (req, res) => {
+    // 如果 MCNP 或 ICRP-116 验证计算正在运行，拒绝清除，防止删除进行中的输入文件
+    if (mcnpState.running || icrp116Job.running) {
+        const who = icrp116Job.running ? 'ICRP-116 验证' : 'MCNP';
+        console.warn(`[清除会话] 拒绝：${who} 计算正在进行中，跳过清除`);
+        return res.status(409).json({
+            success: false,
+            message: `${who} 计算正在进行中，请等待计算完成后再清除会话`
+        });
+    }
     try {
         console.log('[清除会话] 开始清除所有工作文件...');
         const errors = [];
