@@ -53,6 +53,8 @@ ENERGIES = [0.010, 0.100, 1.000, 10.000]
 #   X: 299 × 1.775 mm = 530.725 mm = 53.0725 cm
 #   Z: 348 × 4.84  mm = 1684.32 mm = 168.432 cm
 _AF_BEAM_AREA = (299 * 1.775 / 10) * (348 * 4.84 / 10)  # 53.0725 × 168.432 ≈ 8939 cm²
+# AF phantom voxel Y (AP) size: 137 × 1.775 mm = 243.175 mm, downsampled to 63 voxels
+_AF_VOX_Y = (137 * 1.775 / 10) / 63  # ≈ 0.386 cm
 
 # ─── ICRP-116 参考值（AP 光子，pSv·cm²） ────────────────────────────
 # 来源: ICRP Publication 116 (2010), Table A.1, Photons, AP column
@@ -533,8 +535,29 @@ def compute_h_eff_from_f6(f6_dict: dict, organs: dict,
     return h_eff, organ_table
 
 
+def _cpe_d_depth(energy_mev: float) -> float:
+    """
+    返回光子能量 E (MeV) 对应的次级电子 CPE 建立深度 d_CPE (cm)。
+
+    基于软组织中电子 CSDA 射程（NIST ESTAR 数据）的近似插值。
+    用于修正高能光子（E ≥ 5 MeV）下 AP 照射时浅层器官的 kerma→吸收剂量偏差。
+
+    参考：NIST ESTAR, ICRU Report 37, 软组织 ρ = 1.04 g/cm³
+      E=1 MeV → CSDA ≈ 0.43 cm (CPE 建立深度较小)
+      E=5 MeV → CSDA ≈ 2.0 cm
+      E=6 MeV → CSDA ≈ 2.5 cm
+      E=8 MeV → CSDA ≈ 3.2 cm
+      E=10 MeV → CSDA ≈ 4.0 cm
+    """
+    _table_e = [1.0, 5.0, 6.0, 8.0, 10.0]
+    _table_d = [0.43, 2.0, 2.5, 3.2, 4.0]
+    return float(np.interp(energy_mev, _table_e, _table_d))
+
+
 def compute_h_eff_from_kerma(kerma: np.ndarray, mask: np.ndarray,
-                              organs: dict) -> tuple:
+                              organs: dict,
+                              energy: float = None,
+                              vox_y_cm: float = None) -> tuple:
     """
     从 DE/DF 模式的 FMESH 输出（单位 pGy/src）计算 h_E (pSv·cm²)。
 
@@ -548,17 +571,44 @@ def compute_h_eff_from_kerma(kerma: np.ndarray, mask: np.ndarray,
         D_T [pGy/src] = mean_{voxels ∈ T}( kerma_voxel )
         h_E [pSv·cm²] = Σ_T wT × D_T × BEAM_AREA   (光子 wR=1, pGy≡pSv)
 
+    高能 CPE 修正（E ≥ 5 MeV）：
+        FMESH:P + DE/DF 给出的是光子碰撞 kerma，而非吸收剂量。
+        对于 E ≥ 5 MeV，次级电子的 CSDA 射程可达数厘米，AP 照射时
+        浅层器官（如乳腺）在 CPE 尚未建立时 absorbed dose << kerma。
+        修正因子：f_CPE(y) = 1 - exp(-y / d_CPE(E))
+        其中 y 为体素中心在 AP 方向（Y 轴）的深度，d_CPE 由 _cpe_d_depth() 给出。
+        注意：此修正为近似处理，精确计算需 mode p e + 电子网格计分。
+
     Parameters
     ----------
-    kerma  : np.ndarray (NX, NY, NZ) — 已对齐至掩膜分辨率的 kerma 场
-    mask   : np.ndarray (NX, NY, NZ) — 器官掩膜
-    organs : dict — {organ_id: (tissue_num, density, name)}
+    kerma    : np.ndarray (NX, NY, NZ) — 已对齐至掩膜分辨率的 kerma 场
+    mask     : np.ndarray (NX, NY, NZ) — 器官掩膜
+    organs   : dict — {organ_id: (tissue_num, density, name)}
+    energy   : float, optional — 光子能量 (MeV)，用于 CPE 修正
+    vox_y_cm : float, optional — Y 方向体素尺寸 (cm)，用于计算体素中心深度
 
     Returns
     -------
     (h_eff, organ_table)  同 compute_h_eff_from_fluence
     """
     from collections import defaultdict
+
+    # 高能 CPE 修正：对 E ≥ 5 MeV 按深度衰减 kerma → 近似吸收剂量
+    if energy is not None and energy >= 5.0 and vox_y_cm is not None:
+        d_cpe = _cpe_d_depth(energy)
+        ny = kerma.shape[1]
+        # 体素中心深度 y = (j + 0.5) × vox_y_cm，j 为 Y 方向索引
+        depths = (np.arange(ny) + 0.5) * vox_y_cm   # shape (NY,)
+        cpe_factors = 1.0 - np.exp(-depths / d_cpe)  # shape (NY,)
+        cpe_factors = np.clip(cpe_factors, 0.0, 1.0)
+        # 广播至 (NX, NY, NZ)
+        kerma = kerma * cpe_factors[np.newaxis, :, np.newaxis]
+        print(f"  [CPE] E={energy} MeV: 已应用深度相关 CPE 修正 "
+              f"(d_CPE={d_cpe:.1f} cm, 最大衰减深度={depths[-1]:.1f} cm)")
+        print(f"  [CPE] 注意：FMESH:P + DE/DF 给出光子碰撞 kerma；"
+              f"此 CPE 修正为近似。精确值需 mode p e + 电子 FMESH。")
+    elif energy is not None and energy >= 5.0:
+        print(f"  [CPE] ⚠ E={energy} MeV 需 CPE 修正但未提供 vox_y_cm，跳过修正")
 
     rule_groups = defaultdict(list)
     for oid in np.unique(mask):
@@ -606,7 +656,8 @@ def compute_h_eff_from_kerma(kerma: np.ndarray, mask: np.ndarray,
 
 def _compute_h_E_for_dir(out_dir: Path, mask: np.ndarray, organs: dict,
                          beam_area: float, ref_dict: dict = None,
-                         de_df_mode: bool = False) -> list:
+                         de_df_mode: bool = False,
+                         vox_y_cm: float = None) -> list:
     """
     对指定目录中的 fluence npy 文件计算各能量点的 h_E (pSv·cm²)。
 
@@ -617,6 +668,7 @@ def _compute_h_E_for_dir(out_dir: Path, mask: np.ndarray, organs: dict,
     organs     : dict — {organ_id: (tissue_num, density, name)}
     beam_area  : float — 束流面积 cm²（AM 与 AF 不同）
     de_df_mode : bool — True 时 .npy 为 DE/DF kerma [pGy/src]，跳过注量→剂量换算
+    vox_y_cm   : float, optional — Y 方向体素尺寸 (cm)，供高能 CPE 修正使用
 
     Returns
     -------
@@ -668,7 +720,9 @@ def _compute_h_E_for_dir(out_dir: Path, mask: np.ndarray, organs: dict,
                     except Exception:
                         pass
                 if h_calc is None:
-                    h_calc, _ = compute_h_eff_from_kerma(fluence_ready, mask, organs)
+                    h_calc, _ = compute_h_eff_from_kerma(
+                        fluence_ready, mask, organs,
+                        energy=energy, vox_y_cm=vox_y_cm)
                 h_ref = (ref_dict or ICRP116_REF).get(energy, 0.0)
                 dev   = (h_calc - h_ref) / h_ref * 100 if h_ref > 0 else 0.0
                 results.append((energy, h_calc, h_ref, dev))
@@ -1036,7 +1090,9 @@ def main():
                     print(f"     [DE/DF] F6 读取失败: {_ef6}，回退 DE/DF kerma")
             if h_calc is None:
                 print(f"     [DE/DF] kerma 模式：直接使用 pGy/src 输出，跳过注量→剂量换算")
-                h_calc, organ_table = compute_h_eff_from_kerma(fluence_ready, mask, organs)
+                h_calc, organ_table = compute_h_eff_from_kerma(
+                    fluence_ready, mask, organs,
+                    energy=energy, vox_y_cm=VOX_Y)
             h_ref = ICRP116_REF[energy]
             dev   = (h_calc - h_ref) / h_ref * 100
             print_organ_table(organ_table, energy)
@@ -1264,7 +1320,8 @@ def main():
             af_results = _compute_h_E_for_dir(af_out_dir, af_mask, af_organs,
                                               beam_area=_AF_BEAM_AREA,
                                               ref_dict=ICRP116_REF_AF,
-                                              de_df_mode=args.de_df_mode)
+                                              de_df_mode=args.de_df_mode,
+                                              vox_y_cm=_AF_VOX_Y)
 
             if not af_results:
                 print("[AF] 未能计算任何 AF 能量点，跳过性别平均")

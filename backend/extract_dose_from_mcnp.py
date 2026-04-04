@@ -436,9 +436,11 @@ def parse_f6_tallies(output_file: str) -> dict:
         #   旧代码用幅度判断（v1 > 1e4）会漏判 → 误把 CUMSUM 当 MEAN 存储，再被
         #   物理上界过滤掉。正确做法：4 列即为 prdmp，3 列即为标准，无需幅度判断。
         #
-        # 物理上界过滤（防御性）：mode p e 下 F6:P,E 原始值 = N_vox × D_avg，
-        # 对最大器官（红骨髓 N_vox ≈ 2e4）也不应超过 10 MeV/g/src。
-        _F6_PHYS_MAX = 10.0  # MeV/g/src
+        # 物理上界过滤（防御性）：MCNP5 lattice 模式下 F6:P 原始值 = N_vox × D_avg。
+        # 最大器官（红骨髓 N_vox ≈ 2e4）× D_avg（≈0.1 MeV/g/src）≈ 2000，
+        # 远低于 TFC 累计值（NPS × MEAN ≈ 1e7~1e8）。
+        # 上界取 1e4 可安全区分器官 F6 值与 TFC 行。
+        _F6_PHYS_MAX = 1e4  # MeV/g/src
         if re.match(r'^total\b', line, re.IGNORECASE):
             parts = line.split()
             val = None
