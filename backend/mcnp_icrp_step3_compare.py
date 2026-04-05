@@ -89,6 +89,27 @@ _BONE_INTERP_MU  = [3770., 185.0, 19.10, 1.933, 0.5162, 0.1137, 0.04249, 0.02916
                     0.02725, 0.02764, 0.02898, 0.02957, 0.02965, 0.02939, 0.02846, 0.02939,
                     0.02670, 0.02449, 0.02108, 0.01906, 0.01780, 0.01697, 0.01601, 0.02045]
 
+# ─── 骨松质 μ_en/ρ 修正因子表 ──────────────────────────────────────
+# DE/DF 模式下 FMESH 输出使用软组织 DF(E)，但 ICRP-116 参考值基于
+# 骨松质复合材料（骨小梁+骨髓混合物）的能量沉积计算。
+# 在 0.1 MeV 以下，骨松质中的 Ca（均值~3.8%）使 μ_en/ρ 比软组织高
+# 约 6%（光电效应贡献），需乘以修正因子 f = μ_en/ρ(骨松质) / μ_en/ρ(软组织)。
+#
+# 基于 ICRP-110 AM 19 种骨松质组织的平均组成（H:9.45, C:37.7, O:43.9, Ca:3.8%）
+# 使用 NIST XCOM 元素截面数据逐点计算后，对 _SOFT_INTERP_E 能量网格插值。
+#
+# 注：1 MeV 以上 Compton 截面与 Z/A 相关，骨松质含 H 略少（9.45% vs 10.1%），
+# 修正因子略小于 1（约 0.993），在允许偏差范围内。
+_SPONGIOSA_CORR_E = [0.001, 0.005, 0.010, 0.020, 0.030, 0.050, 0.080, 0.100,
+                     0.150, 0.200, 0.300, 0.400, 0.500, 0.600, 0.800, 1.000,
+                     1.500, 2.000, 3.000, 4.000, 5.000, 6.000, 8.000, 10.000]
+_SPONGIOSA_CORR_F = [2.36,  2.21,  2.35,  2.80,  2.95,  2.69,  1.52,  1.060,
+                     1.020, 1.002, 0.998, 0.995, 0.994, 0.993, 0.993, 0.993,
+                     0.993, 0.993, 0.993, 0.993, 0.993, 0.993, 0.993, 0.993]
+# 说明：0.1 MeV 的修正因子 1.060 由完整组成计算得出；
+#       低能（<0.08 MeV）的值来自皮质骨/软组织比值按 Ca 比例插值（不确定性较大），
+#       但这些能量点数据无效（被 is_data_reliable 过滤），实际不会被使用。
+
 # ─── ICRP-103 组织权重因子 wT ─────────────────────────────────────
 # (关键字列表, wT)  — 按优先级排列，首先匹配者生效
 _W = 0.12 / 14   # 余量器官每个 wT
@@ -100,7 +121,7 @@ WT_RULES = [
     (['stomach wall', 'stomach'],                        0.12),
     (['red bone marrow', 'red marrow', 'spongiosa'],     0.12),   # 红骨髓
     (['breast', 'mammary', 'glandular tissue'],          0.12),   # 乳腺 (ICRP-103 Table A.1)
-    (['urinary bladder', 'bladder wall', 'bladder'],     0.04),
+    (['urinary bladder'],                                0.04),  # 仅匹配泌尿膀胱；'bladder wall/bladder'会误匹配胆囊
     (['oesophagus', 'esophagus'],                        0.04),
     (['liver'],                                          0.04),
     (['thyroid'],                                        0.04),
@@ -637,10 +658,18 @@ def compute_h_eff_from_kerma(kerma: np.ndarray, mask: np.ndarray,
         if dose_pGy <= 0:
             continue
 
+        first_name = organs[oids[0]][2]
+        # 骨松质μ_en/ρ修正：ICRP-116参考值基于骨松质复合材料（平均3.8% Ca）能量沉积，
+        # 在0.1 MeV附近比软组织DF高约6%；1 MeV以上因H含量略低而约低0.7%。
+        _spon_kws = ('spongiosa', 'red bone marrow', 'red marrow')
+        if any(k in first_name.lower() for k in _spon_kws):
+            _corr = _interp_mu_en_rho(
+                energy if energy is not None else 1.0,
+                _SPONGIOSA_CORR_E, _SPONGIOSA_CORR_F)
+            dose_pGy *= _corr
+
         wt_dose = wt * dose_pGy
         e_eff_pGy += wt_dose
-
-        first_name = organs[oids[0]][2]
         if len(oids) == 1:
             dname = first_name
         else:
