@@ -2431,6 +2431,30 @@ const ICRP116_AF_OUT_DIR  = ICRP116_OUT_DIR + '_AF';
 const ICRP116_AF_MASK     = path.join(__dirname, 'icrp_validation', 'organ_mask_127x63x111_AF.npy');
 const ICRP116_AF_ZIP      = path.join(__dirname, '..', 'P110 data V1.2', 'AF.zip');
 const ICRP116_SCRIPT      = path.join(__dirname, 'mcnp_icrp_step2b_run_mcnp.py');
+// 持久化存储 DE/DF 模式标志，防止服务器重启后丢失
+const ICRP116_MODE_FILE   = path.join(__dirname, 'icrp_validation', 'mcnp_outputs', 'run_mode.json');
+
+/** 从磁盘读取上次 Step2 保存的 deDfMode（服务器重启后恢复状态） */
+function loadDeDfMode() {
+    try {
+        const { readFileSync } = require('fs');
+        const data = JSON.parse(readFileSync(ICRP116_MODE_FILE, 'utf8'));
+        return !!data.deDfMode;
+    } catch (_) {
+        return false;
+    }
+}
+
+/** 将 deDfMode 持久化到磁盘 */
+function saveDeDfMode(deDfMode) {
+    try {
+        const { writeFileSync, mkdirSync } = require('fs');
+        mkdirSync(path.dirname(ICRP116_MODE_FILE), { recursive: true });
+        writeFileSync(ICRP116_MODE_FILE, JSON.stringify({ deDfMode: !!deDfMode }), 'utf8');
+    } catch (e) {
+        console.error('[ICRP116] 无法保存 run_mode.json:', e.message);
+    }
+}
 
 /**
  * 清空 mcnp_outputs 目录中的所有计算结果文件（fluence*.npy、*_f6doses.json、*.csv、*.png 等）。
@@ -2513,6 +2537,7 @@ app.post('/api/icrp116/start-validation', (req, res) => {
     const { energies, sexAvg, forceRerun, deDfMode } = req.body || {};
     icrp116Job.sexAvg   = !!sexAvg;
     icrp116Job.deDfMode = !!deDfMode;  // 保存模式，供 Step3 自动使用
+    saveDeDfMode(!!deDfMode);          // 持久化到磁盘，防止服务器重启后丢失
 
     const args = [
         ICRP116_SCRIPT,
@@ -2683,14 +2708,18 @@ const ICRP116_PNG_PATH     = path.join(ICRP116_OUT_DIR, 'icrp116_comparison.png'
 
 app.post('/api/icrp116/run-step3', (req, res) => {
     const fs = require('fs');
-    // deDfMode: 优先使用请求体中的值；若未传（或为 undefined），
-    // 则自动使用本次验证任务保存的模式（icrp116Job.deDfMode），防止页面刷新后丢失状态
+    // deDfMode 优先级：请求体 > 内存 icrp116Job > 磁盘 run_mode.json（服务器重启后恢复）
     const { deDfMode: reqDeDfMode } = req.body || {};
-    const deDfMode = (reqDeDfMode !== undefined && reqDeDfMode !== null)
-        ? !!reqDeDfMode
-        : (icrp116Job.deDfMode || false);
-    if (reqDeDfMode === undefined || reqDeDfMode === null) {
-        console.log(`[ICRP116-Step3] deDfMode 未传入，自动使用任务存储值: ${deDfMode}`);
+    let deDfMode;
+    if (reqDeDfMode !== undefined && reqDeDfMode !== null) {
+        deDfMode = !!reqDeDfMode;
+        console.log(`[ICRP116-Step3] deDfMode 来自请求体: ${deDfMode}`);
+    } else if (icrp116Job.deDfMode) {
+        deDfMode = true;
+        console.log(`[ICRP116-Step3] deDfMode 来自内存任务状态: true`);
+    } else {
+        deDfMode = loadDeDfMode();
+        console.log(`[ICRP116-Step3] deDfMode 来自磁盘 run_mode.json: ${deDfMode}`);
     }
     const args = [
         ICRP116_STEP3_SCRIPT,
