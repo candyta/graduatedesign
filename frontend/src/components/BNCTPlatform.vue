@@ -3239,13 +3239,14 @@ export default {
     // 同步 ICRP-116 后端状态：页面刷新后前端状态丢失，但后端可能仍有任务在运行
     try {
       const { data: icrpStatus } = await axios.get(`${API_BASE}/api/icrp116/status`);
+      // 无论任务是否运行，始终从服务端恢复 deDfMode（服务器重启后从磁盘 run_mode.json 读取）
+      if (typeof icrpStatus.deDfMode === 'boolean' && icrpStatus.deDfMode) {
+        this.icrp116DeDfMode = true;
+        console.log('[初始化] 从服务端恢复 DE/DF 模式: true');
+      }
       if (icrpStatus.running) {
         console.log('[初始化] 检测到 ICRP-116 验证任务正在运行，恢复轮询');
         this.icrp116Running = true;
-        // 恢复 deDfMode：防止刷新后模式丢失导致 Step3 参数错误
-        if (typeof icrpStatus.deDfMode === 'boolean') {
-          this.icrp116DeDfMode = icrpStatus.deDfMode;
-        }
         // 恢复轮询，继续接收日志和进度
         this.icrp116PollTimer = setInterval(async () => {
           try {
