@@ -2511,7 +2511,8 @@ app.post('/api/icrp116/start-validation', (req, res) => {
     icrp116Job.afDoneEnergies = [];
 
     const { energies, sexAvg, forceRerun, deDfMode } = req.body || {};
-    icrp116Job.sexAvg = !!sexAvg;
+    icrp116Job.sexAvg   = !!sexAvg;
+    icrp116Job.deDfMode = !!deDfMode;  // 保存模式，供 Step3 自动使用
 
     const args = [
         ICRP116_SCRIPT,
@@ -2647,6 +2648,7 @@ app.get('/api/icrp116/status', (req, res) => {
         afCurrentCase:  icrp116Job.afCurrentCase,
         afDoneEnergies: icrp116Job.afDoneEnergies,
         afResultFiles,
+        deDfMode:       icrp116Job.deDfMode || false,  // 返回验证时使用的模式
     });
 });
 
@@ -2681,7 +2683,15 @@ const ICRP116_PNG_PATH     = path.join(ICRP116_OUT_DIR, 'icrp116_comparison.png'
 
 app.post('/api/icrp116/run-step3', (req, res) => {
     const fs = require('fs');
-    const { deDfMode } = req.body || {};
+    // deDfMode: 优先使用请求体中的值；若未传（或为 undefined），
+    // 则自动使用本次验证任务保存的模式（icrp116Job.deDfMode），防止页面刷新后丢失状态
+    const { deDfMode: reqDeDfMode } = req.body || {};
+    const deDfMode = (reqDeDfMode !== undefined && reqDeDfMode !== null)
+        ? !!reqDeDfMode
+        : (icrp116Job.deDfMode || false);
+    if (reqDeDfMode === undefined || reqDeDfMode === null) {
+        console.log(`[ICRP116-Step3] deDfMode 未传入，自动使用任务存储值: ${deDfMode}`);
+    }
     const args = [
         ICRP116_STEP3_SCRIPT,
         '--out-dir', ICRP116_OUT_DIR,

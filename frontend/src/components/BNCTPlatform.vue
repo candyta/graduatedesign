@@ -3242,6 +3242,10 @@ export default {
       if (icrpStatus.running) {
         console.log('[初始化] 检测到 ICRP-116 验证任务正在运行，恢复轮询');
         this.icrp116Running = true;
+        // 恢复 deDfMode：防止刷新后模式丢失导致 Step3 参数错误
+        if (typeof icrpStatus.deDfMode === 'boolean') {
+          this.icrp116DeDfMode = icrpStatus.deDfMode;
+        }
         // 恢复轮询，继续接收日志和进度
         this.icrp116PollTimer = setInterval(async () => {
           try {
@@ -4255,6 +4259,10 @@ export default {
           const { data } = await axios.get(`${API_BASE}/api/icrp116/status`);
           this.icrp116Status = data;
           this.icrp116Running = data.running;
+          // 从服务端状态恢复 deDfMode（防止页面刷新后模式丢失导致 Step3 用错误参数）
+          if (typeof data.deDfMode === 'boolean') {
+            this.icrp116DeDfMode = data.deDfMode;
+          }
           // 自动滚动日志
           this.$nextTick(() => {
             const el = this.$refs.icrp116LogBody;
