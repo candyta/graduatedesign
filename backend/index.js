@@ -2673,7 +2673,7 @@ app.get('/api/icrp116/status', (req, res) => {
         afCurrentCase:  icrp116Job.afCurrentCase,
         afDoneEnergies: icrp116Job.afDoneEnergies,
         afResultFiles,
-        deDfMode:       icrp116Job.deDfMode || false,  // 返回验证时使用的模式
+        deDfMode:       icrp116Job.deDfMode || loadDeDfMode(),  // 服务器重启后从磁盘恢复
     });
 });
 
