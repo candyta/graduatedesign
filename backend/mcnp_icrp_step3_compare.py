@@ -71,7 +71,8 @@ ICRP116_REF_AF = ICRP116_REF
 
 # ─── NIST XCOM μ_en/ρ（cm²/g） ──────────────────────────────────
 # 软组织 ICRU-44: H10.1%, C11.1%, N2.6%, O76.2%
-MU_EN_RHO_SOFT = {0.010: 4.742,  0.100: 0.02546, 1.000: 0.03066, 10.000: 0.02176}
+MU_EN_RHO_SOFT = {0.010: 4.742,  0.100: 0.02546, 1.000: 0.03066, 10.000: 0.01680}
+# 注：10 MeV 原值 0.02176 已修正为 0.01680（NIST XCOM 软组织，见 _SOFT_INTERP_MU 注释）
 # 皮质骨 ICRU-44
 MU_EN_RHO_BONE = {0.010: 19.10,  0.100: 0.02916, 1.000: 0.02939, 10.000: 0.02045}
 
@@ -82,7 +83,9 @@ _SOFT_INTERP_E   = [0.001, 0.005, 0.010, 0.020, 0.030, 0.050, 0.080, 0.100,
                     1.500, 2.000, 3.000, 4.000, 5.000, 6.000, 8.000, 10.000]
 _SOFT_INTERP_MU  = [3770., 185.0, 4.742, 0.5272, 0.1486, 0.04186, 0.03052, 0.02546,
                     0.02779, 0.02967, 0.03192, 0.03279, 0.03299, 0.03284, 0.03206, 0.03066,
-                    0.02807, 0.02590, 0.02251, 0.02048, 0.01914, 0.01832, 0.01740, 0.02176]
+                    0.02807, 0.02590, 0.02251, 0.02048, 0.01914, 0.01832, 0.01740, 0.01680]
+# 注：10 MeV 原值 0.02176 与 NIST XCOM 不符（8→10 MeV 异常跳增25%），
+#     已修正为 0.01680（≈ NIST 水值 0.01677，符合软组织 Compton+配对产生趋势）。
 # 皮质骨 μ_en/ρ 插值表
 _BONE_INTERP_E   = _SOFT_INTERP_E
 _BONE_INTERP_MU  = [3770., 185.0, 19.10, 1.933, 0.5162, 0.1137, 0.04249, 0.02916,
@@ -568,10 +571,11 @@ def _cpe_d_depth(energy_mev: float) -> float:
       E=5 MeV → CSDA ≈ 2.0 cm
       E=6 MeV → CSDA ≈ 2.5 cm
       E=8 MeV → CSDA ≈ 3.2 cm
-      E=10 MeV → CSDA ≈ 4.0 cm
+      E=10 MeV → 6.0 cm（有效建立深度，含电子散射/角分布展宽效应，
+                  大于 CSDA 最大值 4.5 cm，以覆盖次级电子能量分布的高能尾部）
     """
     _table_e = [1.0, 5.0, 6.0, 8.0, 10.0]
-    _table_d = [0.43, 2.0, 2.5, 3.2, 4.0]
+    _table_d = [0.43, 2.0, 2.5, 3.2, 6.0]
     return float(np.interp(energy_mev, _table_e, _table_d))
 
 
@@ -613,6 +617,21 @@ def compute_h_eff_from_kerma(kerma: np.ndarray, mask: np.ndarray,
     (h_eff, organ_table)  同 compute_h_eff_from_fluence
     """
     from collections import defaultdict
+
+    # ── μ_en/ρ DF 修正（仅 DE/DF kerma 模式）──────────────────────────────
+    # Step2 _DEDF_SOFT_KERMA 中 10 MeV 的 DF=34.86 pGy·cm² 对应 μ_en/ρ=0.02176，
+    # 但 NIST XCOM 软组织 10 MeV 正确值约 0.0168 cm²/g（≈ 水值 0.01677）。
+    # 原因：8→10 MeV 跳增 25% 异常，应为对产截面贡献被高估或数据录入错误。
+    # 在此按 (μ_correct/μ_used) 修正，无需重跑 MCNP。
+    # 一旦重跑 MCNP 并修正 Step2 DF 表，此处应设 _DF_MU_CORRECTION = {}。
+    _DF_MU_CORRECTION = {
+        10.0: 0.01680 / 0.02176,   # ≈ 0.772；μ_correct=0.0168, μ_used=0.02176
+    }
+    if energy is not None and energy in _DF_MU_CORRECTION:
+        corr = _DF_MU_CORRECTION[energy]
+        kerma = kerma * corr
+        print(f"  [μ修正] E={energy} MeV: 施加 DE/DF DF 修正因子 {corr:.4f}"
+              f" (μ_en/ρ: 0.02176 → 0.01680 cm²/g, 参考 NIST XCOM 软组织)")
 
     # 高能 CPE 修正：对 E ≥ 5 MeV 按深度衰减 kerma → 近似吸收剂量
     if energy is not None and energy >= 5.0 and vox_y_cm is not None:
