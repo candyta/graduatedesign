@@ -624,9 +624,8 @@ def compute_h_eff_from_kerma(kerma: np.ndarray, mask: np.ndarray,
     # 原因：8→10 MeV 跳增 25% 异常，应为对产截面贡献被高估或数据录入错误。
     # 在此按 (μ_correct/μ_used) 修正，无需重跑 MCNP。
     # 一旦重跑 MCNP 并修正 Step2 DF 表，此处应设 _DF_MU_CORRECTION = {}。
-    _DF_MU_CORRECTION = {
-        10.0: 0.01680 / 0.02176,   # ≈ 0.772；μ_correct=0.0168, μ_used=0.02176
-    }
+    # Step2 DF 表已用正确 μ_en/ρ=0.01680 重跑 MCNP，.npy 已包含正确 kerma，无需二次修正
+    _DF_MU_CORRECTION = {}
     if energy is not None and energy in _DF_MU_CORRECTION:
         corr = _DF_MU_CORRECTION[energy]
         kerma = kerma * corr
