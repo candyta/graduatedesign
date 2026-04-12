@@ -1595,10 +1595,8 @@
         </div>
       </div>
 
-      <!-- ══════════════════════════════════════════════════════ -->
-      <!-- 逐器官剂量验证（合并至风险评估页）                    -->
-      <!-- ══════════════════════════════════════════════════════ -->
-      <div v-show="activeTab === 'risk'" class="tab-content">
+      <!-- orgval placeholder removed; content moved into icrp116 tab below -->
+      <div v-show="false">
         <div class="orgval-workspace">
 
           <div class="orgval-header">
@@ -2019,6 +2017,112 @@
           </div>
 
         </div>
+
+        <!-- ══ 逐器官剂量验证面板（ICRP-116 tab 内） ══════════════ -->
+        <div class="orgval-workspace">
+
+          <div class="orgval-header">
+            <h2>🔬 逐器官剂量验证（Step 1 → Step 2）</h2>
+            <p class="orgval-desc">
+              按 <strong>单体模 · 单辐照条件 · 单器官</strong> 顺序与 ICRP-116 对比：<br>
+              <strong>Step 1</strong> — 各器官 H<sub>T</sub>/Φ 计算值 vs ICRP 116 Table A.3 参考值，±5% 阈值线标注<br>
+              <strong>Step 2</strong> — 有效剂量误差来源分解：Δ(w<sub>T</sub>·H<sub>T</sub>/Φ) 各器官贡献
+            </p>
+          </div>
+
+          <div class="orgval-controls">
+            <div class="phantom-selector">
+              <span class="selector-label">体模类型：</span>
+              <button :class="['btn-phantom', { active: organValidPhantomType === 'AM' }]"
+                      @click="organValidPhantomType = 'AM'">AM（成人男）</button>
+              <button :class="['btn-phantom', { active: organValidPhantomType === 'AF' }]"
+                      @click="organValidPhantomType = 'AF'">AF（成人女）</button>
+            </div>
+            <button class="btn btn-primary orgval-run-btn"
+                    @click="runOrganDoseValidation"
+                    :disabled="organValidLoading">
+              <span v-if="organValidLoading" class="spinner-sm"></span>
+              {{ organValidLoading ? '生成中（约30秒）...' : '▶ 生成逐器官验证图' }}
+            </button>
+          </div>
+
+          <!-- 加载提示 -->
+          <div v-if="organValidLoading" class="orgval-progress">
+            <div class="orgval-progress-bar"><div class="orgval-progress-inner"></div></div>
+            <p>正在生成 {{ organValidPhantomType }} 体模逐器官 H<sub>T</sub>/Φ 对比图（热中子 / 10 keV / 1 MeV）...</p>
+          </div>
+
+          <!-- 结果 -->
+          <div v-if="organValidCharts.length > 0" class="orgval-results">
+
+            <div class="orgval-info-bar">
+              <span class="orgval-badge blue">ICRP 110 {{ organValidPhantomType }} 体模</span>
+              <span class="orgval-badge green">AP 中子照射</span>
+              <span class="orgval-badge orange">3 个代表能量点</span>
+              <span class="orgval-badge grey">上：HT对比 · 中：偏差% · 下：Step2误差来源</span>
+            </div>
+
+            <!-- 能量点切换 -->
+            <div class="orgval-tab-row">
+              <button
+                v-for="(chart, idx) in organValidCharts"
+                :key="idx"
+                :class="['orgval-tab-btn', { active: organValidActiveChart === idx }]"
+                @click="organValidActiveChart = idx">
+                {{ ['☀️ 热中子 25.3 meV', '⚡ 超热 10 keV', '💥 快中子 1 MeV'][idx] || chart.title }}
+              </button>
+            </div>
+
+            <!-- 当前图 -->
+            <div class="orgval-chart-wrap" v-if="organValidCharts[organValidActiveChart]">
+              <div class="orgval-chart-title">
+                {{ organValidCharts[organValidActiveChart].title }}
+              </div>
+              <img
+                :src="getImageUrl(organValidCharts[organValidActiveChart].url)"
+                :alt="organValidCharts[organValidActiveChart].title"
+                class="orgval-chart-img"
+              />
+              <div class="orgval-legend">
+                <span class="orgval-legend-item blue">■ ICRP 116 参考值（Table A.3）</span>
+                <span class="orgval-legend-item red">■ Kerma 解析计算值</span>
+                <span class="orgval-legend-item green">— ±5% 阈值（老师要求）</span>
+                <span class="orgval-legend-item orange">— ±20% 参考线</span>
+              </div>
+            </div>
+
+            <!-- 缩略图 -->
+            <div class="orgval-thumbs">
+              <div
+                v-for="(chart, idx) in organValidCharts"
+                :key="idx"
+                :class="['orgval-thumb', { active: organValidActiveChart === idx }]"
+                @click="organValidActiveChart = idx">
+                <img :src="getImageUrl(chart.url)" :alt="chart.title" class="orgval-thumb-img" />
+                <div class="orgval-thumb-label">{{ ['热中子', '超热 10keV', '快中子 1MeV'][idx] }}</div>
+              </div>
+            </div>
+
+            <div class="orgval-note">
+              每张图分三层：<strong>上</strong> — 各器官 H<sub>T</sub>/Φ 对比（对数柱图）；
+              <strong>中</strong> — 各器官偏差 %（±5% 绿线为老师要求阈值）；
+              <strong>下</strong> — Step 2 有效剂量误差来源（w<sub>T</sub>·H<sub>T</sub> 贡献及 Δ 标注）。<br>
+              偏差大的器官主因：初级 kerma 近似、忽略多次散射积累、次级光子未纳入。
+            </div>
+          </div>
+
+          <!-- 空态 -->
+          <div v-else-if="!organValidLoading" class="orgval-empty">
+            <p>🔬</p>
+            <p>选择体模后点击「生成逐器官验证图」</p>
+            <p class="orgval-empty-sub">生成3张对比图（热中子 / 超热 / 快中子），每张含 Step1 器官对比 + Step2 有效剂量误差分解</p>
+          </div>
+
+          <div v-if="organValidError" class="orgval-error">
+            <p>错误：{{ organValidError }}</p>
+          </div>
+        </div>
+
       </div>
 
       <!-- ── MCNP Tab：剂量组分参数（嵌入在MCNP页面中） ── -->
@@ -7745,7 +7849,7 @@ export default {
 .nicrp-error { color: #e53e3e; padding: 1rem; background: #fff5f5; border-radius: 8px; margin-top: 1rem; }
 
 /* ═══ 逐器官剂量验证面板 ════════════════════════════════════ */
-.orgval-workspace { padding: 1.5rem 2rem; max-width: 1300px; margin: 0 auto; border-top: 2px solid #e2e8f0; }
+.orgval-workspace { padding: 1.5rem 2rem; max-width: 1260px; margin: 0 auto; border-top: 2px solid #e2e8f0; margin-top: 1rem; }
 .orgval-header { margin-bottom: 1.2rem; }
 .orgval-header h2 { font-size: 1.3rem; color: #2d3748; margin-bottom: 0.4rem; }
 .orgval-desc { color: #4a5568; font-size: 0.9rem; line-height: 1.65; }
