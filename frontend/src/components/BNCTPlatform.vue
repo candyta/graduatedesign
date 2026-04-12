@@ -2009,10 +2009,44 @@
               </template>
             </div>
 
-            <!-- 对比图 -->
-            <div v-if="icrp116ChartUrl" class="s3-chart-area">
-              <h4>对比折线图</h4>
-              <img :src="icrp116ChartUrl" alt="ICRP-116 对比图" class="s3-chart-img" />
+            <!-- Step1 / Step2 / 有效剂量 三步图 -->
+            <div v-if="icrp116StepImages.step1 || icrp116StepImages.step2 || icrp116StepImages.eff || icrp116ChartUrl" class="s3-chart-area">
+              <!-- 步骤选项卡 -->
+              <div class="s3-step-tabs">
+                <button v-if="icrp116StepImages.step1"
+                        :class="['s3-step-tab', { active: icrp116ActiveStep === 'step1' }]"
+                        @click="icrp116ActiveStep = 'step1'">
+                  📊 Step 1：逐器官 H<sub>T</sub>/Φ
+                </button>
+                <button v-if="icrp116StepImages.step2"
+                        :class="['s3-step-tab', { active: icrp116ActiveStep === 'step2' }]"
+                        @click="icrp116ActiveStep = 'step2'">
+                  🔍 Step 2：有效剂量误差来源
+                </button>
+                <button v-if="icrp116StepImages.eff || icrp116ChartUrl"
+                        :class="['s3-step-tab', { active: icrp116ActiveStep === 'eff' }]"
+                        @click="icrp116ActiveStep = 'eff'">
+                  ✅ 有效剂量对比（ICRP-116）
+                </button>
+              </div>
+              <!-- 当前步骤图 -->
+              <div class="s3-step-desc">
+                <span v-if="icrp116ActiveStep === 'step1'">
+                  单体模 · 单辐照条件 · 逐器官 — MCNP5 计算各器官 H<sub>T</sub>/Φ (pSv·cm²)，颜色深浅对应 w<sub>T</sub> 大小
+                </span>
+                <span v-else-if="icrp116ActiveStep === 'step2'">
+                  Step 2 误差来源 — 堆积柱显示各器官 w<sub>T</sub>·H<sub>T</sub>/Φ 对有效剂量的贡献，蓝虚线为 ICRP-116 参考值
+                </span>
+                <span v-else>
+                  有效剂量换算系数 E/Φ：MCNP5 计算值 vs ICRP-116 Table A.1 参考值，偏差在 ±5% 内视为合理
+                </span>
+              </div>
+              <img v-if="icrp116ActiveStep === 'step1' && icrp116StepImages.step1"
+                   :src="getImageUrl(icrp116StepImages.step1)" alt="Step1 逐器官" class="s3-chart-img" />
+              <img v-if="icrp116ActiveStep === 'step2' && icrp116StepImages.step2"
+                   :src="getImageUrl(icrp116StepImages.step2)" alt="Step2 误差来源" class="s3-chart-img" />
+              <img v-if="icrp116ActiveStep === 'eff'"
+                   :src="getImageUrl(icrp116StepImages.eff || icrp116ChartUrl)" alt="有效剂量对比" class="s3-chart-img" />
             </div>
           </div>
 
@@ -2947,6 +2981,8 @@ export default {
       icrp116Step3Log:     [],
       icrp116ChartLoading: false,
       icrp116ChartUrl:     null,
+      icrp116StepImages:   { step1: null, step2: null, eff: null },
+      icrp116ActiveStep:   'step1',
       icrp116XsdirChecking: false,
       icrp116XsdirInfo:    null,
 
@@ -4559,7 +4595,12 @@ export default {
         if (data.success) {
           this.icrp116Step3Result = data.results;
           this.icrp116Step3Done   = true;
-          pushLog('✓ 计算完成，可点击「生成对比图」查看图表', 'success');
+          if (data.stepImages) {
+            this.icrp116StepImages = data.stepImages;
+            this.icrp116ChartUrl   = data.stepImages.eff || null;
+            this.icrp116ActiveStep = data.stepImages.step1 ? 'step1' : 'eff';
+          }
+          pushLog('✓ 计算完成，图表已按 Step1→Step2→有效剂量 顺序生成', 'success');
         } else {
           pushLog('[错误] ' + data.message, 'error');
         }
@@ -8007,6 +8048,10 @@ export default {
 }
 .s3-chart-area { margin-top: 1rem; }
 .s3-chart-area h4 { font-size: 0.95rem; color: #4a5568; margin: 0 0 0.6rem; font-weight: 600; }
+.s3-step-tabs { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.6rem; }
+.s3-step-tab { padding: 0.4rem 1rem; border: 1px solid #cbd5e0; border-radius: 6px; background: #f7fafc; color: #4a5568; cursor: pointer; font-size: 0.88rem; transition: all .15s; }
+.s3-step-tab.active, .s3-step-tab:hover { background: #2b6cb0; color: #fff; border-color: #2b6cb0; }
+.s3-step-desc { font-size: 0.82rem; color: #718096; margin-bottom: 0.6rem; padding: 0.4rem 0.8rem; background: #f7fafc; border-radius: 4px; }
 .s3-chart-img {
   max-width: 100%;
   border-radius: 8px;

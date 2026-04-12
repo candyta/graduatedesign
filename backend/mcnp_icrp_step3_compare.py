@@ -927,6 +927,219 @@ def save_csv(results, out_dir: Path):
     return csv_path
 
 
+def save_organ_json(organ_tables_by_energy: dict, out_dir: Path):
+    """保存逐器官剂量数据到 JSON，供前端 Step1/Step2 图使用。"""
+    import json
+    payload = {}
+    for energy, organ_table in organ_tables_by_energy.items():
+        rows = []
+        for row in organ_table:
+            name = row[0]; wt = row[1]; dose_pGy = row[3]; wt_dose = row[4]
+            ht_phi = dose_pGy * BEAM_AREA      # HT/Φ [pSv·cm²]
+            wt_ht  = wt_dose  * BEAM_AREA      # wT × HT/Φ
+            rows.append({'organ': name, 'wT': wt,
+                         'HT_phi': round(ht_phi, 6),
+                         'wT_HT_phi': round(wt_ht, 6)})
+        payload[str(energy)] = rows
+    json_path = out_dir / "icrp116_organ_data.json"
+    json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
+    print(f"\n[JSON] 逐器官数据已保存: {json_path}")
+    return json_path
+
+
+def plot_step1_organs(organ_tables_by_energy: dict, results: list, out_dir: Path):
+    """
+    Step 1 图：单体模 + 单辐照条件 + 单器官
+    每个能量点一列，展示各器官计算所得 HT/Φ (pSv·cm²)。
+    颜色按 wT 深浅区分重要性；底部显示有效剂量汇总偏差。
+    """
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import matplotlib.cm as cm
+        import numpy as np
+    except ImportError:
+        print("[Step1图] 未安装 matplotlib，跳过")
+        return
+
+    energies = sorted(organ_tables_by_energy.keys())
+    n_e = len(energies)
+    if n_e == 0:
+        return
+
+    # 收集所有出现的器官名
+    all_organs_set = []
+    seen = set()
+    for e in energies:
+        for row in organ_tables_by_energy[e]:
+            nm = row[0]
+            if nm not in seen:
+                all_organs_set.append(nm)
+                seen.add(nm)
+
+    # 按第一个能量点的 wt_dose 排序（高贡献在前）
+    wt_map = {}
+    e0 = energies[0]
+    for row in organ_tables_by_energy[e0]:
+        wt_map[row[0]] = row[1]
+    all_organs_set.sort(key=lambda o: wt_map.get(o, 0), reverse=True)
+    organs = all_organs_set[:16]   # 最多16个，图不过宽
+
+    x = np.arange(len(organs))
+    short = [o.split('(')[0].strip().replace('spongiosa', 'R.B.Marrow')
+               .replace('cortical', 'BoneSurf')
+               .replace('urinary bladder', 'Bladder')
+               .replace('glandular tissue', 'Breast')
+               for o in organs]
+
+    fig, axes = plt.subplots(n_e, 1, figsize=(14, 4.5 * n_e))
+    if n_e == 1:
+        axes = [axes]
+    fig.suptitle('Step 1: Per-Organ Equivalent Dose Coefficient  HT/Φ  (pSv·cm²)\n'
+                 'ICRP-110 AM Phantom | AP Photon | MCNP5 Simulation',
+                 fontsize=12, fontweight='bold')
+
+    ref_dict = {r[0]: r[2] for r in results}   # energy → ICRP-116 E/Φ
+    calc_dict = {r[0]: r[1] for r in results}
+
+    for ax, energy in zip(axes, energies):
+        ot = {row[0]: row for row in organ_tables_by_energy[energy]}
+        ht_vals = []
+        wt_vals = []
+        for o in organs:
+            row = ot.get(o)
+            if row:
+                ht_vals.append(row[3] * BEAM_AREA)   # HT/Φ
+                wt_vals.append(row[1])
+            else:
+                ht_vals.append(0.0)
+                wt_vals.append(0.0)
+
+        # 颜色：wT 越大越深蓝
+        max_wt = max(wt_vals) if max(wt_vals) > 0 else 1
+        bar_colors = [cm.Blues(0.35 + 0.6 * wt / max_wt) for wt in wt_vals]
+
+        bars = ax.bar(x, ht_vals, color=bar_colors, edgecolor='white', lw=0.5)
+        ax.set_yscale('log')
+        ax.set_xticks(x)
+        ax.set_xticklabels(short, rotation=38, ha='right', fontsize=8)
+        ax.set_ylabel('HT / Φ  (pSv·cm²)', fontsize=9)
+
+        h_ref  = ref_dict.get(energy, None)
+        h_calc = calc_dict.get(energy, None)
+        dev_s = ''
+        if h_ref and h_calc:
+            dev = (h_calc - h_ref) / h_ref * 100
+            dev_s = f'  E_eff={h_calc:.3f} pSv·cm²  |  ICRP-116={h_ref:.3f}  |  Δ={dev:+.1f}%'
+        ax.set_title(f'E = {energy} MeV{dev_s}', fontsize=9)
+        ax.grid(axis='y', alpha=0.25, which='both')
+
+        # wT 标注
+        for bar, o, wt in zip(bars, organs, wt_vals):
+            if wt > 0:
+                ax.text(bar.get_x() + bar.get_width()/2,
+                        bar.get_height() * 1.15,
+                        f'wT={wt:.2f}', ha='center', fontsize=6, color='#444')
+
+    fig.tight_layout(rect=[0, 0, 1, 0.97])
+    png_path = out_dir / "icrp116_step1_organs.png"
+    fig.savefig(png_path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print(f"[Step1图] 已保存: {png_path}")
+
+
+def plot_step2_composition(organ_tables_by_energy: dict, results: list, out_dir: Path):
+    """
+    Step 2 图：有效剂量误差来源分解
+    每个能量点展示各器官 wT×HT/Φ 贡献（堆积柱），
+    叠加 ICRP-116 E/Φ 参考线，直观显示误差由哪些器官贡献。
+    """
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import matplotlib.cm as cm
+        import numpy as np
+    except ImportError:
+        print("[Step2图] 未安装 matplotlib，跳过")
+        return
+
+    energies = sorted(organ_tables_by_energy.keys())
+    n_e = len(energies)
+    if n_e == 0:
+        return
+
+    COLORS = ['#1E88E5','#E53935','#43A047','#FB8C00','#8E24AA',
+              '#00ACC1','#F06292','#A1887F','#7CB342','#FFB300',
+              '#5E35B1','#00897B','#3949AB','#546E7A','#6D4C41','#B0BEC5']
+
+    fig, axes = plt.subplots(1, n_e, figsize=(5.5 * n_e, 7))
+    if n_e == 1:
+        axes = [axes]
+    fig.suptitle('Step 2: Effective Dose Error Source  —  Organ Contributions  wT × HT/Φ\n'
+                 'ICRP-110 AM Phantom | AP Photon | MCNP5  vs  ICRP-116 E/Φ Reference',
+                 fontsize=12, fontweight='bold')
+
+    ref_dict  = {r[0]: r[2] for r in results}
+    calc_dict = {r[0]: r[1] for r in results}
+
+    # 收集跨能量的器官名（按最大 wt_dose 排序）
+    organ_total_wt = {}
+    for e, ot in organ_tables_by_energy.items():
+        for row in ot:
+            organ_total_wt[row[0]] = organ_total_wt.get(row[0], 0) + abs(row[4] * BEAM_AREA)
+    sorted_organs = sorted(organ_total_wt, key=organ_total_wt.get, reverse=True)[:14]
+
+    for ax, energy in zip(axes, energies):
+        ot = {row[0]: row for row in organ_tables_by_energy[energy]}
+        h_ref   = ref_dict.get(energy, None)
+        h_calc  = calc_dict.get(energy, None)
+
+        # 堆积柱：从零开始叠加每个器官的 wT×HT/Φ
+        bottom = 0.0
+        for ci, organ in enumerate(sorted_organs):
+            row = ot.get(organ)
+            if not row:
+                continue
+            val = row[4] * BEAM_AREA   # wT × HT/Φ
+            wt  = row[1]
+            short_name = organ.split('(')[0].strip()[:18]
+            ax.bar(0, val, bottom=bottom,
+                   color=COLORS[ci % len(COLORS)], width=0.6,
+                   label=f'{short_name} (wT={wt:.3f})')
+            mid = bottom + val / 2
+            if val > 0.02 * (h_calc or 1):
+                ax.text(0.35, mid, f'{short_name}  {val:+.3f}',
+                        va='center', fontsize=7.5, color='#222')
+            bottom += val
+
+        # ICRP-116 E/Φ 参考线
+        if h_ref:
+            ax.axhline(h_ref, color='royalblue', lw=2.5, ls='--',
+                       label=f'ICRP-116 E/Φ = {h_ref:.3f}')
+        if h_calc:
+            ax.axhline(h_calc, color='tomato', lw=1.5, ls=':',
+                       label=f'MCNP calc = {h_calc:.3f}')
+
+        ax.set_xlim(-0.5, 1.2)
+        ax.set_xticks([])
+        ax.set_ylabel('wT × HT / Φ  (pSv·cm²)', fontsize=9)
+        dev_s = ''
+        if h_ref and h_calc:
+            dev = (h_calc - h_ref) / h_ref * 100
+            dev_s = f'  Δ = {dev:+.1f}%'
+        ax.set_title(f'E = {energy} MeV{dev_s}', fontsize=9)
+        ax.legend(fontsize=6.5, loc='upper right')
+        ax.grid(axis='y', alpha=0.2)
+
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    png_path = out_dir / "icrp116_step2_composition.png"
+    fig.savefig(png_path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print(f"[Step2图] 已保存: {png_path}")
+
+
 def try_plot(results, out_dir: Path):
     """生成对比折线图（需要 matplotlib）。"""
     try:
@@ -1053,6 +1266,7 @@ def main():
     print("\n[3/3] 逐能量点计算 h_E ...")
     results   = []   # (energy, h_calc, h_ref, deviation%)
     skipped   = []   # 因数据不可用跳过的能量点
+    organ_tables_by_energy = {}   # energy → organ_table（逐器官数据）
 
     for energy in ENERGIES:
         npy_name = f"fluence_E{energy:.3f}MeV.npy"
@@ -1300,6 +1514,7 @@ def main():
               f"dev={dev:+.1f}%  {flag}")
 
         results.append((energy, h_calc, h_ref, dev))
+        organ_tables_by_energy[energy] = organ_table   # ← 新增：收集逐器官数据
 
     if skipped:
         print(f"\n[警告] 以下能量点因数据不可用已跳过: {skipped}")
@@ -1330,8 +1545,15 @@ def main():
     # ── 保存 AM CSV ───────────────────────────────────────────
     save_csv(results, out_dir)
 
-    # ── 绘图（AM）────────────────────────────────────────────
+    # ── 保存逐器官 JSON ───────────────────────────────────────
+    if organ_tables_by_energy:
+        save_organ_json(organ_tables_by_energy, out_dir)
+
+    # ── 绘图（AM）：Step1 → Step2 → 有效剂量对比（老师要求顺序）──
     if not args.no_plot:
+        if organ_tables_by_energy:
+            plot_step1_organs(organ_tables_by_energy, results, out_dir)
+            plot_step2_composition(organ_tables_by_energy, results, out_dir)
         try_plot(results, out_dir)
 
     # ── AF 性别平均 ───────────────────────────────────────────

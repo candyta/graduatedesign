@@ -2487,6 +2487,7 @@ const icrp116Job = {
 
 const ICRP116_INP_DIR     = path.join(__dirname, 'icrp_validation', 'mcnp_inputs');
 const ICRP116_OUT_DIR     = path.join(__dirname, 'icrp_validation', 'mcnp_outputs');
+app.use('/icrp116_outputs', express.static(ICRP116_OUT_DIR));   // Step1/Step2/eff 图静态服务
 const ICRP116_AF_OUT_DIR  = ICRP116_OUT_DIR + '_AF';
 const ICRP116_AF_MASK     = path.join(__dirname, 'icrp_validation', 'organ_mask_127x63x111_AF.npy');
 const ICRP116_AF_ZIP      = path.join(__dirname, '..', 'P110 data V1.2', 'AF.zip');
@@ -2858,7 +2859,16 @@ app.post('/api/icrp116/run-step3', (req, res) => {
                     };
                 }).filter(r => !isNaN(r.energy));
             }
-            res.json({ success: true, results, sexAvg: useSexAvg, logs });
+            // 附带 Step1/Step2 新图 URL（若已生成）
+            const step1Png = path.join(ICRP116_OUT_DIR, 'icrp116_step1_organs.png');
+            const step2Png = path.join(ICRP116_OUT_DIR, 'icrp116_step2_composition.png');
+            const effPng   = path.join(ICRP116_OUT_DIR, 'icrp116_comparison.png');
+            const stepImages = {
+                step1: fs.existsSync(step1Png) ? '/icrp116_outputs/icrp116_step1_organs.png'       : null,
+                step2: fs.existsSync(step2Png) ? '/icrp116_outputs/icrp116_step2_composition.png'  : null,
+                eff:   fs.existsSync(effPng)   ? '/icrp116_outputs/icrp116_comparison.png'         : null,
+            };
+            res.json({ success: true, results, sexAvg: useSexAvg, logs, stepImages });
         } catch (e) {
             res.json({ success: false, message: 'CSV 读取失败: ' + e.message, logs });
         }
