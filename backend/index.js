@@ -2127,6 +2127,66 @@ app.post('/api/neutron-icrp-dose-comparison', async (req, res) => {
 
 console.log('[中子ICRP] API端点已加载: POST /api/neutron-icrp-dose-comparison');
 
+// ─── 逐器官剂量验证 ────────────────────────────────────────────────────────
+const ORGAN_VALID_OUTPUT_DIR = path.join(__dirname, 'organ_validation_results');
+fs.ensureDirSync(ORGAN_VALID_OUTPUT_DIR);
+app.use('/organ_validation_results', express.static(ORGAN_VALID_OUTPUT_DIR));
+
+/**
+ * POST /api/organ-dose-validation
+ * 逐器官剂量验证：单体模 + 单辐照条件 + 单器官 → 有效剂量误差分解
+ * Body: { phantom_type: 'AM' | 'AF' }
+ * 返回3张图表URL（热中子 / 10keV / 1MeV）
+ */
+app.post('/api/organ-dose-validation', async (req, res) => {
+    const { phantom_type = 'AM' } = req.body;
+    if (!['AM', 'AF'].includes(phantom_type.toUpperCase())) {
+        return res.status(400).json({ success: false, message: '体模类型必须为 AM 或 AF' });
+    }
+
+    const pt = phantom_type.toUpperCase();
+    const outDir = ORGAN_VALID_OUTPUT_DIR;
+    const pythonScript = path.join(__dirname, 'organ_dose_validation.py');
+
+    const command = `"${PYTHON_PATH}" "${pythonScript}" --phantom ${pt} --all-energies --output-dir "${outDir}"`;
+    log(`[逐器官验证] 开始生成 ${pt} 体模逐器官对比图...`);
+
+    try {
+        const { stdout, stderr } = await execAsync(command, {
+            timeout: 120000,
+            env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+        });
+        if (stdout) log(`[逐器官验证] stdout: ${stdout}`);
+        if (stderr) log(`[逐器官验证] stderr: ${stderr}`);
+
+        // 3个代表能量点图表
+        const figNames = [
+            `organ_validation_${pt}_25p3_meV_thermal.png`,
+            `organ_validation_${pt}_10_keV_epithermal.png`,
+            `organ_validation_${pt}_1_MeV_fast.png`,
+        ];
+        const figTitles = [
+            `Step1→Step2: 热中子 25.3 meV（${pt}体模）`,
+            `Step1→Step2: 超热中子 10 keV（${pt}体模）`,
+            `Step1→Step2: 快中子 1 MeV（${pt}体模）`,
+        ];
+
+        const charts = figNames.map((fname, i) => ({
+            title: figTitles[i],
+            url: fs.existsSync(path.join(outDir, fname))
+                ? `/organ_validation_results/${fname}`
+                : null,
+        })).filter(c => c.url);
+
+        res.json({ success: true, phantom_type: pt, charts });
+    } catch (err) {
+        log(`[逐器官验证] 失败: ${err.message}`, 'error');
+        res.status(500).json({ success: false, message: '逐器官验证图表生成失败', error: err.message });
+    }
+});
+
+console.log('[逐器官验证] API端点已加载: POST /api/organ-dose-validation');
+
 // ==================== BEIR VII 验证 ====================
 
 /**

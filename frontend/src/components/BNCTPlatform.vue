@@ -1596,6 +1596,116 @@
       </div>
 
       <!-- ══════════════════════════════════════════════════════ -->
+      <!-- 逐器官剂量验证（合并至风险评估页）                    -->
+      <!-- ══════════════════════════════════════════════════════ -->
+      <div v-show="activeTab === 'risk'" class="tab-content">
+        <div class="orgval-workspace">
+
+          <div class="orgval-header">
+            <h2>🔬 逐器官剂量验证（Step1 → Step2）</h2>
+            <p class="orgval-desc">
+              按<strong>单体模 · 单辐照条件 · 单器官</strong>顺序对比分析：<br>
+              <strong>Step 1</strong> — 各器官 H<sub>T</sub>/Φ（计算值 vs ICRP 116 参考值），±5% 阈值线标注<br>
+              <strong>Step 2</strong> — 有效剂量误差来源分解：哪些器官贡献了 ΔE = Σ w<sub>T</sub>·ΔH<sub>T</sub>
+            </p>
+          </div>
+
+          <div class="orgval-controls">
+            <div class="phantom-selector">
+              <span class="selector-label">体模类型：</span>
+              <button :class="['btn-phantom', { active: organValidPhantomType === 'AM' }]"
+                      @click="organValidPhantomType = 'AM'">AM（成人男）</button>
+              <button :class="['btn-phantom', { active: organValidPhantomType === 'AF' }]"
+                      @click="organValidPhantomType = 'AF'">AF（成人女）</button>
+            </div>
+            <button class="btn btn-primary orgval-run-btn"
+                    @click="runOrganDoseValidation"
+                    :disabled="organValidLoading">
+              <span v-if="organValidLoading" class="spinner-sm"></span>
+              {{ organValidLoading ? '生成中（约30秒）...' : '▶ 生成逐器官验证图' }}
+            </button>
+          </div>
+
+          <!-- 加载提示 -->
+          <div v-if="organValidLoading" class="orgval-progress">
+            <div class="orgval-progress-bar"><div class="orgval-progress-inner"></div></div>
+            <p>正在计算 {{ organValidPhantomType }} 体模逐器官 H<sub>T</sub>/Φ 对比图（热中子 / 10 keV / 1 MeV）...</p>
+          </div>
+
+          <!-- 结果 -->
+          <div v-if="organValidCharts.length > 0" class="orgval-results">
+
+            <!-- 说明卡片 -->
+            <div class="orgval-info-bar">
+              <span class="orgval-badge blue">ICRP 110 {{ organValidPhantomType }} 体模</span>
+              <span class="orgval-badge green">AP 中子照射</span>
+              <span class="orgval-badge orange">3 个代表能量点</span>
+              <span class="orgval-badge grey">每图 = Step1(上) + Step1b(中) + Step2(下)</span>
+            </div>
+
+            <!-- 能量点切换 -->
+            <div class="orgval-tab-row">
+              <button
+                v-for="(chart, idx) in organValidCharts"
+                :key="idx"
+                :class="['orgval-tab-btn', { active: organValidActiveChart === idx }]"
+                @click="organValidActiveChart = idx">
+                {{ ['☀️ 热中子 25.3 meV', '⚡ 超热 10 keV', '💥 快中子 1 MeV'][idx] || chart.title }}
+              </button>
+            </div>
+
+            <!-- 当前图 -->
+            <div class="orgval-chart-wrap" v-if="organValidCharts[organValidActiveChart]">
+              <div class="orgval-chart-title">
+                {{ organValidCharts[organValidActiveChart].title }}
+              </div>
+              <img
+                :src="getImageUrl(organValidCharts[organValidActiveChart].url)"
+                :alt="organValidCharts[organValidActiveChart].title"
+                class="orgval-chart-img"
+              />
+              <div class="orgval-legend">
+                <span class="orgval-legend-item blue">■ ICRP 116 参考值（Table A.3）</span>
+                <span class="orgval-legend-item red">■ Kerma 解析计算值</span>
+                <span class="orgval-legend-item green">— ±5% 阈值（老师要求）</span>
+                <span class="orgval-legend-item orange">— ±20% 参考线</span>
+              </div>
+            </div>
+
+            <!-- 缩略图导航 -->
+            <div class="orgval-thumbs">
+              <div
+                v-for="(chart, idx) in organValidCharts"
+                :key="idx"
+                :class="['orgval-thumb', { active: organValidActiveChart === idx }]"
+                @click="organValidActiveChart = idx">
+                <img :src="getImageUrl(chart.url)" :alt="chart.title" class="orgval-thumb-img" />
+                <div class="orgval-thumb-label">{{ ['热中子', '超热10keV', '快中子1MeV'][idx] }}</div>
+              </div>
+            </div>
+
+            <div class="orgval-note">
+              每张图分三层：<strong>上</strong> — 各器官 H<sub>T</sub>/Φ 对比柱图（对数轴）；
+              <strong>中</strong> — 各器官偏差 %（±5% 绿线、±20% 橙线）；
+              <strong>下</strong> — wT·H<sub>T</sub> 有效剂量贡献及误差来源（Step 2）。
+              误差大的器官（表面器官/骨表面）主要由初级 kerma 近似、忽略散射积累和次级光子所致。
+            </div>
+          </div>
+
+          <!-- 空态 -->
+          <div v-else-if="!organValidLoading" class="orgval-empty">
+            <p>🔬</p>
+            <p>选择体模后点击「生成逐器官验证图」</p>
+            <p class="orgval-empty-sub">将生成3张对比图（热中子 / 超热 / 快中子），每张含 Step1 器官对比 + Step2 有效剂量误差分解</p>
+          </div>
+
+          <div v-if="organValidError" class="orgval-error">
+            <p>错误：{{ organValidError }}</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══════════════════════════════════════════════════════ -->
       <!-- Tab: ICRP-116 AP 光子剂量系数 MCNP5 验证              -->
       <!-- ══════════════════════════════════════════════════════ -->
       <div v-show="activeTab === 'icrp116'" class="tab-content">
@@ -2743,6 +2853,13 @@ export default {
       neutronSummary: null,
       neutronError: '',
       neutronActiveChart: 0,
+
+      // 逐器官剂量验证
+      organValidPhantomType: 'AM',
+      organValidLoading: false,
+      organValidCharts: [],
+      organValidError: '',
+      organValidActiveChart: 0,
 
       // BEIR VII 验证
       bvLoading: false,
@@ -4211,6 +4328,29 @@ export default {
         this.neutronError = err.response?.data?.error || err.message || '请求失败';
       } finally {
         this.neutronLoading = false;
+      }
+    },
+
+    // ── 逐器官剂量验证 ────────────────────────────────────────
+    async runOrganDoseValidation() {
+      this.organValidLoading = true;
+      this.organValidCharts = [];
+      this.organValidError = '';
+      this.organValidActiveChart = 0;
+      try {
+        const response = await axios.post(`${API_BASE}/api/organ-dose-validation`, {
+          phantom_type: this.organValidPhantomType
+        }, { timeout: 120000 });
+
+        if (response.data.success) {
+          this.organValidCharts = response.data.charts;
+        } else {
+          this.organValidError = response.data.message || '图表生成失败';
+        }
+      } catch (err) {
+        this.organValidError = err.response?.data?.error || err.message || '请求失败';
+      } finally {
+        this.organValidLoading = false;
       }
     },
 
@@ -7603,6 +7743,49 @@ export default {
 .nicrp-empty p:first-child { font-size: 2.5rem; margin-bottom: 0.5rem; }
 .nicrp-empty-sub { font-size: 0.82rem; color: #cbd5e0; margin-top: 0.4rem; }
 .nicrp-error { color: #e53e3e; padding: 1rem; background: #fff5f5; border-radius: 8px; margin-top: 1rem; }
+
+/* ═══ 逐器官剂量验证面板 ════════════════════════════════════ */
+.orgval-workspace { padding: 1.5rem 2rem; max-width: 1300px; margin: 0 auto; border-top: 2px solid #e2e8f0; }
+.orgval-header { margin-bottom: 1.2rem; }
+.orgval-header h2 { font-size: 1.3rem; color: #2d3748; margin-bottom: 0.4rem; }
+.orgval-desc { color: #4a5568; font-size: 0.9rem; line-height: 1.65; }
+.orgval-controls { display: flex; align-items: center; gap: 1.2rem; margin-bottom: 1.2rem; flex-wrap: wrap; }
+.orgval-run-btn { padding: 0.5rem 1.4rem; font-size: 0.92rem; background: #4a5568; color: #fff; border: none; border-radius: 6px; cursor: pointer; }
+.orgval-run-btn:hover:not(:disabled) { background: #2d3748; }
+.orgval-run-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.orgval-progress { background: #ebf8ff; border: 1px solid #90cdf4; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; text-align: center; color: #2b6cb0; font-size: 0.9rem; }
+.orgval-progress-bar { height: 6px; background: #bee3f8; border-radius: 3px; overflow: hidden; margin-bottom: 0.6rem; }
+.orgval-progress-inner { height: 100%; width: 60%; background: #3182ce; animation: slide 1.4s ease-in-out infinite; }
+@keyframes orgvalSlide { 0%{transform:translateX(-100%)} 100%{transform:translateX(250%)} }
+.orgval-info-bar { display: flex; gap: 0.6rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.orgval-badge { padding: 0.25rem 0.7rem; border-radius: 20px; font-size: 0.8rem; font-weight: 600; }
+.orgval-badge.blue   { background: #ebf8ff; color: #2b6cb0; }
+.orgval-badge.green  { background: #f0fff4; color: #276749; }
+.orgval-badge.orange { background: #fffaf0; color: #c05621; }
+.orgval-badge.grey   { background: #f7fafc; color: #4a5568; }
+.orgval-tab-row { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
+.orgval-tab-btn { padding: 0.4rem 1rem; border: 1px solid #cbd5e0; border-radius: 6px; background: #f7fafc; color: #4a5568; cursor: pointer; font-size: 0.88rem; transition: all .15s; }
+.orgval-tab-btn.active, .orgval-tab-btn:hover { background: #4a5568; color: #fff; border-color: #4a5568; }
+.orgval-chart-wrap { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 1rem; margin-bottom: 1rem; }
+.orgval-chart-title { font-size: 0.9rem; font-weight: 600; color: #4a5568; margin-bottom: 0.6rem; }
+.orgval-chart-img { width: 100%; height: auto; border-radius: 6px; display: block; }
+.orgval-legend { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 0.6rem; font-size: 0.8rem; }
+.orgval-legend-item { display: flex; align-items: center; gap: 0.3rem; }
+.orgval-legend-item.blue   { color: #2b6cb0; }
+.orgval-legend-item.red    { color: #c53030; }
+.orgval-legend-item.green  { color: #276749; }
+.orgval-legend-item.orange { color: #c05621; }
+.orgval-thumbs { display: flex; gap: 0.8rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.orgval-thumb { cursor: pointer; border: 2px solid #e2e8f0; border-radius: 8px; overflow: hidden; width: 160px; transition: border-color .15s; }
+.orgval-thumb.active, .orgval-thumb:hover { border-color: #4a5568; }
+.orgval-thumb-img { width: 100%; height: 90px; object-fit: cover; display: block; }
+.orgval-thumb-label { text-align: center; font-size: 0.75rem; color: #4a5568; padding: 0.2rem 0; background: #f7fafc; }
+.orgval-note { font-size: 0.82rem; color: #718096; background: #f7fafc; border-radius: 6px; padding: 0.7rem 1rem; line-height: 1.6; }
+.orgval-empty { text-align: center; padding: 2.5rem; color: #a0aec0; }
+.orgval-empty p:first-child { font-size: 2.5rem; margin-bottom: 0.5rem; }
+.orgval-empty-sub { font-size: 0.82rem; color: #cbd5e0; margin-top: 0.4rem; }
+.orgval-error { color: #e53e3e; padding: 1rem; background: #fff5f5; border-radius: 8px; margin-top: 1rem; }
+.orgval-results { animation: fadeIn .3s ease; }
 
 /* ═══ ICRP-116 AP 光子验证 Tab ═══════════════════════════════ */
 .icrp116-workspace { max-width: 960px; margin: 0 auto; padding: 1.5rem; }
