@@ -1361,6 +1361,7 @@ def main():
             print(f"\n  [DE/DF] h_E(calc)={h_calc:.4f}  h_E(ICRP-116)={h_ref:.4f}  "
                   f"dev={dev:+.1f}%  {flag}")
             results.append((energy, h_calc, h_ref, dev))
+            organ_tables_by_energy[energy] = organ_table   # Step1/Step2 图需要
             continue
 
         stem = f"fluence_E{energy:.3f}MeV"
