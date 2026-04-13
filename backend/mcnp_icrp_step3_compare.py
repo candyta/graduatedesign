@@ -480,13 +480,67 @@ def compute_h_eff_from_fluence_emesh(fluence_bins: list, e_bounds: list,
     return h_eff, organ_table
 
 
+def parse_inp_f6_organ_map(inp_file: str) -> dict:
+    """
+    从 MCNP 输入文件（.inp）解析 F6 计分号 → 器官名（小写）映射。
+
+    解析 step2_gen_input.py 写入的注释行，格式：
+      c  F76: urinary bladder  wT=0.04000  oids=[70, 71, 137]...
+
+    返回：{tally_num (int): organ_name_lower (str)}
+    如文件不存在或无注释行，返回空 dict。
+
+    用途：当 INP 用旧版 _WT_RULES_F6（缺少 breast/gallbladder）生成时，
+    tally_num → WT_RULES idx 的公式 idx=(tnum-6)//10-1 会产生偏移，
+    通过器官名关键字匹配可正确还原 wT 而无需重新生成 INP。
+    """
+    result = {}
+    try:
+        with open(inp_file, 'r', errors='ignore') as fh:
+            for line in fh:
+                line = line.strip()
+                m = re.match(r'^c\s+F(\d+):\s+(.+?)\s+wT=', line, re.IGNORECASE)
+                if m:
+                    tnum = int(m.group(1))
+                    organ_name = m.group(2).strip().lower()
+                    result[tnum] = organ_name
+    except Exception:
+        pass
+    return result
+
+
+def _load_inp_tnum_organ(out_dir: Path, energy: float) -> dict:
+    """
+    从标准 INP 目录（out_dir/../mcnp_inputs/）加载 tnum→器官名 映射。
+
+    INP 文件命名约定：ap_photon_E{energy:.3f}MeV.inp
+    若文件不存在则静默返回空 dict（回退到公式映射）。
+    """
+    inp_name = f"ap_photon_E{energy:.3f}MeV.inp"
+    inp_path = out_dir.parent / "mcnp_inputs" / inp_name
+    if inp_path.exists():
+        mapping = parse_inp_f6_organ_map(str(inp_path))
+        if mapping:
+            print(f"     [F6] 从 INP 注释加载 tally→器官映射: {len(mapping)} 个 ({inp_name})")
+        return mapping
+    return {}
+
+
 def compute_h_eff_from_f6(f6_dict: dict, organs: dict,
-                          mask: np.ndarray = None) -> tuple:
+                          mask: np.ndarray = None,
+                          tnum_to_organ: dict = None) -> tuple:
     """
     从 F6:P 计分结果（scatter-correct 光子 kerma 能量沉积）计算 h_E (pSv·cm²)。
 
     f6_dict : {tally_num (str/int): {'value': MeV/g/src, 'rel_err': float}}
-    计分号 → WT_RULES 组索引: idx = (tally_num - 6) // 10 - 1
+
+    tnum_to_organ : dict, optional
+        {tally_num (int): organ_name_lower (str)}，由 parse_inp_f6_organ_map() 返回。
+        提供时通过器官名关键字匹配 WT_RULES（绕过 tnum→idx 公式），
+        避免 WT_RULES 版本不匹配（如旧版缺少 breast/gallbladder）引起的错误映射。
+        不提供时回退到公式 idx = (tnum-6)//10-1（仅对当前 WT_RULES 生成的 INP 正确）。
+
+    计分号 → WT_RULES 组索引（回退公式）: idx = (tally_num - 6) // 10 - 1
 
     MCNP5 lattice 规范化：F6 原始值 = N_vox × D_organ_avg
     （对所有同材质体素累加但仅除以单体素质量，而非总质量）。
@@ -521,9 +575,23 @@ def compute_h_eff_from_f6(f6_dict: dict, organs: dict,
     e_eff_pGy = 0.0
 
     for tnum, info in sorted(f6.items()):
-        idx = (tnum - 6) // 10 - 1
-        if idx < 0 or idx >= len(WT_RULES):
-            continue
+        if tnum_to_organ and tnum in tnum_to_organ:
+            # 优先：用 INP 注释中的器官名关键字匹配 WT_RULES，
+            # 避免旧版 INP（缺少 breast/gallbladder）导致 tnum→idx 公式偏移。
+            organ_nlc = tnum_to_organ[tnum]
+            idx = None
+            for ridx, (kws, _) in enumerate(WT_RULES):
+                if any(k in organ_nlc for k in kws):
+                    idx = ridx
+                    break
+            if idx is None:
+                print(f"  [F6] tally {tnum} 器官名 '{organ_nlc}' 未匹配 WT_RULES，跳过")
+                continue
+        else:
+            # 回退：公式映射（仅对当前 WT_RULES 版本生成的 INP 正确）
+            idx = (tnum - 6) // 10 - 1
+            if idx < 0 or idx >= len(WT_RULES):
+                continue
         _, wt = WT_RULES[idx]
         val = info['value']
         rel = info.get('rel_err', 0.0)
@@ -747,6 +815,9 @@ def _compute_h_E_for_dir(out_dir: Path, mask: np.ndarray, organs: dict,
 
             fluence_ready = prepare_mcnp_fluence(fluence_npy, mask)
 
+            # ── 加载 INP tally→器官映射（防止旧版 INP 缺 breast/gallbladder 导致偏移） ──
+            _tnum_organ = _load_inp_tnum_organ(out_dir, energy)
+
             # ── DE/DF kerma 模式（Step2 用了 --de-df-mode）──────────────
             if de_df_mode:
                 import json as _json_dedf
@@ -758,7 +829,8 @@ def _compute_h_E_for_dir(out_dir: Path, mask: np.ndarray, organs: dict,
                         with open(f6_path_dd, 'r', encoding='utf-8') as _fh2:
                             f6d = _json_dedf.load(_fh2)
                         if f6d:
-                            h_try2, ot_try2 = compute_h_eff_from_f6(f6d, organs, mask)
+                            h_try2, ot_try2 = compute_h_eff_from_f6(
+                                f6d, organs, mask, _tnum_organ)
                             _ref2 = (ref_dict or ICRP116_REF).get(energy, 0.0)
                             if (h_try2 > 0
                                     and (_ref2 <= 0 or h_try2 <= 10 * _ref2)
@@ -788,7 +860,8 @@ def _compute_h_E_for_dir(out_dir: Path, mask: np.ndarray, organs: dict,
                     with open(f6_json_path, 'r', encoding='utf-8') as _fh:
                         f6_dict = _json.load(_fh)
                     if f6_dict:
-                        h_calc_f6, ot_f6 = compute_h_eff_from_f6(f6_dict, organs, mask)
+                        h_calc_f6, ot_f6 = compute_h_eff_from_f6(
+                            f6_dict, organs, mask, _tnum_organ)
                         _h_ref_check = ICRP116_REF.get(energy, 0.0)
                         n_f6_organs = len(ot_f6)
                         _within_range = (_h_ref_check <= 0 or h_calc_f6 <= 10 * _h_ref_check)
@@ -1322,6 +1395,9 @@ def main():
         fluence_ready = prepare_mcnp_fluence(fluence_npy, mask)
         print(f"     [数据检验] 通过 -> 使用 MCNP 结果")
 
+        # ── 加载 INP tally→器官映射（防止旧版 INP 缺 breast/gallbladder 导致偏移） ──
+        _tnum_organ = _load_inp_tnum_organ(out_dir, energy)
+
         # ── DE/DF kerma 模式（Step2 用 --de-df-mode 生成时使用） ──────────────
         if args.de_df_mode:
             import json as _json
@@ -1337,7 +1413,8 @@ def main():
                     with open(f6_json_dedf, 'r', encoding='utf-8') as _fh:
                         f6_dict = _json.load(_fh)
                     if f6_dict:
-                        h_try, ot_try = compute_h_eff_from_f6(f6_dict, organs, mask)
+                        h_try, ot_try = compute_h_eff_from_f6(
+                            f6_dict, organs, mask, _tnum_organ)
                         _ref_chk = ICRP116_REF.get(energy, 0.0)
                         n_organs = len(ot_try)
                         sane = (_ref_chk <= 0 or h_try <= 10 * _ref_chk) and n_organs >= 5
@@ -1376,7 +1453,8 @@ def main():
                     f6_dict = _json.load(_fh)
                 if f6_dict:
                     print(f"     [F6] 加载 F6:P,E 计分 {f6_json_path.name}，{len(f6_dict)} 个器官组")
-                    h_calc, organ_table = compute_h_eff_from_f6(f6_dict, organs, mask)
+                    h_calc, organ_table = compute_h_eff_from_f6(
+                        f6_dict, organs, mask, _tnum_organ)
                     # N_vox 修正已在 compute_h_eff_from_f6 内部完成；此处只做基本合理性检验
                     _h_ref_check = ICRP116_REF.get(energy, 0.0)
                     _f6_sane = True
