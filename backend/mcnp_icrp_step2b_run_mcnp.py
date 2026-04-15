@@ -128,6 +128,63 @@ def wait_for_file(path: str, timeout: int, interval: int, log_fh=None) -> bool:
     return False
 
 
+def reextract_f6_one(case: dict, args, log_fh, out_dir: str = None) -> bool:
+    """
+    仅重新提取 F6:P 计分 JSON，不重新运行 MCNP。
+
+    在 --reextract-f6 模式下使用：当 F6 JSON 因旧版解析 bug（CUMSUM 替代 MEAN）
+    导致数据陈旧时，从已有 .o 文件重新提取，无需耗时的 MCNP 重跑。
+
+    搜索顺序：
+      1. {work_dir}/{mcnp_base}.o  （step2b 默认工作目录）
+      2. {out_dir}/{mcnp_base}.o   （用户手动拷贝）
+    """
+    energy = case["energy"]
+    base   = case["mcnp_base"]
+
+    if out_dir is None:
+        out_dir = args.out_dir
+
+    log(f"━━━ [重提取F6] E = {energy:.3f} MeV  [{base}] ━━━", log_fh)
+
+    # 寻找 .o 文件
+    work    = Path(args.work_dir)
+    out_o   = work / f"{base}.o"
+    if not out_o.exists():
+        out_o = Path(out_dir) / f"{base}.o"
+    if not out_o.exists():
+        log(f"  [跳过] 未找到 {base}.o（已检查 {work} 和 {out_dir}），跳过", log_fh)
+        return False
+
+    log(f"  找到输出文件: {out_o}", log_fh)
+
+    # 导入 parse_f6_tallies（避免子进程开销）
+    try:
+        extract_script = Path(__file__).parent / "extract_dose_from_mcnp.py"
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("_extr", str(extract_script))
+        _extr = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_extr)
+        parse_f6_tallies = _extr.parse_f6_tallies
+        save_f6_json     = _extr.save_f6_json
+    except Exception as e:
+        log(f"  [错误] 无法加载 extract_dose_from_mcnp.py: {e}", log_fh)
+        return False
+
+    log(f"  解析 F6 tallies from {out_o.name} ...", log_fh)
+    f6 = parse_f6_tallies(str(out_o))
+    if not f6:
+        log(f"  [警告] 未解析到任何 F6:P 计分（INP 可能未含 F6 tallies）", log_fh)
+        return False
+
+    npy_path = Path(out_dir) / f"fluence_E{energy:.3f}MeV.npy"
+    save_f6_json(f6, npy_path)
+    f6_json = Path(out_dir) / f"{npy_path.stem}_f6doses.json"
+    if f6_json.exists():
+        log(f"  [OK] F6 计分已重新提取保存: {f6_json.name}  ({len(f6)} 个计分组)", log_fh)
+    return True
+
+
 def run_one(case: dict, args, log_fh, out_dir: str = None):
     """运行单个能量点的完整流程。
 
@@ -502,6 +559,11 @@ def main():
                         help="MCNP5 源粒子数（传给 Step2，默认 10_000_000）")
     parser.add_argument("--force-rerun", action="store_true", default=False,
                         help="强制重跑：忽略已有 .npy 缓存，重新运行 MCNP5")
+    parser.add_argument("--reextract-f6", action="store_true", default=False,
+                        help="重新提取 F6:P 计分 JSON（不重新运行 MCNP）。\n"
+                             "  当 F6 JSON 因旧版解析 bug（CUMSUM 替代 MEAN）陈旧时使用：\n"
+                             "  从 --work-dir 中的现有 .o 文件重新解析并保存 JSON。\n"
+                             "  用法: python mcnp_icrp_step2b_run_mcnp.py --reextract-f6")
     parser.add_argument("--de-df-mode",  action="store_true", default=False,
                         help="DE/DF 模式：生成含 DE/DF 通量转kerma的单 FMESH 输入（消除 EMESH 代表能误差）")
     parser.add_argument("--coupled",     action="store_true", default=True,
@@ -532,6 +594,29 @@ def main():
     print(f"  de-df-mode : {args.de_df_mode}")
     print(f"  coupled    : {args.coupled}")
     print(f"  log        : {log_path}\n")
+
+    # ── --reextract-f6 快速路径：只重新提取 F6 JSON，不运行 MCNP ────────────
+    if args.reextract_f6:
+        print(f"\n[重提取F6] 仅重新解析 F6:P JSON，不运行 MCNP")
+        print(f"  work-dir : {args.work_dir}")
+        print(f"  out-dir  : {args.out_dir}")
+        print(f"  af-dir   : {args.af_out_dir}\n")
+        Path(args.out_dir).mkdir(parents=True, exist_ok=True)
+        log_path2 = Path(args.out_dir) / "run_log.txt"
+        only_e = set(args.only) if args.only else None
+        with open(log_path2, "a", encoding="utf-8") as log_fh:
+            log("[重提取F6] 开始", log_fh)
+            for case in ENERGY_CASES:
+                if only_e and case["energy"] not in only_e:
+                    continue
+                reextract_f6_one(case, args, log_fh, out_dir=args.out_dir)
+            if args.run_af:
+                for case in AF_ENERGY_CASES:
+                    if only_e and case["energy"] not in only_e:
+                        continue
+                    reextract_f6_one(case, args, log_fh, out_dir=args.af_out_dir)
+        print("\n[重提取F6] 完成。再次运行 Step3 以验证。")
+        sys.exit(0)
 
     # 检查 g5.bat
     if not Path(args.g5_bat).exists():

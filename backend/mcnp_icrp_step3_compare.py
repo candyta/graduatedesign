@@ -480,6 +480,63 @@ def compute_h_eff_from_fluence_emesh(fluence_bins: list, e_bounds: list,
     return h_eff, organ_table
 
 
+# MCNP 工作目录中 .o 文件命名（与 step2b ENERGY_CASES 一致）
+_ENERGY_TO_MCNP_BASE = {
+    0.010: 'icrp01', 0.100: 'icrp02', 1.000: 'icrp03', 10.000: 'icrp04',
+    # AF 体模
+    # 0.010: 'icrp05', 0.100: 'icrp06', 1.000: 'icrp07', 10.000: 'icrp08',
+}
+
+
+def _try_reextract_f6(work_dir_str: str, energy: float, out_dir: Path,
+                      is_af: bool = False) -> dict:
+    """
+    尝试从 MCNP .o 文件重新提取 F6:P 计分，保存 JSON，返回解析结果。
+
+    当 F6 JSON 因旧版解析 bug（CUMSUM 替代 MEAN）陈旧，但 .o 文件仍可用时调用。
+    返回空 dict 表示失败（.o 不存在或无法解析）。
+
+    搜索路径：
+      1. {work_dir}/{mcnp_base}.o
+      2. {out_dir}/{mcnp_base}.o
+    """
+    if not work_dir_str:
+        return {}
+
+    af_map = {0.010: 'icrp05', 0.100: 'icrp06', 1.000: 'icrp07', 10.000: 'icrp08'}
+    base_map = af_map if is_af else _ENERGY_TO_MCNP_BASE
+    base = base_map.get(energy)
+    if not base:
+        return {}
+
+    work = Path(work_dir_str)
+    candidates = [work / f"{base}.o", out_dir / f"{base}.o"]
+    out_o = next((p for p in candidates if p.exists()), None)
+    if out_o is None:
+        print(f"     [F6重提取] 未找到 {base}.o（已搜索: {[str(p) for p in candidates]}）")
+        return {}
+
+    print(f"     [F6重提取] 找到 {out_o}，重新解析 F6 tallies ...")
+    try:
+        _extr_dir = Path(__file__).parent
+        import importlib.util as _ilu
+        _spec = _ilu.spec_from_file_location("_extr", str(_extr_dir / "extract_dose_from_mcnp.py"))
+        _extr = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_extr)
+
+        f6 = _extr.parse_f6_tallies(str(out_o))
+        if f6:
+            npy_path = out_dir / f"fluence_E{energy:.3f}MeV.npy"
+            _extr.save_f6_json(f6, npy_path)
+            print(f"     [F6重提取] OK，解析到 {len(f6)} 个计分组，JSON 已更新")
+        else:
+            print(f"     [F6重提取] 未解析到 F6 tallies（该 INP 可能未含 F6 cards）")
+        return f6
+    except Exception as e:
+        print(f"     [F6重提取] 失败: {e}")
+        return {}
+
+
 def parse_inp_f6_organ_map(inp_file: str) -> dict:
     """
     从 MCNP 输入文件（.inp）解析 F6 计分号 → 器官名（小写）映射。
@@ -772,7 +829,9 @@ def compute_h_eff_from_kerma(kerma: np.ndarray, mask: np.ndarray,
 def _compute_h_E_for_dir(out_dir: Path, mask: np.ndarray, organs: dict,
                          beam_area: float, ref_dict: dict = None,
                          de_df_mode: bool = False,
-                         vox_y_cm: float = None) -> list:
+                         vox_y_cm: float = None,
+                         mcnp_work_dir: str = None,
+                         is_af: bool = False) -> list:
     """
     对指定目录中的 fluence npy 文件计算各能量点的 h_E (pSv·cm²)。
 
@@ -824,20 +883,52 @@ def _compute_h_E_for_dir(out_dir: Path, mask: np.ndarray, organs: dict,
                 stem_dd = f"fluence_E{energy:.3f}MeV"
                 f6_path_dd = out_dir / f"{stem_dd}_f6doses.json"
                 h_calc = None
+                _f6d = None
                 if f6_path_dd.exists():
                     try:
                         with open(f6_path_dd, 'r', encoding='utf-8') as _fh2:
-                            f6d = _json_dedf.load(_fh2)
-                        if f6d:
-                            h_try2, ot_try2 = compute_h_eff_from_f6(
-                                f6d, organs, mask, _tnum_organ)
-                            _ref2 = (ref_dict or ICRP116_REF).get(energy, 0.0)
-                            if (h_try2 > 0
-                                    and (_ref2 <= 0 or h_try2 <= 10 * _ref2)
-                                    and len(ot_try2) >= 5):
-                                h_calc = h_try2
+                            _f6d = _json_dedf.load(_fh2)
                     except Exception:
                         pass
+                if _f6d:
+                    try:
+                        h_try2, ot_try2 = compute_h_eff_from_f6(
+                            _f6d, organs, mask, _tnum_organ)
+                        _ref2 = (ref_dict or ICRP116_REF).get(energy, 0.0)
+                        sane2 = (h_try2 > 0
+                                 and (_ref2 <= 0 or h_try2 <= 10 * _ref2)
+                                 and len(ot_try2) >= 5)
+                        if sane2:
+                            h_calc = h_try2
+                        elif mcnp_work_dir:
+                            # 尝试从 .o 文件重新提取陈旧 JSON
+                            _f6_re2 = _try_reextract_f6(
+                                mcnp_work_dir, energy, out_dir, is_af=is_af)
+                            if _f6_re2:
+                                h_r2, ot_r2 = compute_h_eff_from_f6(
+                                    _f6_re2, organs, mask, _tnum_organ)
+                                _rr2 = (ref_dict or ICRP116_REF).get(energy, 0.0)
+                                if (h_r2 > 0
+                                        and (_rr2 <= 0 or h_r2 <= 10*_rr2)
+                                        and len(ot_r2) >= 5):
+                                    h_calc = h_r2
+                    except Exception:
+                        pass
+                elif mcnp_work_dir:
+                    # F6 JSON 不存在，尝试从 .o 首次提取
+                    _f6_new = _try_reextract_f6(
+                        mcnp_work_dir, energy, out_dir, is_af=is_af)
+                    if _f6_new:
+                        try:
+                            h_n, ot_n = compute_h_eff_from_f6(
+                                _f6_new, organs, mask, _tnum_organ)
+                            _rn = (ref_dict or ICRP116_REF).get(energy, 0.0)
+                            if (h_n > 0
+                                    and (_rn <= 0 or h_n <= 10*_rn)
+                                    and len(ot_n) >= 5):
+                                h_calc = h_n
+                        except Exception:
+                            pass
                 if h_calc is None:
                     h_calc, _ = compute_h_eff_from_kerma(
                         fluence_ready, mask, organs,
@@ -1296,6 +1387,10 @@ def main():
         help="DE/DF kerma 模式：Step2 用 --de-df-mode 生成输入时使用。\n"
              "  fluence_E*.npy 已是 pGy/src kerma，直接用于器官剂量，\n"
              "  跳过 E×(μ_en/ρ) 注量→剂量换算步骤。")
+    parser.add_argument("--mcnp-work-dir", default=None,
+        help="MCNP5 工作目录（含 icrp01.o ~ icrp08.o）。\n"
+             "  当 F6 JSON 陈旧（仅 1 个计分或值异常）时，自动从 .o 文件重新提取。\n"
+             "  示例: --mcnp-work-dir C:\\i")
     args = parser.parse_args()
 
     out_dir  = Path(args.out_dir)
@@ -1408,24 +1503,61 @@ def main():
             # Try F6 first: F6:P uses actual material cross-sections per cell,
             # which properly handles bone vs soft-tissue μ_en/ρ differences
             # (important at 0.1 MeV where bone μ_en/ρ is 14.5% higher).
+            _f6_dict_dedf = None
             if f6_json_dedf.exists():
                 try:
                     with open(f6_json_dedf, 'r', encoding='utf-8') as _fh:
-                        f6_dict = _json.load(_fh)
-                    if f6_dict:
-                        h_try, ot_try = compute_h_eff_from_f6(
-                            f6_dict, organs, mask, _tnum_organ)
-                        _ref_chk = ICRP116_REF.get(energy, 0.0)
-                        n_organs = len(ot_try)
-                        sane = (_ref_chk <= 0 or h_try <= 10 * _ref_chk) and n_organs >= 5
-                        if sane:
-                            h_calc = h_try
-                            organ_table = ot_try
-                            print(f"     [DE/DF+F6] 使用 F6:P 计分（器官材料精确μ_en/ρ）")
+                        _f6_dict_dedf = _json.load(_fh)
+                except Exception:
+                    pass
+            if _f6_dict_dedf:
+                try:
+                    h_try, ot_try = compute_h_eff_from_f6(
+                        _f6_dict_dedf, organs, mask, _tnum_organ)
+                    _ref_chk = ICRP116_REF.get(energy, 0.0)
+                    n_organs = len(ot_try)
+                    sane = (_ref_chk <= 0 or h_try <= 10 * _ref_chk) and n_organs >= 5
+                    if sane:
+                        h_calc = h_try
+                        organ_table = ot_try
+                        print(f"     [DE/DF+F6] 使用 F6:P 计分（器官材料精确μ_en/ρ）")
+                    else:
+                        # JSON 陈旧（如 n=1 含 CUMSUM 值）：尝试从 .o 文件重新提取
+                        _wdir = getattr(args, 'mcnp_work_dir', None)
+                        print(f"     [DE/DF] F6 数据不满足条件（n={n_organs}, h={h_try:.4f}）")
+                        if _wdir:
+                            _f6_fresh = _try_reextract_f6(_wdir, energy, out_dir)
+                            if _f6_fresh:
+                                h_try2, ot_try2 = compute_h_eff_from_f6(
+                                    _f6_fresh, organs, mask, _tnum_organ)
+                                n2 = len(ot_try2)
+                                _ref2 = ICRP116_REF.get(energy, 0.0)
+                                if (_ref2 <= 0 or h_try2 <= 10*_ref2) and n2 >= 5:
+                                    h_calc = h_try2
+                                    organ_table = ot_try2
+                                    print(f"     [DE/DF+F6] 重提取成功，使用新 F6 数据（{n2} 组）")
+                                else:
+                                    print(f"     [DE/DF] 重提取后仍不满足条件（n={n2}, h={h_try2:.4f}），"
+                                          f"回退 DE/DF kerma")
                         else:
-                            print(f"     [DE/DF] F6 数据不满足条件（n={n_organs}, h={h_try:.4f}），回退 DE/DF kerma")
+                            print(f"     [DE/DF] 提示: 用 --mcnp-work-dir 指定 .o 文件目录可自动重提取 F6")
+                            print(f"     [DE/DF] 回退 DE/DF kerma")
                 except Exception as _ef6:
                     print(f"     [DE/DF] F6 读取失败: {_ef6}，回退 DE/DF kerma")
+            elif getattr(args, 'mcnp_work_dir', None):
+                # JSON 不存在，尝试从 .o 文件首次提取
+                _f6_first = _try_reextract_f6(args.mcnp_work_dir, energy, out_dir)
+                if _f6_first:
+                    try:
+                        h_try3, ot_try3 = compute_h_eff_from_f6(
+                            _f6_first, organs, mask, _tnum_organ)
+                        _ref3 = ICRP116_REF.get(energy, 0.0)
+                        if (_ref3 <= 0 or h_try3 <= 10*_ref3) and len(ot_try3) >= 5:
+                            h_calc = h_try3
+                            organ_table = ot_try3
+                            print(f"     [DE/DF+F6] 首次提取成功，使用 F6 数据（{len(ot_try3)} 组）")
+                    except Exception:
+                        pass
             if h_calc is None:
                 print(f"     [DE/DF] kerma 模式：直接使用 pGy/src 输出，跳过注量→剂量换算")
                 h_calc, organ_table = compute_h_eff_from_kerma(
@@ -1447,30 +1579,46 @@ def main():
         import json as _json
         f6_json_path = out_dir / f"{stem}_f6doses.json"
         use_f6 = False
+        _f6_dict_main = None
         if f6_json_path.exists():
             try:
                 with open(f6_json_path, 'r', encoding='utf-8') as _fh:
-                    f6_dict = _json.load(_fh)
-                if f6_dict:
-                    print(f"     [F6] 加载 F6:P,E 计分 {f6_json_path.name}，{len(f6_dict)} 个器官组")
-                    h_calc, organ_table = compute_h_eff_from_f6(
-                        f6_dict, organs, mask, _tnum_organ)
-                    # N_vox 修正已在 compute_h_eff_from_f6 内部完成；此处只做基本合理性检验
-                    _h_ref_check = ICRP116_REF.get(energy, 0.0)
-                    _f6_sane = True
-                    if _h_ref_check > 0 and h_calc > 200 * _h_ref_check:
-                        print(f"     [F6] ⚠ 检测到异常大值: h_E(F6)={h_calc:.3e} pSv·cm²"
-                              f" >> ICRP-116={_h_ref_check:.4f}（>{200}×）")
-                        print(f"     [F6]   可能原因: prdmp 累积值未正确提取，或 N_vox 计数有误。")
-                        print(f"     [F6]   本次回退到 FMESH 注量模式。")
-                        _f6_sane = False
-                    n_f6_organs = len(organ_table)
-                    if _f6_sane and n_f6_organs >= 5:
-                        use_f6 = True
-                    elif _f6_sane:
-                        print(f"     [F6] ⚠ 回退到 FMESH: 有效器官组数不足({n_f6_organs}<5)")
+                    _f6_dict_main = _json.load(_fh)
             except Exception as _e:
                 print(f"     [F6] 读取失败: {_e}，回退到注量模式")
+        if _f6_dict_main:
+            try:
+                print(f"     [F6] 加载 F6:P,E 计分 {f6_json_path.name}，{len(_f6_dict_main)} 个器官组")
+                h_calc, organ_table = compute_h_eff_from_f6(
+                    _f6_dict_main, organs, mask, _tnum_organ)
+                # N_vox 修正已在 compute_h_eff_from_f6 内部完成；此处只做基本合理性检验
+                _h_ref_check = ICRP116_REF.get(energy, 0.0)
+                _f6_sane = True
+                if _h_ref_check > 0 and h_calc > 200 * _h_ref_check:
+                    print(f"     [F6] ⚠ 检测到异常大值: h_E(F6)={h_calc:.3e} pSv·cm²"
+                          f" >> ICRP-116={_h_ref_check:.4f}（>{200}×）")
+                    print(f"     [F6]   可能原因: prdmp 累积值未正确提取，或 N_vox 计数有误。")
+                    _f6_sane = False
+                    # 尝试从 .o 文件重新提取
+                    _wdir2 = getattr(args, 'mcnp_work_dir', None)
+                    if _wdir2:
+                        _f6_re = _try_reextract_f6(_wdir2, energy, out_dir)
+                        if _f6_re:
+                            h_calc, organ_table = compute_h_eff_from_f6(
+                                _f6_re, organs, mask, _tnum_organ)
+                            if _h_ref_check <= 0 or h_calc <= 200 * _h_ref_check:
+                                _f6_sane = True
+                                print(f"     [F6] 重提取成功，异常大值已修正")
+                    else:
+                        print(f"     [F6]   提示: 用 --mcnp-work-dir 指定 .o 目录可自动重提取 F6")
+                        print(f"     [F6]   本次回退到 FMESH 注量模式。")
+                n_f6_organs = len(organ_table)
+                if _f6_sane and n_f6_organs >= 5:
+                    use_f6 = True
+                elif _f6_sane:
+                    print(f"     [F6] ⚠ 回退到 FMESH: 有效器官组数不足({n_f6_organs}<5)")
+            except Exception as _e:
+                print(f"     [F6] 计算失败: {_e}，回退到注量模式")
 
         # ── 次优 A：多 FMESH 4 档（fm24/fm34 文件存在时优先） ─────────────────
         use_emesh = False
@@ -1669,7 +1817,9 @@ def main():
                                               beam_area=_AF_BEAM_AREA,
                                               ref_dict=ICRP116_REF_AF,
                                               de_df_mode=args.de_df_mode,
-                                              vox_y_cm=_AF_VOX_Y)
+                                              vox_y_cm=_AF_VOX_Y,
+                                              mcnp_work_dir=getattr(args, 'mcnp_work_dir', None),
+                                              is_af=True)
 
             if not af_results:
                 print("[AF] 未能计算任何 AF 能量点，跳过性别平均")
