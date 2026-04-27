@@ -1299,9 +1299,21 @@ def try_plot(results, out_dir: Path):
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
+        from matplotlib import font_manager
     except ImportError:
         print("[提示] 未安装 matplotlib，跳过绘图")
         return
+
+    _font_candidates = [
+        str(Path(__file__).parent / "fonts" / "wqy-zenhei.ttc"),
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    ]
+    for _fp in _font_candidates:
+        if Path(_fp).exists():
+            font_manager.fontManager.addfont(_fp)
+            matplotlib.rcParams["font.family"] = ["WenQuanYi Zen Hei", "DejaVu Sans"]
+            break
+    matplotlib.rcParams["axes.unicode_minus"] = False
 
     energies  = [r[0] for r in results]
     h_calc    = [r[1] for r in results]
