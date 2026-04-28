@@ -30,3 +30,18 @@ logs/
 # 临时文件
 .idea/
 .vscode/
+
+# macOS
+.DS_Store
+
+# CMake 构建产物
+CMakeFiles/
+x64/
+*.cmake
+CMakeCache.txt
+
+# 压缩包
+*.zip
+
+# 生成的图片序列
+plus/
