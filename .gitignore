@@ -45,3 +45,9 @@ CMakeCache.txt
 
 # 生成的图片序列
 plus/
+
+# 运行结果输出
+icrp_neutron_AP_results/
+organ_validation_results/
+*.png
+organ_mask_meta.json
