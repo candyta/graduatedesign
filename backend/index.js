@@ -20,14 +20,14 @@ const mcnpState = {
 const { processDoseDataFile } = require('./mcnp2png');
 const zlib = require('zlib');
 
-const PYTHON_PATH = 'D:\\python.exe';
+const PYTHON_PATH = process.env.PYTHON_PATH || 'python3';
 console.log(`[初始化] 使用Python: ${PYTHON_PATH}`);
 
 // 中间件配置
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cors({
-    origin: ['http://localhost:8080'], // 前端地址
+    origin: true,
     credentials: true,
     methods: ['GET', 'POST', 'OPTIONS']
 }));
@@ -38,10 +38,10 @@ app.use('/wholebody_phantom', express.static(path.join(__dirname, 'wholebody_pha
 // 目录配置
 const DIRS = {
     UPLOADS: path.join(__dirname, 'uploads'),
-    INPUT: 'C:/i',
-    OUTPUT: 'C:/o',
-    DOSE_PNG: 'C:/my-app3/web/backend/dosepng',
-    LOGS: 'logs',
+    INPUT: process.env.MCNP_INPUT_DIR || path.join(__dirname, 'data', 'mcnp_input'),
+    OUTPUT: process.env.MCNP_OUTPUT_DIR || path.join(__dirname, 'data', 'mcnp_output'),
+    DOSE_PNG: path.join(__dirname, 'dosepng'),
+    LOGS: path.join(__dirname, 'logs'),
 };
 app.use('/dosepng', express.static(DIRS.DOSE_PNG));
 app.use('/plus', express.static(path.join(__dirname, 'plus')));
@@ -199,7 +199,7 @@ app.post('/upload-nii', uploadNii.single('niiFile'), async (req, res) => {
 
         // =========== 3. 调用 Python 生成切片 =========== 
         const outputDir = path.join(uploadedFolder, 'slices');
-        await execAsync(`python nii_preview.py "${niiPath}" "${outputDir}"`);
+        await execAsync(`"${PYTHON_PATH}" "${path.join(__dirname, 'nii_preview.py')}" "${niiPath}" "${outputDir}"`);
         console.log(`Generated slices and saved in: ${outputDir}`);
 
         // 构建切片结果结构
@@ -682,9 +682,10 @@ app.post('/generate-mcnp-input', async (req, res) => {
 
         // 调用 Python 脚本生成 MCNP 输入文件
         const generateMcnpScript = path.join(__dirname, 'main.py');
-        console.log(`Running Python script to generate MCNP input file with command: "${PYTHON_PATH}" "${generateMcnpScript}" --ct "${niiPath}" --config "C:/my-app3/web/backend/config.toml" --dirpath "${DIRS.INPUT}"`);
+        const mcnpConfigPath = path.join(__dirname, 'config.toml');
+        console.log(`Running Python script to generate MCNP input file with command: "${PYTHON_PATH}" "${generateMcnpScript}" --ct "${niiPath}" --config "${mcnpConfigPath}" --dirpath "${DIRS.INPUT}"`);
 
-        const command = `"${PYTHON_PATH}" "${generateMcnpScript}" --ct "${niiPath}" --config "C:/my-app3/web/backend/config.toml" --dirpath "${DIRS.INPUT}"`;
+        const command = `"${PYTHON_PATH}" "${generateMcnpScript}" --ct "${niiPath}" --config "${mcnpConfigPath}" --dirpath "${DIRS.INPUT}"`;
 
         // 执行命令并捕获输出
         const { stdout, stderr } = await execAsync(command);
@@ -1358,7 +1359,7 @@ const WHOLEBODY_OUTPUT_DIR = path.join(__dirname, 'wholebody_output');
 fs.ensureDirSync(WHOLEBODY_OUTPUT_DIR);
 
 // ICRP数据路径
-const ICRP_DATA_PATH = 'C:/my-app3/web/P110 data V1.2';
+const ICRP_DATA_PATH = process.env.ICRP_DATA_PATH || path.join(__dirname, '..', 'P110 data V1.2');
 
 // 提供静态文件访问
 app.use('/wholebody_output', express.static(WHOLEBODY_OUTPUT_DIR));
@@ -1595,7 +1596,7 @@ app.post('/api/wholebody/run-assessment', async (req, res) => {
 
         // 调用Python脚本
         const pythonScript = path.join(__dirname, 'wholebody_risk_api.py');
-        const pythonPath = 'D:/python.exe';
+        const pythonPath = PYTHON_PATH;
         let command = `"${pythonPath}" "${pythonScript}" --session-dir "${sessionDir}" --icrp-path "${ICRP_DATA_PATH}"`;
         if (doseNpyPath) {
             command += ` --dose-npy "${doseNpyPath}"`;
@@ -2605,7 +2606,7 @@ app.post('/api/icrp116/start-validation', (req, res) => {
         '--inp-dir',     ICRP116_INP_DIR,
         '--out-dir',     ICRP116_OUT_DIR,
         '--backend-dir', __dirname,
-        '--xsdir',       String.raw`D:\LANL\xsdir`,
+        '--xsdir',       process.env.MCNP_XSDIR || String.raw`D:\LANL\xsdir`,
         '--nps',         '10000000',
     ];
     if (Array.isArray(energies) && energies.length > 0) {
@@ -2901,7 +2902,7 @@ app.get('/api/icrp116/chart-image', (req, res) => {
  * 扫描 D:\LANL\xsdir，返回可用光子截面库列表
  */
 app.get('/api/icrp116/check-xsdir', (req, res) => {
-    const xsdirPath = String.raw`D:\LANL\xsdir`;
+    const xsdirPath = process.env.MCNP_XSDIR || String.raw`D:\LANL\xsdir`;
     const preferred = ['.70p', '.12p', '.04p', '.24p'];
     try {
         const fs = require('fs');
@@ -2949,6 +2950,22 @@ console.log('  - POST /api/icrp116/run-step3');
 console.log('  - GET  /api/icrp116/chart-image');
 console.log('  - GET  /api/icrp116/check-xsdir');
 
-app.listen(PORT, () => {
+// 托管前端静态文件（生产环境）
+const frontendDist = path.join(__dirname, '..', 'frontend', 'dist');
+if (fs.existsSync(frontendDist)) {
+    app.use(express.static(frontendDist));
+    app.get('*', (req, res, next) => {
+        if (req.path.startsWith('/api') || req.path.startsWith('/uploads') ||
+            req.path.startsWith('/wholebody') || req.path.startsWith('/dosepng') ||
+            req.path.startsWith('/plus') || req.path.startsWith('/dvh') ||
+            req.path.startsWith('/wholebody_output')) {
+            return next();
+        }
+        res.sendFile(path.join(frontendDist, 'index.html'));
+    });
+    log(`[前端] 已托管前端静态文件: ${frontendDist}`);
+}
+
+app.listen(PORT, '0.0.0.0', () => {
     log(`服务器已启动: http://localhost:${PORT}`);
 });

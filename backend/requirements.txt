@@ -1,0 +1,8 @@
+SimpleITK
+nibabel
+numpy
+scipy
+matplotlib
+Pillow
+toml
+scienceplots

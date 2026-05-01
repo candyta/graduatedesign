@@ -1,0 +1,18 @@
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - app_uploads:/app/backend/uploads
+      - app_data:/app/backend/data
+      - app_output:/app/backend/wholebody_output
+    environment:
+      - PYTHON_PATH=python3
+      - NODE_ENV=production
+    restart: unless-stopped
+
+volumes:
+  app_uploads:
+  app_data:
+  app_output:
