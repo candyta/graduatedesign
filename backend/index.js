@@ -2954,7 +2954,7 @@ console.log('  - GET  /api/icrp116/check-xsdir');
 const frontendDist = path.join(__dirname, '..', 'frontend', 'dist');
 if (fs.existsSync(frontendDist)) {
     app.use(express.static(frontendDist));
-    app.get('*', (req, res, next) => {
+    app.get('/{*path}', (req, res, next) => {
         if (req.path.startsWith('/api') || req.path.startsWith('/uploads') ||
             req.path.startsWith('/wholebody') || req.path.startsWith('/dosepng') ||
             req.path.startsWith('/plus') || req.path.startsWith('/dvh') ||
