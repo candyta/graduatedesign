@@ -2345,260 +2345,8 @@
             </div>
           </section>
 
-          <!-- ── 右侧：计算结果（已移除） ── -->
-          <section class="ds-results-panel" style="display:none">
 
-            <!-- 结果未出现时的占位 -->
-            <div v-if="!dsResult" class="ds-empty">
-              <p style="font-size:2rem">⚡</p>
-              <p>设置参数后点击「计算剂量组分」</p>
-              <p style="font-size:0.8rem;color:#888;margin-top:4px">
-                或修改任意参数自动触发计算
-              </p>
-            </div>
-
-            <template v-else>
-              <!-- 摘要卡片 -->
-              <div class="ds-summary-cards">
-                <div class="ds-sum-card ds-sum-tumor">
-                  <div class="ds-sum-icon">🎯</div>
-                  <div class="ds-sum-val">{{ dsResult.tumor_point.total_weighted_cgy.toFixed(2) }}</div>
-                  <div class="ds-sum-label">肿瘤总加权剂量 (cGy)</div>
-                </div>
-                <div class="ds-sum-card ds-sum-skin">
-                  <div class="ds-sum-icon">🧬</div>
-                  <div class="ds-sum-val">{{ dsResult.skin_point.total_weighted_cgy.toFixed(2) }}</div>
-                  <div class="ds-sum-label">皮肤总加权剂量 (cGy)</div>
-                </div>
-                <div class="ds-sum-card ds-sum-ratio">
-                  <div class="ds-sum-icon">📐</div>
-                  <div class="ds-sum-val">{{ dsResult.summary.therapeutic_ratio.toFixed(2) }}</div>
-                  <div class="ds-sum-label">治疗比 (T/S)</div>
-                </div>
-              </div>
-
-              <!-- 剂量组分饼状柱图（肿瘤点） -->
-              <div class="ds-component-section">
-                <h4 class="ds-sub-title">肿瘤点 剂量组分分解（深度 {{ dsResult.tumor_depth_cm }} cm）</h4>
-                <div class="ds-comp-bars">
-                  <div v-for="comp in dsComponentList" :key="comp.key" class="ds-comp-row">
-                    <span class="ds-comp-label">{{ comp.label }}</span>
-                    <div class="ds-comp-bar-wrap">
-                      <div class="ds-comp-bar"
-                           :style="{ width: dsResult.tumor_point.fractions[comp.key] + '%',
-                                     background: comp.color }">
-                      </div>
-                    </div>
-                    <span class="ds-comp-pct">{{ dsResult.tumor_point.fractions[comp.key] }}%</span>
-                    <span class="ds-comp-abs">{{ dsResult.tumor_point['weighted_' + comp.key + '_cgy'].toFixed(3) }} cGy</span>
-                  </div>
-                </div>
-              </div>
-
-              <!-- 物理剂量 vs 加权剂量对比 -->
-              <div class="ds-component-section">
-                <h4 class="ds-sub-title">物理剂量 vs 生物加权剂量 (cGy)</h4>
-                <table class="ds-comp-table">
-                  <thead>
-                    <tr><th>组分</th><th>物理剂量</th><th>加权因子</th><th>生物剂量</th></tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="comp in dsCompTableRows" :key="comp.key">
-                      <td>{{ comp.label }}</td>
-                      <td class="ds-mono">{{ dsResult.tumor_point[comp.phys_key].toFixed(4) }}</td>
-                      <td class="ds-mono">× {{ comp.factor }}</td>
-                      <td class="ds-mono ds-weighted">{{ dsResult.tumor_point[comp.wt_key].toFixed(4) }}</td>
-                    </tr>
-                    <tr class="ds-total-row">
-                      <td colspan="3"><strong>合计生物加权剂量</strong></td>
-                      <td class="ds-mono ds-total"><strong>{{ dsResult.tumor_point.total_weighted_cgy.toFixed(4) }}</strong></td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-
-              <!-- 深度-剂量曲线 -->
-              <div class="ds-component-section">
-                <h4 class="ds-sub-title">深度-剂量曲线（肿瘤组织）</h4>
-                <div class="ds-ddp-wrap">
-                  <svg class="ds-ddp-svg" viewBox="0 0 400 200">
-                    <rect width="400" height="200" fill="#f8fafc" rx="4"/>
-                    <!-- Y轴网格 -->
-                    <g v-for="i in 4" :key="'gy'+i">
-                      <line :x1="40" :y1="180 - i*35" :x2="390" :y2="180 - i*35"
-                            stroke="#e2e8f0" stroke-width="1"/>
-                    </g>
-                    <!-- 总剂量曲线 -->
-                    <polyline
-                      :points="dsDdpPoints"
-                      fill="none" stroke="#667eea" stroke-width="2.5"
-                    />
-                    <!-- 各组分细线 -->
-                    <polyline :points="dsDdpPointsComp('boron')"    fill="none" stroke="#e53e3e" stroke-width="1.5" stroke-dasharray="4,2"/>
-                    <polyline :points="dsDdpPointsComp('nitrogen')" fill="none" stroke="#38a169" stroke-width="1.5" stroke-dasharray="4,2"/>
-                    <polyline :points="dsDdpPointsComp('hydrogen')" fill="none" stroke="#d69e2e" stroke-width="1.5" stroke-dasharray="4,2"/>
-                    <polyline :points="dsDdpPointsComp('gamma')"    fill="none" stroke="#805ad5" stroke-width="1.5" stroke-dasharray="4,2"/>
-                    <!-- 坐标轴 -->
-                    <line x1="40" y1="20" x2="40"  y2="185" stroke="#a0aec0" stroke-width="1.5"/>
-                    <line x1="40" y1="180" x2="395" y2="180" stroke="#a0aec0" stroke-width="1.5"/>
-                    <text x="8"  y="100" font-size="9" fill="#718096" transform="rotate(-90,8,100)">剂量 (cGy)</text>
-                    <text x="210" y="198" font-size="9" fill="#718096" text-anchor="middle">深度 (cm)</text>
-                    <!-- 肿瘤深度标注线 -->
-                    <line
-                      :x1="dsDdpTumorX" y1="20"
-                      :x2="dsDdpTumorX" y2="180"
-                      stroke="#e53e3e" stroke-width="1.5" stroke-dasharray="5,3"
-                    />
-                    <!-- 图例 -->
-                    <rect x="42" y="22" width="8" height="4" fill="#667eea"/>
-                    <text x="54" y="28" font-size="8" fill="#333">总剂量</text>
-                    <line x1="90" y1="25" x2="98" y2="25" stroke="#e53e3e" stroke-width="1.5" stroke-dasharray="3,2"/>
-                    <text x="102" y="28" font-size="8" fill="#333">硼</text>
-                    <line x1="120" y1="25" x2="128" y2="25" stroke="#38a169" stroke-width="1.5" stroke-dasharray="3,2"/>
-                    <text x="132" y="28" font-size="8" fill="#333">氮</text>
-                    <line x1="150" y1="25" x2="158" y2="25" stroke="#d69e2e" stroke-width="1.5" stroke-dasharray="3,2"/>
-                    <text x="162" y="28" font-size="8" fill="#333">氢</text>
-                    <line x1="178" y1="25" x2="186" y2="25" stroke="#805ad5" stroke-width="1.5" stroke-dasharray="3,2"/>
-                    <text x="190" y="28" font-size="8" fill="#333">γ</text>
-                  </svg>
-                </div>
-              </div>
-
-              <!-- 三种组织对比 -->
-              <div class="ds-component-section">
-                <h4 class="ds-sub-title">三种组织剂量对比（深度 {{ dsResult.tumor_depth_cm }} cm）</h4>
-                <table class="ds-comp-table">
-                  <thead>
-                    <tr><th>组织</th><th>总加权剂量 (cGy)</th><th>硼%</th><th>氮%</th><th>氢%</th><th>γ%</th></tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="t in ['tumor','normal_tissue','skin']" :key="t">
-                      <td>{{ dsTissueLabel[t] }}</td>
-                      <td class="ds-mono">{{ dsResult[t + '_point'].total_weighted_cgy.toFixed(3) }}</td>
-                      <td class="ds-mono">{{ dsResult[t + '_point'].fractions.boron }}%</td>
-                      <td class="ds-mono">{{ dsResult[t + '_point'].fractions.nitrogen }}%</td>
-                      <td class="ds-mono">{{ dsResult[t + '_point'].fractions.hydrogen }}%</td>
-                      <td class="ds-mono">{{ dsResult[t + '_point'].fractions.gamma }}%</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-
-            </template>
-          </section>
-
-        </div>
-
-        <!-- ── 验证面板（已移除） ── -->
-        <div class="ds-validate-panel" style="display:none">
-          <div class="ds-validate-header">
-            <h3>🧪 剂量参数三级验证</h3>
-            <p class="ds-validate-desc">
-              Level 1：CBE/RBE 与文献值对比 ·
-              Level 2：解析公式核查 ·
-              Level 3：临床基准案例（JRR-4 / Petten HFR / MIT MITR-II）
-            </p>
-            <button @click="dsRunValidation" :disabled="dsValidating" class="btn btn-primary">
-              <span v-if="dsValidating" class="spinner-sm"></span>
-              {{ dsValidating ? '验证中...' : '▶ 运行验证' }}
-            </button>
-          </div>
-
-          <div v-if="dsValidateResult" class="ds-validate-body">
-            <!-- 总结卡片 -->
-            <div class="ds-val-summary">
-              <div class="ds-val-card" :class="dsValidateResult.level1_cbe_rbe.passed ? 'val-pass' : 'val-fail'">
-                <div class="ds-val-icon">{{ dsValidateResult.level1_cbe_rbe.passed ? '✓' : '✗' }}</div>
-                <div class="ds-val-label">L1 CBE/RBE</div>
-              </div>
-              <div class="ds-val-card" :class="dsValidateResult.level1_boron_conc.passed ? 'val-pass' : 'val-fail'">
-                <div class="ds-val-icon">{{ dsValidateResult.level1_boron_conc.passed ? '✓' : '✗' }}</div>
-                <div class="ds-val-label">L1 硼浓度</div>
-              </div>
-              <div class="ds-val-card" :class="dsValidateResult.level2_formula.passed ? 'val-pass' : 'val-fail'">
-                <div class="ds-val-icon">{{ dsValidateResult.level2_formula.passed ? '✓' : '✗' }}</div>
-                <div class="ds-val-label">L2 公式</div>
-              </div>
-              <div class="ds-val-card val-info">
-                <div class="ds-val-icon">📋</div>
-                <div class="ds-val-label">L3 案例 {{ dsValidateResult.summary.level3_cases_pass }}</div>
-              </div>
-              <div class="ds-val-card" :class="dsValidateResult.all_pass ? 'val-pass' : 'val-warn'">
-                <div class="ds-val-icon">{{ dsValidateResult.all_pass ? '✓' : '!' }}</div>
-                <div class="ds-val-label">总体结果</div>
-              </div>
-            </div>
-
-            <!-- L1 CBE/RBE 明细 -->
-            <details class="ds-val-detail" open>
-              <summary>Level 1 ─ CBE/RBE 参数验证（{{ dsValidateResult.level1_cbe_rbe.checks.length }} 项）</summary>
-              <table class="ds-val-table">
-                <thead><tr><th>组织</th><th>参数</th><th>用户值</th><th>文献值</th><th>文献范围</th><th>结果</th></tr></thead>
-                <tbody>
-                  <tr v-for="(c, i) in dsValidateResult.level1_cbe_rbe.checks" :key="i" :class="c.passed ? '' : 'val-row-fail'">
-                    <td>{{ c.tissue }}</td>
-                    <td>{{ c.factor }}</td>
-                    <td class="ds-mono">{{ c.user_value }}</td>
-                    <td class="ds-mono">{{ c.lit_value }}</td>
-                    <td class="ds-mono">[{{ c.lit_range[0] }}, {{ c.lit_range[1] }}]</td>
-                    <td>{{ c.passed ? '✓' : '✗' }}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </details>
-
-            <!-- L2 公式验证 -->
-            <details class="ds-val-detail">
-              <summary>Level 2 ─ 剂量公式解析验证</summary>
-              <table class="ds-val-table">
-                <thead><tr><th>验证项</th><th>计算值</th><th>解析/参考值</th><th>结果</th><th>备注</th></tr></thead>
-                <tbody>
-                  <tr v-for="(c, i) in dsValidateResult.level2_formula.checks" :key="i" :class="c.passed ? '' : 'val-row-fail'">
-                    <td>{{ c.name }}</td>
-                    <td class="ds-mono">{{ c.computed_cgy !== undefined ? c.computed_cgy : c.sigma_used }}</td>
-                    <td class="ds-mono">{{ c.analytic_cgy !== undefined ? c.analytic_cgy : c.lit_value }}</td>
-                    <td>{{ c.passed ? '✓' : '✗' }}</td>
-                    <td style="font-size:0.75rem">{{ c.note || c.ref || '' }}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </details>
-
-            <!-- L3 临床案例 -->
-            <details class="ds-val-detail">
-              <summary>Level 3 ─ 临床基准案例验证 ({{ dsValidateResult.level3_clinical.n_pass }}/{{ dsValidateResult.level3_clinical.total }} 通过)</summary>
-              <div v-for="cas in dsValidateResult.level3_clinical.cases" :key="cas.id" class="ds-val-case">
-                <div class="ds-val-case-header" :class="cas.passed ? 'case-pass' : 'case-fail'"
-                     @click="toggleDsCase(cas.id)" style="cursor:pointer;">
-                  <span>{{ cas.passed ? '✓' : '✗' }} {{ cas.name }}</span>
-                  <span style="display:flex;align-items:center;gap:8px;">
-                    <span class="ds-val-case-ref">{{ cas.ref }}</span>
-                    <span class="ds-val-expand-hint">{{ dsExpandedCases[cas.id] ? '▲ 收起' : '▼ 展开' }}</span>
-                  </span>
-                </div>
-                <div v-if="dsExpandedCases[cas.id]" class="ds-val-case-body">
-                  <p class="ds-val-case-desc">{{ cas.description }}</p>
-                  <table class="ds-val-table">
-                    <thead><tr><th>检查项</th><th>计算值</th><th>期望范围</th><th>结果</th></tr></thead>
-                    <tbody>
-                      <tr v-for="(ck, ci) in cas.checks" :key="ci" :class="ck.passed ? '' : 'val-row-fail'">
-                        <td>{{ ck.check }}</td>
-                        <td class="ds-mono">{{ ck.value }}</td>
-                        <td class="ds-mono">{{ ck.expected }}</td>
-                        <td>{{ ck.passed ? '✓' : '✗' }}</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </details>
-
-          </div>
-          <div v-else-if="!dsValidating" class="ds-val-empty">
-            <p>点击「运行验证」，自动完成三级参数正确性验证</p>
-          </div>
-        </div>
-
+      </div>
       </div>
       <!-- /MCNP Tab 剂量组分设置 -->
 
@@ -6899,6 +6647,10 @@ export default {
   margin-top: 0;
   padding-top: 0;
   border-top: 3px solid rgba(102,126,234,0.2);
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 50px);
+  overflow: hidden;
 }
 
 .ds-mcnp-title {
@@ -6921,8 +6673,9 @@ export default {
   grid-template-columns: 280px 1fr;
   gap: 1rem;
   padding: 1rem;
+  flex: 1;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
 }
 
 /* ── 侧边栏 ── */
@@ -6932,7 +6685,8 @@ export default {
   box-shadow: 0 2px 8px rgba(0,0,0,0.08);
   padding: 0.8rem;
   overflow-y: auto;
-  max-height: calc(100vh - 130px);
+  height: 100%;
+  min-height: 0;
 }
 
 .ds-section {
@@ -7099,6 +6853,16 @@ export default {
   display: flex;
   flex-direction: column;
   align-items: center;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+.ds-canvas-wrap {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
 }
 /* ── 全身体模切片滑块（位于画布下方） ── */
 .ds-phantom-slice-ctrl {
@@ -7193,24 +6957,28 @@ export default {
 }
 
 .ds-canvas-wrap {
+  flex: 1;
+  min-height: 0;
   width: 100%;
   border: 1px solid #e2e8f0;
   border-radius: 6px;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
-.ds-svg { width: 100%; display: block; }
+.ds-svg { width: 100%; flex: 1; min-height: 0; display: block; }
 
 /* ── 体模三视图画布（含 img + SVG 覆盖层） ── */
 .ds-phantom-canvas {
   position: relative;
   width: 100%;
   background: #0d1117;
-  /* 高度自适应：撑开到图片自然高度 */
+  flex: 1;
+  min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 260px;
-  overflow: visible;  /* 允许体外中子源标记渲染到画布左侧 */
+  overflow: visible;
 }
 .ds-phantom-bg-img {
   display: block;
