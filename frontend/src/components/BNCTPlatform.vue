@@ -2145,15 +2145,6 @@
               </div>
             </div>
 
-            <!-- 计算按钮 -->
-            <div class="ds-section">
-              <button @click="dsCalculate" :disabled="dsLoading" class="btn btn-primary ds-calc-btn">
-                <span v-if="dsLoading" class="spinner-sm"></span>
-                {{ dsLoading ? '计算中...' : '▶ 计算剂量组分' }}
-              </button>
-              <p v-if="dsAutoCalc" class="ds-auto-hint">✓ 参数变更时自动更新</p>
-            </div>
-
           </aside>
 
           <!-- ── 中间：几何可视化 ── -->
@@ -2354,8 +2345,8 @@
             </div>
           </section>
 
-          <!-- ── 右侧：计算结果 ── -->
-          <section class="ds-results-panel">
+          <!-- ── 右侧：计算结果（已移除） ── -->
+          <section class="ds-results-panel" style="display:none">
 
             <!-- 结果未出现时的占位 -->
             <div v-if="!dsResult" class="ds-empty">
@@ -2498,8 +2489,8 @@
 
         </div>
 
-        <!-- ── 验证面板 ── -->
-        <div class="ds-validate-panel">
+        <!-- ── 验证面板（已移除） ── -->
+        <div class="ds-validate-panel" style="display:none">
           <div class="ds-validate-header">
             <h3>🧪 剂量参数三级验证</h3>
             <p class="ds-validate-desc">
@@ -6927,7 +6918,7 @@ export default {
 
 .ds-workspace {
   display: grid;
-  grid-template-columns: 280px 1fr 1fr;
+  grid-template-columns: 280px 1fr;
   gap: 1rem;
   padding: 1rem;
   min-height: 0;
