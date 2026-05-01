@@ -20,7 +20,7 @@ const mcnpState = {
 const { processDoseDataFile } = require('./mcnp2png');
 const zlib = require('zlib');
 
-const PYTHON_PATH = process.env.PYTHON_PATH || 'python3';
+const PYTHON_PATH = process.env.PYTHON_PATH || (process.platform === 'win32' ? 'python' : 'python3');
 console.log(`[初始化] 使用Python: ${PYTHON_PATH}`);
 
 // 中间件配置
