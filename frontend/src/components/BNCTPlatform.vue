@@ -6647,10 +6647,6 @@ export default {
   margin-top: 0;
   padding-top: 0;
   border-top: 3px solid rgba(102,126,234,0.2);
-  display: flex;
-  flex-direction: column;
-  height: calc(100vh - 50px);
-  overflow: hidden;
 }
 
 .ds-mcnp-title {
@@ -6673,9 +6669,8 @@ export default {
   grid-template-columns: 280px 1fr;
   gap: 1rem;
   padding: 1rem;
-  flex: 1;
   min-height: 0;
-  overflow: hidden;
+  overflow: auto;
 }
 
 /* ── 侧边栏 ── */
@@ -6685,8 +6680,7 @@ export default {
   box-shadow: 0 2px 8px rgba(0,0,0,0.08);
   padding: 0.8rem;
   overflow-y: auto;
-  height: 100%;
-  min-height: 0;
+  max-height: calc(100vh - 130px);
 }
 
 .ds-section {
@@ -6853,16 +6847,7 @@ export default {
   display: flex;
   flex-direction: column;
   align-items: center;
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
-}
-.ds-canvas-wrap {
-  flex: 1;
-  min-height: 0;
-  width: 100%;
-  display: flex;
-  flex-direction: column;
+  max-height: calc(100vh - 130px);
 }
 /* ── 全身体模切片滑块（位于画布下方） ── */
 .ds-phantom-slice-ctrl {
@@ -6957,27 +6942,22 @@ export default {
 }
 
 .ds-canvas-wrap {
-  flex: 1;
-  min-height: 0;
   width: 100%;
   border: 1px solid #e2e8f0;
   border-radius: 6px;
   overflow: hidden;
-  display: flex;
-  flex-direction: column;
 }
-.ds-svg { width: 100%; flex: 1; min-height: 0; display: block; }
+.ds-svg { width: 100%; display: block; }
 
 /* ── 体模三视图画布（含 img + SVG 覆盖层） ── */
 .ds-phantom-canvas {
   position: relative;
   width: 100%;
   background: #0d1117;
-  flex: 1;
-  min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
+  min-height: 260px;
   overflow: visible;
 }
 .ds-phantom-bg-img {
