@@ -6981,10 +6981,10 @@ export default {
   overflow: visible;
 }
 .ds-phantom-bg-img {
-  display: block;
+  position: absolute;
+  inset: 0;
   width: 100%;
-  height: auto;
-  max-height: 600px;
+  height: 100%;
   object-fit: contain;
   opacity: 0.9;
 }
