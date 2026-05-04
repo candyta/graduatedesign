@@ -1723,7 +1723,10 @@
           <div class="icrp116-log-panel">
             <div class="icrp116-log-header">
               <h4>📋 MCNP5 运行日志</h4>
-              <button class="btn btn-secondary btn-sm" @click="icrp116Status.logs = []">清空</button>
+              <div style="display:flex;gap:6px;">
+                <button class="btn btn-secondary btn-sm" @click="refreshIcrp116Status" title="手动拉取最新日志和进度">🔄 刷新状态</button>
+                <button class="btn btn-secondary btn-sm" @click="icrp116Status.logs = []">清空</button>
+              </div>
             </div>
             <div class="icrp116-log-body" ref="icrp116LogBody">
               <div
@@ -2500,7 +2503,6 @@ export default {
         sexAvg: false, phase: 'AM',
         afDoneEnergies: [], afCurrentCase: null, afResultFiles: [],
       },
-      icrp116PollTimer: null,
       // Step 3 对比分析
       icrp116Step3Loading: false,
       icrp116Step3Done:    false,
@@ -3029,33 +3031,23 @@ export default {
         console.log('[初始化] 从服务端恢复 DE/DF 模式: true');
       }
       if (icrpStatus.running) {
-        console.log('[初始化] 检测到 ICRP-116 验证任务正在运行，恢复轮询');
+        console.log('[初始化] 检测到 ICRP-116 验证任务正在运行，已同步状态（需手动刷新获取最新日志）');
         this.icrp116Running = true;
-        // 恢复轮询，继续接收日志和进度
-        this.icrp116PollTimer = setInterval(async () => {
-          try {
-            const { data } = await axios.get(`${API_BASE}/api/icrp116/status`);
-            if (data.logs && data.logs.length) {
-              this.icrp116Logs.push(...data.logs);
-              if (this.icrp116Logs.length > 500) this.icrp116Logs.splice(0, this.icrp116Logs.length - 500);
-            }
-            this.icrp116Status = {
-              completed:       data.completed,
-              failed:          data.failed,
-              doneEnergies:    data.doneEnergies    || [],
-              currentCase:     data.currentCase,
-              resultFiles:     data.resultFiles     || [],
-              afDoneEnergies:  data.afDoneEnergies  || [],
-              afCurrentCase:   data.afCurrentCase,
-              afResultFiles:   data.afResultFiles   || [],
-            };
-            if (!data.running) {
-              this.icrp116Running = false;
-              clearInterval(this.icrp116PollTimer);
-              this.icrp116PollTimer = null;
-            }
-          } catch (_) { /* 忽略轮询错误 */ }
-        }, 3000);
+        // 仅同步一次当前状态，不再自动轮询；用户可点击「刷新状态」按钮手动更新
+        this.icrp116Status = {
+          ...this.icrp116Status,
+          completed:      icrpStatus.completed,
+          failed:         icrpStatus.failed,
+          doneEnergies:   icrpStatus.doneEnergies   || [],
+          currentCase:    icrpStatus.currentCase,
+          resultFiles:    icrpStatus.resultFiles     || [],
+          afDoneEnergies: icrpStatus.afDoneEnergies  || [],
+          afCurrentCase:  icrpStatus.afCurrentCase,
+          afResultFiles:  icrpStatus.afResultFiles   || [],
+        };
+        if (icrpStatus.logs && icrpStatus.logs.length) {
+          this.icrp116Status.logs = icrpStatus.logs.slice(-500);
+        }
       }
     } catch (err) {
       console.warn('[初始化] ICRP-116 状态同步失败（可忽略）:', err.message);
@@ -3532,23 +3524,8 @@ export default {
       this.addLog(`源位置: [${mcnpParams.source_position.join(', ')}] cm, 束流半径: ${mcnpParams.beam_radius} cm`);
       this.addLog(`肿瘤位置: [${mcnpParams.tumor_position.join(', ')}] cm, 半径: ${mcnpParams.tumor_radius} cm`);
 
-      // 轮询后端实时进度
-      const progressInterval = setInterval(async () => {
-        try {
-          const { data } = await axios.get(`${API_BASE}/mcnp-progress`);
-          if (data.progress > this.progress) {
-            this.progress = data.progress;
-          }
-          if (data.logs && data.logs.length) {
-            data.logs.forEach(line => this.addLog(line, 'info'));
-          }
-        } catch (_) { /* 忽略轮询错误 */ }
-      }, 1000);
-
       try {
         const response = await axios.post(`${API_BASE}/run-mcnp-computation`, mcnpParams);
-
-        clearInterval(progressInterval);
         this.progress = 100;
 
         this.mcnpSteps[1].status = 'completed';
@@ -3561,7 +3538,6 @@ export default {
         // MCNP完成后自动触发剂量分布图生成
         await this.generateWholeBodyDoseMap(mcnpParams);
       } catch (error) {
-        clearInterval(progressInterval);
         this.mcnpSteps[1].status = 'error';
         this.mcnpSteps[1].result = '计算失败';
         this.addLog('MCNP计算失败: ' + error.message, 'error');
@@ -4061,39 +4037,47 @@ export default {
         return;
       }
 
-      // 每 3 秒轮询状态
-      this.icrp116PollTimer = setInterval(async () => {
-        try {
-          const { data } = await axios.get(`${API_BASE}/api/icrp116/status`);
-          this.icrp116Status = data;
-          this.icrp116Running = data.running;
-          // 从服务端状态恢复 deDfMode（防止页面刷新后模式丢失导致 Step3 用错误参数）
-          if (typeof data.deDfMode === 'boolean') {
-            this.icrp116DeDfMode = data.deDfMode;
-          }
-          // 自动滚动日志
-          this.$nextTick(() => {
-            const el = this.$refs.icrp116LogBody;
-            if (el) el.scrollTop = el.scrollHeight;
-          });
-          if (!data.running) {
-            clearInterval(this.icrp116PollTimer);
-            this.icrp116PollTimer = null;
-          }
-        } catch (_) { /* 忽略轮询错误 */ }
-      }, 3000);
+      // 不再自动轮询；用户可点击「刷新状态」按钮手动获取最新日志和进度
     },
 
     async cancelIcrp116Validation() {
       try {
         await axios.post(`${API_BASE}/api/icrp116/cancel`);
         this.icrp116Running = false;
-        if (this.icrp116PollTimer) {
-          clearInterval(this.icrp116PollTimer);
-          this.icrp116PollTimer = null;
-        }
       } catch (err) {
         console.error('取消失败:', err.message);
+      }
+    },
+
+    async refreshIcrp116Status() {
+      try {
+        const { data } = await axios.get(`${API_BASE}/api/icrp116/status`);
+        this.icrp116Running = data.running;
+        if (typeof data.deDfMode === 'boolean') {
+          this.icrp116DeDfMode = data.deDfMode;
+        }
+        if (data.logs && data.logs.length) {
+          this.icrp116Status.logs = data.logs.slice(-500);
+        }
+        this.icrp116Status = {
+          ...this.icrp116Status,
+          completed:      data.completed,
+          failed:         data.failed,
+          doneEnergies:   data.doneEnergies   || [],
+          currentCase:    data.currentCase,
+          resultFiles:    data.resultFiles     || [],
+          afDoneEnergies: data.afDoneEnergies  || [],
+          afCurrentCase:  data.afCurrentCase,
+          afResultFiles:  data.afResultFiles   || [],
+          elapsedSec:     data.elapsedSec,
+          sexAvg:         data.sexAvg,
+        };
+        this.$nextTick(() => {
+          const el = this.$refs.icrp116LogBody;
+          if (el) el.scrollTop = el.scrollHeight;
+        });
+      } catch (err) {
+        console.error('刷新状态失败:', err.message);
       }
     },
 
