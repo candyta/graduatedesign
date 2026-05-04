@@ -225,39 +225,56 @@ def run_one(case: dict, args, log_fh, out_dir: str = None):
     work.mkdir(parents=True, exist_ok=True)
 
     # ── 1. 清理工作目录旧文件 ──────────────────────────────────────
+    def _unlink_with_retry(path: Path, max_wait: int = 60) -> bool:
+        """尝试删除文件，最多等待 max_wait 秒（每次 sleep 3s）。返回是否成功。"""
+        attempts = max(1, max_wait // 3)
+        for i in range(attempts):
+            try:
+                path.unlink()
+                return True
+            except PermissionError:
+                if i < attempts - 1:
+                    time.sleep(3)
+        return False
+
     for ext in (".o", ".r", ".s", ".p", ".w", ".m", ""):
         old = work / (base + ext)
         if old.exists():
             # Windows: file may be briefly locked by antivirus or a lingering
-            # handle from the previous MCNP run.  Retry a few times before giving up.
-            for _attempt in range(4):
-                try:
-                    old.unlink()
-                    log(f"  删除旧文件: {old.name}", log_fh)
-                    break
-                except PermissionError:
-                    if _attempt < 3:
-                        time.sleep(2)
-                    else:
-                        log(f"  [警告] 无法删除旧文件 {old.name}（文件被占用），跳过", log_fh)
+            # handle from the previous MCNP run.  Retry up to 60s before giving up.
+            if _unlink_with_retry(old):
+                log(f"  删除旧文件: {old.name}", log_fh)
+            else:
+                log(f"  [警告] 无法删除旧文件 {old.name}（文件被占用 60s），跳过", log_fh)
     meshtal = work / "meshtal"
     if meshtal.exists():
-        for _attempt in range(4):
-            try:
-                meshtal.unlink()
-                log("  删除旧 meshtal", log_fh)
-                break
-            except PermissionError:
-                if _attempt < 3:
-                    time.sleep(2)
-                else:
-                    log("  [警告] 无法删除旧 meshtal（文件被占用），跳过", log_fh)
+        if _unlink_with_retry(meshtal):
+            log("  删除旧 meshtal", log_fh)
+        else:
+            log("  [警告] 无法删除旧 meshtal（文件被占用 60s），跳过", log_fh)
 
     # ── 2. 复制输入文件 ────────────────────────────────────────────
     dst_inp  = work / f"{base}.inp"
     dst_bare = work / base          # MCNP5 要求无扩展名副本
-    shutil.copy(inp_src, dst_inp)
-    shutil.copy(inp_src, dst_bare)
+
+    def _copy_with_retry(src: Path, dst: Path, max_wait: int = 60) -> None:
+        """覆盖式拷贝，若目标被占用则重试最多 max_wait 秒（每次 sleep 3s）。"""
+        attempts = max(1, max_wait // 3)
+        last_exc = None
+        for i in range(attempts):
+            try:
+                shutil.copy(src, dst)
+                return
+            except PermissionError as e:
+                last_exc = e
+                if i < attempts - 1:
+                    time.sleep(3)
+        raise PermissionError(
+            f"无法写入 {dst}（文件持续被占用 {max_wait}s）：{last_exc}"
+        )
+
+    _copy_with_retry(inp_src, dst_inp)
+    _copy_with_retry(inp_src, dst_bare)
     log(f"  复制 → {dst_inp}", log_fh)
 
     # ── 3. 调用 g5.bat 运行 MCNP5 ─────────────────────────────────
