@@ -1,6 +1,15 @@
+# ===================== Stage 1: Build frontend =====================
+FROM node:22-slim AS frontend-builder
+
+WORKDIR /frontend
+COPY frontend/package.json ./
+RUN npm install
+COPY frontend/ ./
+RUN npm run build
+
+# ===================== Stage 2: Runtime =====================
 FROM node:22-slim
 
-# 安装 Python 3 和必要的系统库
 RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
@@ -12,21 +21,21 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# 安装 Python 依赖
+# Install Python dependencies
 COPY backend/requirements.txt ./backend/requirements.txt
-RUN pip3 install --no-cache-dir -r backend/requirements.txt
+RUN pip3 install --no-cache-dir --break-system-packages -r backend/requirements.txt
 
-# 安装 Node.js 依赖
-COPY backend/package.json backend/package-lock.json* ./backend/
+# Install Node.js dependencies
+COPY backend/package.json ./backend/
 RUN cd backend && npm install --omit=dev
 
-# 复制后端代码
+# Copy backend code
 COPY backend/ ./backend/
 
-# 复制前端构建产物
-COPY frontend/dist/ ./frontend/dist/
+# Copy frontend build output from Stage 1
+COPY --from=frontend-builder /frontend/dist/ ./frontend/dist/
 
-# 复制 ICRP 数据
+# Copy ICRP data
 COPY "P110 data V1.2"/ "./P110 data V1.2"/
 
 EXPOSE 3000
