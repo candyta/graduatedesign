@@ -23,7 +23,9 @@ WORKDIR /app
 
 # Install Python dependencies
 COPY backend/requirements.txt ./backend/requirements.txt
-RUN pip3 install --no-cache-dir --break-system-packages -r backend/requirements.txt
+RUN pip3 install --no-cache-dir --break-system-packages \
+    -i https://mirrors.aliyun.com/pypi/simple/ \
+    -r backend/requirements.txt
 
 # Install Node.js dependencies
 COPY backend/package.json ./backend/
