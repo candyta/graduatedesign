@@ -36,7 +36,7 @@ COPY backend/ ./backend/
 COPY --from=frontend-builder /frontend/dist/ ./frontend/dist/
 
 # Copy ICRP data
-COPY "P110 data V1.2"/ "./P110 data V1.2"/
+COPY P110\ data\ V1.2/ ./P110\ data\ V1.2/
 
 EXPOSE 3000
 
